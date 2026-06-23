@@ -52,6 +52,21 @@ from .roadmap import Roadmap, build_roadmap
 from .optimizer import plan_booster_sites, BoosterSitePlan
 
 
+# Coast lookahead (miles): how far ahead the coast controller checks for the worst
+# upcoming floor before cutting SP injection. Large enough to give the pig a cushion
+# to clear the next climb without stalling; small enough to keep coasting on real
+# descents. ~15 mi ≈ several hours of lead at target speed on this route. (Smaller horizons
+# coast more aggressively — leaner but they stall the pig on the next climb; 15 is the clean,
+# ~stall-free operating point. See the coast ramp below for the injection taper.)
+COAST_HORIZON_MI = 15.0
+
+# Coast ramp band (psi): instead of an abrupt on/off cut, injection tapers linearly from
+# full (when the pig face is at/below the worst-ahead floor) to zero (when it is this many
+# psi above it). The gradual taper lets the column draw down smoothly and lets injection
+# resume early enough to clear the next climb without stalling the pig.
+COAST_RAMP_BAND_PSI = 50.0
+
+
 # ---------------------------------------------------------------------------
 # Simulation configuration
 # ---------------------------------------------------------------------------
@@ -186,8 +201,14 @@ class SimResults:
     completed: bool = False
     abort_reason: str = ""
     wall_time_s: float = 0.0
-    total_scf_injected: float = 0.0
+    total_scf_injected: float = 0.0       # fresh N2 injected at SP
+    total_scf_booster_fresh: float = 0.0  # fresh N2 injected at booster stations
     total_scf_vented: float = 0.0   # N2 bled off to hold gas column under MOP
+
+    @property
+    def total_scf_n2(self) -> float:
+        """All fresh nitrogen put into the line (SP + every booster's own injection)."""
+        return self.total_scf_injected + self.total_scf_booster_fresh
     roadmap: Optional["Roadmap"] = None   # pre-run pressure corridor (feasibility + caps)
     booster_plan: Optional["BoosterSitePlan"] = None  # roadmap-driven booster siting
     spread_events: List[dict] = field(default_factory=list)
@@ -634,7 +655,8 @@ def simulate(cfg: SimConfig, progress_cb: Optional[Callable[[float], None]] = No
     pig_mp = cfg.purge_start_mp + 0.001
     t_hr   = 0.0
     dt_hr  = cfg.dt_hr
-    total_scf_injected = 0.0
+    total_scf_injected = 0.0       # fresh N2 injected at SP
+    total_scf_booster_fresh = 0.0  # fresh N2 injected at booster stations (own N2 source)
     total_scf_vented   = 0.0
     stall_start_t_hr: Optional[float] = None   # time when pig first stalled (None = not stalled)
 
@@ -820,39 +842,47 @@ def simulate(cfg: SimConfig, progress_cb: Optional[Callable[[float], None]] = No
         # pig face pressure is to keep pushing gas in from origin.
         is_stalled = (pig_result.pig_speed_mph == 0.0)
 
-        # Minimum pig face needed to sustain pig motion at target speed.
-        # Used to:
-        #   (a) compute the correct mass injection when boosters are running
-        #   (b) cap the last active booster's discharge so pig face stays at minimum needed
-        #       rather than always running to rated discharge (which wastes stored N2 and
-        #       raises consumption proportional to pig face pressure).
+        # --- Patience: defend the FLOOR (min speed), do not chase TARGET speed ---
+        # A pig riding below target speed but at/above min speed is the correct, leanest
+        # plan — minimum drive at the pig face lays down the leanest column behind it, i.e.
+        # the least total N2. Climbing a hill slowly on the floor is not an emergency.
+        # The only thing worth defending is min speed (slack-line risk); only THEN do we
+        # escalate drive toward the ceiling. Below `below_min` we are patient: target the
+        # minimum face pressure (+ small margin), never rated discharge / MOP.
+        below_min = pig_result.slack_line_risk or is_stalled
+
+        # Minimum pig face needed to sustain the pig's current motion (= the floor: exit
+        # pressure + friction + static head at the solved speed). On a climb where the pig
+        # rides min speed this IS the min-speed floor.
         _min_face_psig = (pig_result.exit_psig
                           + pig_result.liquid_friction_psi
                           + pig_result.static_head_psi)
 
-        if pig_result.meter_valve_active and not is_stalled:
-            if min_suction_floor > 0:
-                # Boosters running at target speed: injection stub only needs suction floor.
-                fill_pressure_psig = min_suction_floor
-                # Pig face target = minimum needed + margin. The booster is capped here
-                # so SCF consumed per unit advance ∝ pig face P (mass conservation).
-                pig_face_target_psig = _min_face_psig + 20.0
-            else:
-                # No boosters: injection IS the pig face.
-                fill_pressure_psig = _min_face_psig + 20.0
-                pig_face_target_psig = fill_pressure_psig
-        elif min_suction_floor > 0:
-            # Boosters running but drive-limited: want max booster output to recover speed.
-            # Injection stub still only needs suction floor; booster discharge is uncapped.
+        if below_min and min_suction_floor > 0:
+            # BELOW MIN SPEED (slack-line risk) with boosters: the current drive (already
+            # MOP-capped) cannot hold min speed. Ramp booster output toward rated discharge
+            # to recover, still bounded by mop_cap below. The only place we escalate.
             fill_pressure_psig = min_suction_floor
             pig_face_target_psig = max(
                 (bs.config.discharge_psig for bs in booster_states if bs.requested),
                 default=pig_face_psig,
             )
+        elif min_suction_floor > 0:
+            # PATIENT with boosters: hold the pig face at the LOCAL floor (+ margin). Do NOT
+            # ramp to rated discharge to chase target speed, and do NOT pre-build to the
+            # worst-ahead floor (that over-builds the whole stretch) — the coast gate below
+            # handles climbs by simply not coasting when one is near. Injection stub only
+            # needs the suction floor; the front booster is capped here (SCF/advance ∝ P).
+            fill_pressure_psig = min_suction_floor
+            pig_face_target_psig = _min_face_psig + 20.0
+        elif pig_result.meter_valve_active and not is_stalled:
+            # No boosters, pig at/above target: injection IS the pig face — throttle to the
+            # minimum needed + margin.
+            fill_pressure_psig = _min_face_psig + 20.0
+            pig_face_target_psig = fill_pressure_psig
         else:
-            # No boosters, drive-limited: maintain current pig face pressure.
-            # n2_initial_pressure_psig must NOT be used as a floor here — it was only for
-            # initialization and would force 600–900 psig injection in steady state.
+            # No boosters, coasting below target (or stalled): maintain current pig face and
+            # ride it — do not build to chase target speed.
             fill_pressure_psig = pig_face_psig
             pig_face_target_psig = fill_pressure_psig
 
@@ -910,6 +940,12 @@ def simulate(cfg: SimConfig, progress_cb: Optional[Callable[[float], None]] = No
         # booster chain, and fills the expanding pig face volume. Mass is conserved through
         # the chain, so the injection amount must be calculated at pig face target pressure
         # (not at the stub fill pressure, which is much lower).
+        # SP injects the gas MASS that fills the volume vacated by the pig — this is the
+        # primary, continuous N2 source. When boosters are active they RECOMPRESS this SP
+        # gas forward (free — no new molecules) to hold drive on the climbs; SP still has to
+        # supply the mass. (Booster fresh N2 is a brief last-resort only — see allow_fresh
+        # below.) So SP carries the majority of total N2, with boosters supplemental — as in
+        # the reference, where SP injects continuously and LS/HW fire big but briefly.
         scf_to_fill_new_vol = scf_from_pressure_volume(
             psig_to_psia(pig_face_target_psig), delta_vol, cfg.n2_temperature_f
         )
@@ -926,6 +962,34 @@ def simulate(cfg: SimConfig, progress_cb: Optional[Callable[[float], None]] = No
         if is_stalled and min_suction_floor == 0.0:
             scf_inject = max(scf_inject, cfg.max_injection_scfm * dt_hr * 60.0)
 
+        # --- COAST: ride the stored column instead of injecting more ---
+        # If the gas already behind the pig exceeds the worst drive the NEXT STRETCH will
+        # demand, SP injection is unnecessary — the compressed column does PV-work driving
+        # the pig as it expands into the vacated volume (boosters recompress it forward).
+        # This is the reference's "shut off N2, expansion will keep the pig going." It stops
+        # the descent over-build: instead of SP topping the pig face to a pressure that then
+        # sits in the line at the end, the high climb column is drawn DOWN to the floor.
+        #
+        # We compare against max_floor_ahead (the highest floor over a lookahead horizon),
+        # NOT the local floor — so the pig keeps enough cushion for the worst upcoming climb
+        # and does not coast down into a stall. On a genuine descent the floor stays low
+        # ahead, so coasting continues and the high climb column is harvested down.
+        #
+        # RAMPED, not on/off: injection scales linearly from full (pig face at/below the
+        # worst-ahead floor) to zero (a band above it). The abrupt cut was what stalled the
+        # pig — it coasted to empty, then injection couldn't recover fast enough into a climb.
+        # The taper resumes injection gradually as the column draws down, smoothing recovery.
+        if roadmap is not None and not below_min:
+            floor_ahead = roadmap.max_floor_ahead(pig_mp, COAST_HORIZON_MI)
+            over = pig_face_psig - floor_ahead
+            if over >= COAST_RAMP_BAND_PSI:
+                coast_frac = 0.0                       # well above floor — full coast
+            elif over <= 0.0:
+                coast_frac = 1.0                       # at/below floor — full injection
+            else:
+                coast_frac = 1.0 - over / COAST_RAMP_BAND_PSI
+            scf_inject *= coast_frac
+
         # Cap by max rate
         max_scf_step = cfg.max_injection_scfm * dt_hr * 60.0
         scf_inject = min(max(0.0, scf_inject), max_scf_step)
@@ -938,20 +1002,30 @@ def simulate(cfg: SimConfig, progress_cb: Optional[Callable[[float], None]] = No
         injection_scfm = scf_inject / max(1e-12, dt_hr * 60.0)
 
         # --- Step boosters ---
-        # Only the pig-adjacent (last active) booster gets a discharge cap — it controls
-        # pig face pressure. Earlier boosters in the chain should run at rated discharge to
-        # build up intermediate segment pressure for the last stage to draw from.
-        # In drive-limited mode (pig below target speed), all boosters run uncapped to
-        # build maximum pressure and recover pig speed.
-        if pig_result.meter_valve_active and min_suction_floor > 0:
+        # The pig-adjacent (front) booster gets a discharge cap at the floor target so it
+        # holds the pig face at the minimum needed pressure (leanest column). Earlier
+        # boosters recompress-only and self-limit to the forward MOP ceiling (mop_cap).
+        # The cap is applied whenever we are PATIENT (pig at >= min speed). Only when the
+        # pig is genuinely below min speed (slack-line recovery) do we uncap the front
+        # booster so it can ramp toward rated discharge (still bounded by mop_cap) to
+        # restore min speed. Chasing target speed never uncaps anything.
+        if (not below_min) and min_suction_floor > 0:
             last_active_mp = max(
                 (bs.mp for bs in booster_states if bs.requested and bs.mp < pig_mp),
                 default=-1.0,
             )
         else:
-            last_active_mp = -1.0  # no cap in drive-limited mode or no-booster mode
+            last_active_mp = -1.0  # uncap only during genuine below-min recovery (or no boosters)
 
         active_mps = active_booster_mps(booster_states)
+        # The pig-adjacent (front) booster — largest-MP requested booster behind the pig —
+        # is the only one allowed to inject FRESH N2 (last resort). Its downstream segment is
+        # the pig-face bay, so its fresh makeup drives the pig directly. Upstream boosters
+        # recompress-only (relay existing gas forward).
+        front_booster_mp = max(
+            (bs.mp for bs in booster_states if bs.requested and bs.mp < pig_mp),
+            default=-1.0,
+        )
         booster_step_results = []
         for bs in booster_states:
             if bs.mp < pig_mp:  # only boosters the pig has passed
@@ -984,13 +1058,20 @@ def simulate(cfg: SimConfig, progress_cb: Optional[Callable[[float], None]] = No
                 if math.isfinite(local_cap) and local_cap > 0:
                     tgt_discharge = min(tgt_discharge, local_cap) if tgt_discharge is not None \
                                     else local_cap
+                # Fresh N2 is a LAST-RESORT, below-min-speed recovery tool — NOT a way to
+                # hold the pig face at the floor. On a descent gravity keeps the pig fast, so
+                # below_min stays False, fresh never fires, and the high climb column expands
+                # forward to drive the pig (coast mode) — ending the line lean. Fresh only
+                # fires at the front booster when the pig genuinely cannot hold min speed.
                 bsr = step_booster(bs, segs, dt_hr, pig_face_psig,
-                                   target_discharge_psig=tgt_discharge)
+                                   target_discharge_psig=tgt_discharge,
+                                   allow_fresh=(below_min and abs(bs.mp - front_booster_mp) < 1e-9))
                 booster_step_results.append({
                     'mp': bs.mp,
                     'name': bs.config.name,
                     **bsr,
                 })
+                total_scf_booster_fresh += bsr.get('scf_fresh_injected', 0.0)
         active_mps = active_booster_mps(booster_states)
 
         # --- Release spreads from spent booster stations ---
@@ -1203,6 +1284,7 @@ def simulate(cfg: SimConfig, progress_cb: Optional[Callable[[float], None]] = No
             stall_start_t_hr = None  # reset if pig starts moving again
 
     results.total_scf_injected = total_scf_injected
+    results.total_scf_booster_fresh = total_scf_booster_fresh
     results.total_scf_vented = total_scf_vented
     results.wall_time_s = time.monotonic() - t_wall_start
     return results

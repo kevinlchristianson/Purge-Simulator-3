@@ -127,6 +127,7 @@ def step_booster(
     dt_hr: float,
     pig_face_pressure_psig: float,
     target_discharge_psig: Optional[float] = None,
+    allow_fresh: bool = False,
 ) -> dict:
     """
     Advance one booster station by dt_hr hours.
@@ -140,7 +141,8 @@ def step_booster(
         'suction_psig': 0.0,
         'discharge_psig': 0.0,
         'flow_scfm': 0.0,
-        'scf_transferred': 0.0,
+        'scf_transferred': 0.0,       # recompressed upstream N2 (free — already in the line)
+        'scf_fresh_injected': 0.0,    # fresh N2 from the station's own source (totalize this)
         'shutoff_reason': '',
         'flow_limited': False,  # True = compressor pegged at max SCFM (add a compressor)
     }
@@ -168,16 +170,17 @@ def step_booster(
     suction_psig = seg_up.pressure_psig
     result['suction_psig'] = suction_psig
 
-    if suction_psig < state.config.suction_min_psig:
-        state.running = False
-        result['shutoff_reason'] = 'suction_too_low'
-        _update_state(state, result)
-        return result
+    # Recompression (the compressor) can only run with suction >= suction_min — it cannot
+    # pull a near-vacuum and pump against its own discharge. Fresh N2 injection, however,
+    # comes from the station's own outside N2 source plumbed in at the discharge, so it
+    # needs no suction. A booster therefore stays useful even after the upstream store is
+    # drawn down to its floor: it just shifts from recompressing to injecting fresh.
+    can_recompress = suction_psig >= state.config.suction_min_psig
 
-    # Booster can run — compute effective discharge target.
+    # Effective discharge target.
     # If a target_discharge_psig cap is supplied (set by the simulator for the pig-adjacent
     # booster when pig is at target speed), cap discharge there. This prevents the booster
-    # from driving pig face above the minimum needed pressure, which would waste stored N2
+    # from driving pig face above the minimum needed pressure, which would waste N2
     # (N2 consumption scales linearly with pig face pressure via mass conservation).
     # In drive-limited mode (pig below target speed), no cap is passed so the booster
     # runs at rated discharge to recover pig speed as fast as possible.
@@ -188,37 +191,51 @@ def step_booster(
         )
     else:
         effective_discharge_psig = state.config.discharge_psig
-    result['discharge_psig'] = effective_discharge_psig
-
-    # SCF transferred = min of: capacity, available above suction floor, downstream headroom
-    scf_available = seg_up.scf_at_pressure(state.config.suction_min_psig)
-    scf_can_send = max(0.0, seg_up.scf - scf_available)
 
     max_scf_per_step = state.config.max_flow_scfm * dt_hr * 60.0
-
-    # Don't over-pressurize downstream beyond effective discharge target
+    # Downstream demand: SCF needed to bring the pig-side segment up to the discharge target.
     scf_headroom_dn = max(0.0, seg_dn.scf_at_pressure(effective_discharge_psig) - seg_dn.scf)
 
-    scf_to_transfer = min(scf_can_send, max_scf_per_step, scf_headroom_dn)
-    # Flow-limited: compressor is running at rated capacity (upstream/downstream not the limit)
-    flow_limited = (scf_to_transfer > 0 and scf_to_transfer >= max_scf_per_step * 0.99
-                    and scf_can_send >= max_scf_per_step and scf_headroom_dn >= max_scf_per_step)
+    # --- 1) Recompress as much upstream N2 as is available above the suction floor ---
+    if can_recompress:
+        scf_available = seg_up.scf_at_pressure(state.config.suction_min_psig)
+        scf_can_send  = max(0.0, seg_up.scf - scf_available)
+        scf_recompress = min(scf_can_send, max_scf_per_step, scf_headroom_dn)
+    else:
+        scf_recompress = 0.0
+    actual_recompress = seg_up.remove_scf(scf_recompress) if scf_recompress > 0 else 0.0
+    if actual_recompress > 0:
+        seg_dn.add_scf(actual_recompress)
 
-    if scf_to_transfer <= 0.0:
+    # --- 2) Fresh N2 makeup (LAST RESORT): cover the remaining discharge demand from the
+    #         station's own N2 source, up to remaining compressor capacity. Fresh nitrogen is
+    #         expensive (it adds to total N2), so it is only allowed at the pig-adjacent
+    #         (front) booster — the one actually driving the pig face. Upstream boosters in
+    #         the chain recompress-only: they relay existing gas forward but never manufacture
+    #         fresh gas to over-fill an intermediate bay. Reported separately for totalizing. ---
+    if allow_fresh:
+        remaining_cap      = max(0.0, max_scf_per_step - actual_recompress)
+        remaining_headroom = max(0.0, seg_dn.scf_at_pressure(effective_discharge_psig) - seg_dn.scf)
+        scf_fresh = min(remaining_cap, remaining_headroom)
+    else:
+        scf_fresh = 0.0
+    if scf_fresh > 0:
+        seg_dn.add_scf(scf_fresh)
+
+    total_added = actual_recompress + scf_fresh
+    if total_added <= 0.0:
+        # No upstream gas to recompress and no downstream demand — booster idles.
         state.running = False
-        result['shutoff_reason'] = 'no_scf_to_transfer'
+        result['shutoff_reason'] = 'suction_too_low' if not can_recompress else 'no_demand'
         _update_state(state, result)
         return result
 
-    # Perform transfer
-    actual = seg_up.remove_scf(scf_to_transfer)
-    seg_dn.add_scf(actual)
-
     result['running'] = True
-    result['flow_scfm'] = actual / (dt_hr * 60.0) if dt_hr > 0 else 0.0
-    result['scf_transferred'] = actual
+    result['flow_scfm'] = total_added / (dt_hr * 60.0) if dt_hr > 0 else 0.0
+    result['scf_transferred'] = actual_recompress
+    result['scf_fresh_injected'] = scf_fresh
     result['discharge_psig'] = seg_dn.pressure_psig  # updated after adding SCF
-    result['flow_limited'] = flow_limited
+    result['flow_limited'] = (total_added >= max_scf_per_step * 0.99)
 
     state.running = True
     state.suction_psig = suction_psig

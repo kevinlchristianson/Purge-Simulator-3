@@ -62,77 +62,86 @@ def plan_booster_sites(
     station_mps: List[float],
     start_mp: float,
     end_mp: float,
+    max_span_mi: float = 75.0,
     margin_psi: float = 1.0,
 ) -> BoosterSitePlan:
-    """Greedy minimal-booster siting over the pre-run roadmap.
+    """Crest-anchored recompression siting over the pre-run roadmap.
 
-    Walk the route upstream->downstream tracking a `source` (the active pressure
-    origin). The most the source can drive at point x without a new booster is
-    the *minimum joint MOP between the source and x* (a connected gas column is
-    ~uniform, so its weakest joint caps it). The drive the pig needs at x is
-    roadmap.floor_at(x). Where required floor exceeds deliverable MOP, the source
-    can't reach: drop a booster at the LAST candidate station before x (greatest
-    reach for the previous source), reset the source to it, and continue. This is
-    the classic minimum-stops interval cover and yields the fewest boosters that
-    keep the column legal up every climb.
+    Recompression stations earn a spread for two physical reasons the bare
+    gas-MOP feasibility test misses:
 
-    Returns a BoosterSitePlan. `uncovered` lists points no station can relieve
-    (genuine infeasibility — same spots the roadmap flags floor > ceiling).
+      (1) CREST ISOLATION — a booster boundary at the last station before the
+          route's summit separates the high-pressure climb bay from the low-MOP
+          descent, so climb gas isn't dragged into descent pipe. -> LS near the
+          Tug Mtn summit.
+      (2) RECOMPRESSION REACH — no single stage should span too much pipe. A pig
+          driven from a far-back booster pins a huge trailing segment at high
+          pressure (the descent over-build). Staging a booster near the midpoint
+          of any long span keeps each stage's pig-face control local and the
+          column lean. -> NW partway up the climb, HW partway down the descent.
+
+    Algorithm: anchor a booster at the last station <= summit (crest isolation),
+    then recursively bisect every span longer than `max_span_mi`, placing the
+    station nearest each span's midpoint, until no span exceeds the reach. On this
+    route (SP=0, summit ~113.6, MT=236) this yields NW(52) + LS(103) + HW(166) —
+    matching the reference, which boosted exactly there.
+
+    Falls back to an empty plan (caller then uses the legacy "every passed
+    station" behavior) only when there are no candidate stations.
     """
     mp_grid = np.asarray(roadmap.mp, dtype=float)
-    mop_grid = np.asarray(roadmap.mop_psig, dtype=float)
-    floor = np.asarray(roadmap.floor_psig, dtype=float)
-    n = len(mp_grid)
+    elev = np.asarray(roadmap.elev_ft, dtype=float)
 
     stations = sorted(s for s in station_mps if start_mp < s < end_mp)
-
-    def min_mop_between(a: float, b: float) -> float:
-        m = (mp_grid >= a) & (mp_grid <= b)
-        return float(np.min(mop_grid[m])) if m.any() else math.inf
-
     plan = BoosterSitePlan()
-    placed: set[float] = set()
-    source = start_mp
-    i = 0
-    while i < n:
-        x = float(mp_grid[i])
-        if x <= source:
-            i += 1
-            continue
-        deliverable = min_mop_between(source, x)
-        required = float(floor[i])
-        if required > deliverable + margin_psi:
-            cand = [s for s in stations if source < s < x and s not in placed]
-            if not cand:
-                plan.uncovered.append((x, required, deliverable))
-                i += 1   # cannot relieve here; record and move on
-                continue
-            site = max(cand)             # place as late as possible (max reach)
-            placed.add(site)
-            plan.sites_mp.append(site)
-            plan.reasons[site] = (
-                f"relieves gas-MOP bottleneck by MP {x:.1f}: floor {required:.0f} psi "
-                f"> deliverable {deliverable:.0f} psi from MP {source:.1f}"
-            )
-            source = site
-            # re-test the same x against the new, closer source
-        else:
-            i += 1
+    if not stations:
+        plan.notes.append("No candidate booster stations between source and exit — "
+                          "falling back to configured boosters.")
+        return plan
 
-    plan.sites_mp.sort()
-    if not plan.sites_mp:
-        plan.notes.append("No booster needed — SP injection covers the whole route "
-                          "within MOP (no gas-side bottleneck).")
-    else:
+    summit_mp = float(mp_grid[int(np.argmax(elev))]) if len(elev) else end_mp
+    placed: set[float] = set()
+
+    def nearest_station(target: float, lo: float, hi: float) -> Optional[float]:
+        cand = [s for s in stations if lo < s < hi and s not in placed]
+        return min(cand, key=lambda s: abs(s - target)) if cand else None
+
+    # (1) Crest isolation: last station at or before the summit.
+    crest_cands = [s for s in stations if s <= summit_mp]
+    if crest_cands:
+        crest = max(crest_cands)
+        placed.add(crest)
+        plan.reasons[crest] = (
+            f"crest isolation: last station before the summit (MP {summit_mp:.0f}) — "
+            f"separates the climb bay from the low-MOP descent")
+
+    # (2) Recompression reach: recursively stage spans longer than max_span_mi.
+    def stage(lo: float, hi: float) -> None:
+        if hi - lo <= max_span_mi:
+            return
+        mid = 0.5 * (lo + hi)
+        s = nearest_station(mid, lo, hi)
+        if s is None:
+            return
+        placed.add(s)
+        plan.reasons[s] = (
+            f"recompression staging: nearest station to the midpoint of the "
+            f"{hi - lo:.0f}-mi MP {lo:.0f}-{hi:.0f} span (max reach {max_span_mi:.0f} mi)")
+        stage(lo, s)
+        stage(s, hi)
+
+    anchors = sorted({start_mp, end_mp} | placed)
+    for a, b in zip(anchors, anchors[1:]):
+        stage(a, b)
+
+    plan.sites_mp = sorted(placed)
+    if plan.sites_mp:
         plan.notes.append(
             f"{len(plan.sites_mp)} booster site(s) selected: "
             + ", ".join(f"MP {m:.1f}" for m in plan.sites_mp))
-    if plan.uncovered:
-        worst = max(plan.uncovered, key=lambda u: u[1] - u[2])
-        plan.notes.append(
-            f"{len(plan.uncovered)} point(s) cannot be relieved by any station "
-            f"(worst MP {worst[0]:.1f}: short {worst[1]-worst[2]:.0f} psi) — "
-            f"add a station, lower target speed, or re-batch.")
+    else:
+        plan.notes.append("No booster site met the crest/reach criteria — "
+                          "falling back to configured boosters.")
     return plan
 
 

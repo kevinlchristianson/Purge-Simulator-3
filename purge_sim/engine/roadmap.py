@@ -81,6 +81,21 @@ class Roadmap:
             return self.ceiling_at(mp)
         return float(np.min(self.ceiling_psig[lo:hi]))
 
+    def max_floor_ahead(self, mp: float, horizon_mi: float) -> float:
+        """Highest floor between `mp` and `mp + horizon_mi` (worst upcoming demand).
+
+        This lets the controller COAST safely: it only stops injecting when the gas
+        already behind the pig exceeds the worst drive the next stretch will demand,
+        so it never coasts down into a climb it then can't make (which would stall
+        the pig). On a genuine descent the floor stays low ahead, so coasting
+        continues and the climb column is drawn down.
+        """
+        lo = int(np.searchsorted(self.mp, mp, side='left'))
+        hi = int(np.searchsorted(self.mp, mp + horizon_mi, side='right'))
+        if hi <= lo:
+            return self.floor_at(mp)
+        return float(np.max(self.floor_psig[lo:hi]))
+
     @property
     def feasible(self) -> bool:
         return not bool(self.infeasible_mask.any())
