@@ -166,6 +166,84 @@ def _find_col(df_cols_lower: dict[str, str], key: str) -> Optional[str]:
     return None
 
 
+def _semantic_thin_indices(
+    df: 'pd.DataFrame',
+    mop_col: str,
+    elev_col: str,
+    site_col: Optional[str],
+    desc_col: Optional[str],
+    comments_col: Optional[str],
+    mop_step_psig: float = 5.0,
+) -> List[int]:
+    """
+    Return indices of rows to keep from a sorted MOP-joint DataFrame.
+
+    Keeps:
+      1. First and last row.
+      2. Any row where |MOP - last_kept_MOP| >= mop_step_psig (real pipe-grade change,
+         not the 1-3 psig hydrostatic-test elevation noise that appears every joint).
+      3. Any row with a non-empty Site, Additional description, or Comments column
+         (pump stations, valves, BPCV, road crossings — special pipeline features).
+      4. Within each run of dropped rows, the row with the minimum elevation AND the
+         row with the maximum elevation. These preserve the elevation extrema needed for
+         HGL accuracy and slack-line prevention without retaining every joint.
+    """
+    import numpy as np
+    n = len(df)
+    if n == 0:
+        return []
+    if n <= 2:
+        return list(range(n))
+
+    mop_arr  = pd.to_numeric(df[mop_col],  errors='coerce').to_numpy(dtype=float)
+    elev_arr = pd.to_numeric(df[elev_col], errors='coerce').fillna(0).to_numpy(dtype=float) \
+               if elev_col else np.zeros(n)
+
+    # Annotation flag: any special feature column non-empty
+    ann = np.zeros(n, dtype=bool)
+    for col in [site_col, desc_col, comments_col]:
+        if col and col in df.columns:
+            nonempty = (
+                df[col].notna() &
+                (df[col].astype(str).str.strip() != '') &
+                (df[col].astype(str).str.lower() != 'nan')
+            )
+            ann |= nonempty.to_numpy()
+
+    keep = np.zeros(n, dtype=bool)
+    keep[0] = True
+    keep[n - 1] = True
+    keep |= ann
+
+    # Pass 1: MOP threshold (track last kept MOP, not raw previous MOP)
+    last_mop = mop_arr[0] if not np.isnan(mop_arr[0]) else 0.0
+    for i in range(1, n):
+        v = mop_arr[i]
+        if np.isnan(v):
+            continue
+        if abs(v - last_mop) >= mop_step_psig:
+            keep[i] = True
+            last_mop = v
+
+    # Pass 2: Within each dropped run, keep elevation min, elevation max, and MOP min.
+    # Elevation extrema preserve HGL accuracy and slack-line peaks.
+    # MOP minimum ensures no MOP violation can be hidden by a dropped joint.
+    run_start = 0
+    for i in range(1, n + 1):
+        if i == n or keep[i]:
+            gap_len = i - run_start - 1
+            if gap_len > 0:
+                seg_elevs = elev_arr[run_start + 1 : i]
+                seg_mops  = mop_arr [run_start + 1 : i]
+                keep[run_start + 1 + int(np.argmin(seg_elevs))] = True
+                keep[run_start + 1 + int(np.argmax(seg_elevs))] = True
+                keep[run_start + 1 + int(np.argmin(seg_mops))]  = True
+            if i < n:
+                run_start = i
+
+    return [int(i) for i in np.where(keep)[0]]
+
+
 def parse_ili(file_path: str, sheet_index: int = 0) -> ILIData:
     """
     Parse a Rosen-format ILI Excel file.
@@ -232,25 +310,34 @@ def parse_ili(file_path: str, sheet_index: int = 0) -> ILIData:
     elev_vals  = df.loc[valid_elev, elev_col].to_numpy(dtype=float)
     elevation_profile = np.column_stack([elev_mps, elev_vals])
 
-    # --- Per-joint MOP ---
+    # --- Per-joint MOP (semantically thinned) ---
+    # The raw ILI data has one row per weld (every ~40 ft). MOP varies by 1-3 psig
+    # per joint due to hydrostatic test pressure adjusting for elevation — that noise
+    # has no hydraulic significance. We thin to:
+    #   1. Joints where MOP changes >= 5 psig from the last kept joint (real grade changes)
+    #   2. Annotated joints (Site / Comments / Additional description non-empty)
+    #   3. Elevation min AND max within each dropped run (for HGL and slack-line accuracy)
+    comments_col = _find_col(cols_lower, 'comments')
     mop_joints: List[MOPJoint] = []
-    if mop_col and od_col and wt_col:
-        mop_mask = df[mop_col].notna() & df[od_col].notna() & df[wt_col].notna()
-        for _, row in df.loc[mop_mask].iterrows():
+    if mop_col:
+        base_mask = df[mop_col].notna()
+        if od_col:
+            base_mask &= df[od_col].notna()
+        if wt_col:
+            base_mask &= df[wt_col].notna()
+        sub = df.loc[base_mask].reset_index(drop=True)
+
+        keep_idx = _semantic_thin_indices(sub, mop_col, elev_col, site_col, desc_col,
+                                          comments_col, mop_step_psig=5.0)
+
+        for i in keep_idx:
+            row = sub.iloc[i]
             mop_joints.append(MOPJoint(
                 mp=float(row[mp_col]),
                 mop_psig=float(row[mop_col]),
-                elevation_ft=float(row[elev_col]) if pd.notna(row[elev_col]) else 0.0,
-                od_in=float(row[od_col]),
-                wt_in=float(row[wt_col]),
-            ))
-    elif mop_col:
-        mop_mask = df[mop_col].notna()
-        for _, row in df.loc[mop_mask].iterrows():
-            mop_joints.append(MOPJoint(
-                mp=float(row[mp_col]),
-                mop_psig=float(row[mop_col]),
-                elevation_ft=float(row[elev_col]) if pd.notna(row[elev_col]) else 0.0,
+                elevation_ft=float(row[elev_col]) if pd.notna(row.get(elev_col)) else 0.0,
+                od_in=float(row[od_col]) if od_col else 24.0,
+                wt_in=float(row[wt_col]) if wt_col else 0.313,
             ))
 
     # --- Pipe geometry (variable OD/WT) ---

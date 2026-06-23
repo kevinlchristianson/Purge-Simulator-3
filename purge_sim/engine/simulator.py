@@ -29,7 +29,7 @@ from .physics import (
     pipe_area_ft2, pipe_volume_ft3,
     scfm_from_pig_velocity, psig_to_psia, psia_to_psig,
     static_head_psi, liquid_friction_loss_psi, gas_friction_loss_psi,
-    target_exit_pressure, fts_to_bph, mph_to_fts,
+    target_exit_pressure, fts_to_bph, bph_to_fts, mph_to_fts,
 )
 from .segment_model import N2Segment, SegmentList, PipeGeometry, scf_from_pressure_volume
 from .check_valve import CheckValve, evaluate_check_valves, insert_check_valve_boundary
@@ -40,13 +40,13 @@ from .booster import (
 from .bpcv import BPCVConfig, BPCVState, step_bpcv
 from .pump_stations import (
     PumpStationConfig, PumpStationState, StationStatus,
-    evaluate_shutdowns, effective_exit_condition,
+    evaluate_shutdowns, effective_exit_condition, next_active_station,
 )
 from .pig_solver import PigSolverConfig, PigSolverResult, solve_pig_speed, minimum_n2_floor_to_sustain_flow
 from .mop_check import (
     MOPJoint, MOPCheckResult, MOPStatus,
     check_mop_liquid_side, check_mop_gas_side,
-    build_gas_pressure_profile, mop_summary,
+    build_gas_pressure_profile, mop_summary, thin_mop_joints,
 )
 
 
@@ -152,6 +152,14 @@ class SimStep:
     # Booster states
     booster_states: List[dict] = field(default_factory=list)
 
+    # Pump station pressures (one entry per station per timestep)
+    # Each dict: {mp, name, discharge_psig, suction_psig, status}
+    #   status: 'bypassed' | 'running' | 'shutdown'
+    #   bypassed  — pig has passed; discharge_psig is N2 gas pressure at that location
+    #   running   — pump active ahead of pig; discharge_psig is liquid HGL discharge
+    #   shutdown  — pump offline, pig hasn't passed; discharge_psig is passive liquid HGL
+    station_pressures: List[dict] = field(default_factory=list)
+
     # Pump station events
     station_shutdown_events: List[dict] = field(default_factory=list)
 
@@ -243,6 +251,114 @@ def compute_initial_n2_pressure(
     return float(max(exit_psig + 5.0, min(p, cfg.maop_psig * 0.9)))
 
 
+def _compute_station_pressures(
+    station_states: List[PumpStationState],
+    pig_mp: float,
+    pig_face_psig: float,
+    exit_psig: float,
+    exit_mp: float,
+    gas_profile: List[tuple],
+    od_in: float,
+    wt_in: float,
+    sg: float,
+    viscosity_cst: float,
+    roughness_ft: float,
+    flow_bph: float,
+    elevation_at,
+) -> List[dict]:
+    """
+    Estimate pressure at each pump station for the current timestep.
+
+    Bypassed stations (pig has passed): N2 gas pressure at their milepost, read from
+    the step-function gas_profile.
+
+    Running stations ahead of pig: liquid HGL discharge pressure. Computed by working
+    from the exit condition backwards through the chain of running pumps. Each pump's
+    discharge = pressure needed to push liquid to its downstream target (next pump
+    suction or final exit), accounting for friction and static head.
+
+    Shutdown stations ahead of pig (pump offline, pig hasn't reached them): passive
+    liquid HGL pressure. Computed from pig face forward using friction and static head —
+    the pig is pushing liquid through these points without pump assist.
+    """
+    D_ft  = (od_in - 2.0 * wt_in) / 12.0
+    area  = pipe_area_ft2(od_in, wt_in)
+    v_fts = bph_to_fts(flow_bph, area) if area > 0 else 0.0
+
+    def _fric_and_head(from_mp: float, to_mp: float) -> tuple[float, float]:
+        L_ft = max(0.0, to_mp - from_mp) * 5280.0
+        fric = liquid_friction_loss_psi(L_ft, D_ft, v_fts, sg, viscosity_cst, roughness_ft)
+        head = static_head_psi(elevation_at(to_mp) - elevation_at(from_mp), sg)
+        return fric, head
+
+    def _gas_pressure_at(mp: float) -> float:
+        # Step-function lookup: largest mp in gas_profile that is <= target mp.
+        # gas_profile is sorted ascending by mp.
+        psig = pig_face_psig  # fallback if mp is beyond all gas profile points
+        for gmp, gp in gas_profile:
+            if gmp <= mp:
+                psig = gp
+            else:
+                break
+        return psig
+
+    # --- Split stations by status ---
+    running_ahead = sorted(
+        [s for s in station_states if s.is_active and s.mp > pig_mp],
+        key=lambda s: s.mp,
+    )
+    shutdown_ahead = [
+        s for s in station_states
+        if s.status == StationStatus.SHUT_DOWN and s.mp > pig_mp
+    ]
+
+    # --- Running stations: build HGL discharge from exit backwards ---
+    discharge_by_mp: dict[float, float] = {}
+    next_mp   = exit_mp
+    next_psig = exit_psig
+    for station in reversed(running_ahead):
+        fric, head = _fric_and_head(station.mp, next_mp)
+        discharge_by_mp[station.mp] = next_psig + fric + head
+        next_mp   = station.mp
+        next_psig = station.config.suction_psig
+
+    # --- Shutdown stations ahead of pig: passive liquid HGL from pig face forward ---
+    passive_by_mp: dict[float, float] = {}
+    for station in shutdown_ahead:
+        fric, head = _fric_and_head(pig_mp, station.mp)
+        passive_by_mp[station.mp] = pig_face_psig - fric - head
+
+    # --- Assemble results ---
+    out = []
+    for s in sorted(station_states, key=lambda st: st.mp):
+        behind_pig = s.mp <= pig_mp  # pig has passed; station now in N2 gas column
+        if behind_pig:
+            p = _gas_pressure_at(s.mp)
+            out.append({
+                'mp': s.mp, 'name': s.config.name,
+                'discharge_psig': p, 'suction_psig': p,
+                'status': 'bypassed',
+            })
+        elif s.is_active:
+            # Running pump ahead of pig
+            disc = discharge_by_mp.get(s.mp, pig_face_psig)
+            out.append({
+                'mp': s.mp, 'name': s.config.name,
+                'discharge_psig': disc,
+                'suction_psig': s.config.suction_psig,
+                'status': 'running',
+            })
+        else:
+            # Pump is offline, pig hasn't passed it yet — passive liquid HGL
+            p = passive_by_mp.get(s.mp, pig_face_psig)
+            out.append({
+                'mp': s.mp, 'name': s.config.name,
+                'discharge_psig': p, 'suction_psig': p,
+                'status': 'shutdown',
+            })
+    return out
+
+
 def simulate(cfg: SimConfig, progress_cb: Optional[Callable[[float], None]] = None) -> SimResults:
     """
     Run the purge simulation.
@@ -256,6 +372,39 @@ def simulate(cfg: SimConfig, progress_cb: Optional[Callable[[float], None]] = No
     """
     t_wall_start = time.monotonic()
     results = SimResults(config=cfg)
+
+    # --- Thin MOP joints (one-time preprocessing) ---
+    # Reduces 33,000+ ILI joints to ~300–700 hydraulically critical points:
+    # elevation peaks/valleys (RDP ε=3 ft), MOP step-change boundaries (≥25 psig),
+    # and per-interval worst-case MOP. The full joint list stays in cfg for the
+    # scenario file; only the thinned list is used during the loop.
+    mop_joints = thin_mop_joints(cfg.mop_joints) if cfg.mop_joints else []
+
+    # Rebuild BPCV downstream joints and upstream elevation array from the thinned set.
+    # Both the MOP cap (downstream) and slack-line floor (upstream) benefit from reduction.
+    thinned_elev_profile: Optional[np.ndarray] = None
+    if cfg.bpcv is not None and mop_joints:
+        from .bpcv import BCPVDownstreamJoint
+        cfg.bpcv.downstream_joints = [
+            BCPVDownstreamJoint(mp=j.mp, mop_psig=j.mop_psig, elevation_ft=j.elevation_ft)
+            for j in mop_joints if j.mp > cfg.bpcv.mp
+        ]
+        # Thinned elevation profile for upstream slack-line check (pig → BPCV section)
+        thinned_elev_profile = np.array(
+            [[j.mp, j.elevation_ft] for j in mop_joints if j.mp <= cfg.bpcv.mp],
+            dtype=float,
+        ) if mop_joints else None
+
+    # --- Pre-sort MOP joint arrays for fast per-step cap computation ---
+    # Sorted numpy arrays allow O(log N) slicing each step instead of list comprehension.
+    if mop_joints:
+        _mj_mp   = np.array([j.mp          for j in mop_joints], dtype=float)
+        _mj_mop  = np.array([j.mop_psig    for j in mop_joints], dtype=float)
+        _mj_elev = np.array([j.elevation_ft for j in mop_joints], dtype=float)
+        _mj_sort = np.argsort(_mj_mp)
+        _mj_mp, _mj_mop, _mj_elev = _mj_mp[_mj_sort], _mj_mop[_mj_sort], _mj_elev[_mj_sort]
+    else:
+        _mj_mp = _mj_mop = _mj_elev = None
 
     # --- Elevation interpolator ---
     elev_arr = np.asarray(cfg.elevation_profile, dtype=float)
@@ -338,6 +487,10 @@ def simulate(cfg: SimConfig, progress_cb: Optional[Callable[[float], None]] = No
                 target_flow_bph=fts_to_bph(mph_to_fts(cfg.target_speed_mph), area_ft2),
                 fluid_sg=cfg.fluid_sg,
                 fluid_viscosity_cst=cfg.fluid_viscosity_cst,
+                elevation_profile=thinned_elev_profile if thinned_elev_profile is not None else cfg.elevation_profile,
+                upstream_od_in=od_in,
+                upstream_wt_in=wt_in,
+                upstream_roughness_ft=cfg.fluid_roughness_ft,
             )
             bpcv_set_point_psig = bpcv_result['set_point_psig']
             if bpcv_result['pig_has_passed']:
@@ -453,24 +606,147 @@ def simulate(cfg: SimConfig, progress_cb: Optional[Callable[[float], None]] = No
         # pig face pressure is to keep pushing gas in from origin.
         is_stalled = (pig_result.pig_speed_mph == 0.0)
 
-        if pig_result.meter_valve_active and not is_stalled:
-            _min_face = (pig_result.exit_psig
-                         + pig_result.liquid_friction_psi
-                         + pig_result.static_head_psi)
-            fill_pressure_psig = max(_min_face + 20.0, min_suction_floor)
-        elif min_suction_floor > 0:
-            # Boosters running: injection supplies suction floor only.
-            fill_pressure_psig = max(min_suction_floor, cfg.n2_initial_pressure_psig)
-        else:
-            # No boosters: injection must build pig face directly.
-            fill_pressure_psig = max(pig_face_psig, cfg.n2_initial_pressure_psig)
+        # Minimum pig face needed to sustain pig motion at target speed.
+        # Used to:
+        #   (a) compute the correct mass injection when boosters are running
+        #   (b) cap the last active booster's discharge so pig face stays at minimum needed
+        #       rather than always running to rated discharge (which wastes stored N2 and
+        #       raises consumption proportional to pig face pressure).
+        _min_face_psig = (pig_result.exit_psig
+                          + pig_result.liquid_friction_psi
+                          + pig_result.static_head_psi)
 
-        scf_to_fill_new_vol = scf_from_pressure_volume(psig_to_psia(fill_pressure_psig), delta_vol, cfg.n2_temperature_f)
+        if pig_result.meter_valve_active and not is_stalled:
+            if min_suction_floor > 0:
+                # Boosters running at target speed: injection stub only needs suction floor.
+                fill_pressure_psig = min_suction_floor
+                # Pig face target = minimum needed + margin. The booster is capped here
+                # so SCF consumed per unit advance ∝ pig face P (mass conservation).
+                pig_face_target_psig = _min_face_psig + 20.0
+            else:
+                # No boosters: injection IS the pig face.
+                fill_pressure_psig = _min_face_psig + 20.0
+                pig_face_target_psig = fill_pressure_psig
+        elif min_suction_floor > 0:
+            # Boosters running but drive-limited: want max booster output to recover speed.
+            # Injection stub still only needs suction floor; booster discharge is uncapped.
+            fill_pressure_psig = min_suction_floor
+            pig_face_target_psig = max(
+                (bs.config.discharge_psig for bs in booster_states if bs.requested),
+                default=pig_face_psig,
+            )
+        else:
+            # No boosters, drive-limited: maintain current pig face pressure.
+            # n2_initial_pressure_psig must NOT be used as a floor here — it was only for
+            # initialization and would force 600–900 psig injection in steady state.
+            fill_pressure_psig = pig_face_psig
+            pig_face_target_psig = fill_pressure_psig
+
+        # --- Transition lookahead: pre-build face to survive the next station shutdown ---
+        #
+        # Without this, injection targets only the *current* exit (e.g., NW suction 1 mile
+        # ahead at 55 psig). When NW's 1-mile limit fires, pig suddenly must push 52 miles
+        # to LS — far beyond current face pressure — and stalls.
+        #
+        # Fix: at all times, ensure face >= minimum needed to push from pig's current position
+        # to the station AFTER the current exit target, at minimum speed. This means injection
+        # continuously pre-builds the pressure cushion required for each upcoming handoff.
+        if min_suction_floor == 0.0:
+            _bpcv_mp_tl   = cfg.bpcv.mp if cfg.bpcv else None
+            if _bpcv_mp_tl is not None and pig_mp < _bpcv_mp_tl:
+                _ult_mp_tl   = _bpcv_mp_tl
+                _ult_psig_tl = bpcv_set_point_psig if bpcv_set_point_psig is not None else cfg.exit_pressure_run_psig
+            else:
+                _ult_mp_tl   = cfg.purge_end_mp
+                _ult_psig_tl = cfg.exit_pressure_run_psig
+
+            _cur_exit_sta = next_active_station(station_states, pig_mp)
+            if _cur_exit_sta is not None:
+                _after = sorted(
+                    [s for s in station_states if s.is_active and s.mp > _cur_exit_sta.mp],
+                    key=lambda s: s.mp,
+                )
+                _post_mp   = _after[0].mp                    if _after else _ult_mp_tl
+                _post_psig = _after[0].config.suction_psig   if _after else _ult_psig_tl
+                _D_ft_tl   = (od_in - 2.0 * wt_in) / 12.0
+                _v_min_tl  = mph_to_fts(cfg.min_speed_mph)
+                _L_tl      = max(0.0, _post_mp - pig_mp) * 5280.0
+                _fric_tl   = liquid_friction_loss_psi(
+                    _L_tl, _D_ft_tl, _v_min_tl,
+                    cfg.fluid_sg, cfg.fluid_viscosity_cst, cfg.fluid_roughness_ft,
+                )
+                _head_tl   = static_head_psi(
+                    elevation_at(_post_mp) - pig_elevation_ft, cfg.fluid_sg,
+                )
+                _transition_floor = max(0.0, _post_psig + _fric_tl + _head_tl)
+                fill_pressure_psig     = max(fill_pressure_psig,     _transition_floor)
+                pig_face_target_psig   = max(pig_face_target_psig,   _transition_floor)
+
+        # --- MOP hard ceiling ---
+        # MOP violations are zero-tolerance. The pig slows below configured minimum
+        # before we allow any joint to be overpressured. Cap ALL injection and booster
+        # targets at the maximum pressure the weakest joint can tolerate.
+        #
+        # Gas side:    min MOP of joints in the N2 column (purge_start → pig_mp).
+        #              Injection and booster discharge cannot push any segment above this.
+        #
+        # Liquid side: min_j [ MOP_j + friction(pig→j) + head(pig→j) ] for j downstream.
+        #              If pig face exceeds this, pressure at joint j would exceed MOP_j.
+        mop_cap = math.inf
+        if _mj_mp is not None:
+            # Gas side cap: include a 20-mile lookahead so face ramps DOWN before a
+            # low-MOP joint enters the gas column (not after). Uses a separate index
+            # from the liquid side so the two computations don't interfere.
+            _GAS_LOOKAHEAD_MI = 20.0
+            g_hi_gas = int(np.searchsorted(_mj_mp, pig_mp + _GAS_LOOKAHEAD_MI, side='right'))
+            if g_hi_gas > 0:
+                mop_cap = float(np.min(_mj_mop[:g_hi_gas]))
+
+            # Liquid side cap: joints between pig_mp and exit_mp.
+            # Uses pig_mp (not pig+lookahead) so nearby downhill joints are captured.
+            pig_idx = int(np.searchsorted(_mj_mp, pig_mp, side='right'))
+            l_hi = int(np.searchsorted(_mj_mp, exit_mp, side='right'))
+            if pig_idx < l_hi:
+                lj_mps   = _mj_mp  [pig_idx:l_hi]
+                lj_mops  = _mj_mop [pig_idx:l_hi]
+                lj_elevs = _mj_elev[pig_idx:l_hi]
+                _D_ft_c  = (od_in - 2.0 * wt_in) / 12.0
+                _v_c     = mph_to_fts(cfg.target_speed_mph)
+                _m       = 0.3048
+                _D_m, _v_m = _D_ft_c * _m, _v_c * _m
+                _rho = 999.0 * cfg.fluid_sg
+                _nu  = cfg.fluid_viscosity_cst * 1e-6
+                _Re  = _v_m * _D_m / max(1e-12, _nu)
+                _eps = cfg.fluid_roughness_ft * _m
+                _f   = (64.0 / max(1.0, _Re)) if _Re < 2300 else \
+                       (0.25 / (math.log10(_eps / (3.7 * _D_m) + 5.74 / _Re**0.9)) ** 2)
+                _fric_pft = _f / _D_m * 0.5 * _rho * _v_m**2 / 6894.757 * _m
+                _L_arr    = (lj_mps - pig_mp) * 5280.0
+                # head_arr = (j_elev - pig_elev) × sg × 0.433
+                # Positive when j is above pig (uphill → less pressure at j → higher pig cap allowed)
+                # Negative when j is below pig (downhill → more pressure at j → lower pig cap required)
+                # Bernoulli: P_pig_max = MOP_j + head_arr + fric
+                _head_arr = (lj_elevs - pig_elevation_ft) * cfg.fluid_sg * 62.4 / 144.0
+                liq_cap   = float(np.min(lj_mops + _fric_pft * _L_arr + _head_arr))
+                mop_cap   = min(mop_cap, liq_cap)
+
+        if math.isfinite(mop_cap) and mop_cap > 0:
+            fill_pressure_psig   = min(fill_pressure_psig,   mop_cap)
+            pig_face_target_psig = min(pig_face_target_psig, mop_cap)
+
+        # SCF to fill the volume vacated by pig advance.
+        # When boosters run, this mass enters the injection stub, is compressed by the
+        # booster chain, and fills the expanding pig face volume. Mass is conserved through
+        # the chain, so the injection amount must be calculated at pig face target pressure
+        # (not at the stub fill pressure, which is much lower).
+        scf_to_fill_new_vol = scf_from_pressure_volume(
+            psig_to_psia(pig_face_target_psig), delta_vol, cfg.n2_temperature_f
+        )
         scf_inject = scf_deficit + scf_to_fill_new_vol
 
-        # Pressurize existing injection segment up to fill_pressure.
-        # When drive-limited (not meter valve), this ensures a stalled pig still gets gas.
-        if not pig_result.meter_valve_active:
+        # Drive-limited without boosters: also pressurize injection segment to fill_pressure
+        # so pig face builds up from injection directly.
+        if not pig_result.meter_valve_active and min_suction_floor == 0:
             target_scf = inj_seg.scf_at_pressure(fill_pressure_psig)
             scf_inject = max(scf_inject, target_scf - inj_seg.scf)
 
@@ -491,11 +767,36 @@ def simulate(cfg: SimConfig, progress_cb: Optional[Callable[[float], None]] = No
         injection_scfm = scf_inject / max(1e-12, dt_hr * 60.0)
 
         # --- Step boosters ---
+        # Only the pig-adjacent (last active) booster gets a discharge cap — it controls
+        # pig face pressure. Earlier boosters in the chain should run at rated discharge to
+        # build up intermediate segment pressure for the last stage to draw from.
+        # In drive-limited mode (pig below target speed), all boosters run uncapped to
+        # build maximum pressure and recover pig speed.
+        if pig_result.meter_valve_active and min_suction_floor > 0:
+            last_active_mp = max(
+                (bs.mp for bs in booster_states if bs.requested and bs.mp < pig_mp),
+                default=-1.0,
+            )
+        else:
+            last_active_mp = -1.0  # no cap in drive-limited mode or no-booster mode
+
         active_mps = active_booster_mps(booster_states)
         booster_step_results = []
         for bs in booster_states:
             if bs.mp < pig_mp:  # only boosters the pig has passed
-                bsr = step_booster(bs, segs, dt_hr, pig_face_psig)
+                tgt_discharge = (
+                    pig_face_target_psig
+                    if (last_active_mp >= 0 and abs(bs.mp - last_active_mp) < 0.001)
+                    else None
+                )
+                # MOP cap applies to every booster, not just the last active.
+                # A booster must never discharge into a segment above the minimum
+                # MOP of joints within that segment or anywhere downstream.
+                if math.isfinite(mop_cap) and mop_cap > 0:
+                    tgt_discharge = min(tgt_discharge, mop_cap) if tgt_discharge is not None \
+                                    else mop_cap
+                bsr = step_booster(bs, segs, dt_hr, pig_face_psig,
+                                   target_discharge_psig=tgt_discharge)
                 booster_step_results.append({
                     'mp': bs.mp,
                     'name': bs.config.name,
@@ -604,10 +905,18 @@ def simulate(cfg: SimConfig, progress_cb: Optional[Callable[[float], None]] = No
             sim_time_hr=t_hr,
         )
 
-        # --- MOP check ---
+        # --- MOP check and station pressures ---
         gas_profile = build_gas_pressure_profile(segs.summary())
+        station_pressures = _compute_station_pressures(
+            station_states, pig_mp, pig_face_psig,
+            exit_psig, exit_mp, gas_profile,
+            od_in, wt_in,
+            cfg.fluid_sg, cfg.fluid_viscosity_cst, cfg.fluid_roughness_ft,
+            flow_bph=fts_to_bph(mph_to_fts(cfg.target_speed_mph), area_ft2),
+            elevation_at=elevation_at,
+        )
         mop_liq = check_mop_liquid_side(
-            pig_mp, pig_face_psig, cfg.mop_joints,
+            pig_mp, pig_face_psig, mop_joints,
             exit_psig, exit_mp,
             fts_to_bph(mph_to_fts(pig_result.pig_speed_mph), area_ft2),
             cfg.fluid_sg, cfg.fluid_viscosity_cst, cfg.fluid_roughness_ft,
@@ -615,7 +924,7 @@ def simulate(cfg: SimConfig, progress_cb: Optional[Callable[[float], None]] = No
             pig_elevation_ft=pig_elevation_ft,
         )
         mop_gas = check_mop_gas_side(
-            pig_mp, cfg.purge_start_mp, gas_profile, cfg.mop_joints, cfg.mop_warning_fraction,
+            pig_mp, cfg.purge_start_mp, gas_profile, mop_joints, cfg.mop_warning_fraction,
         )
         all_mop = mop_liq + mop_gas
         mop_sum = mop_summary(all_mop)
@@ -641,6 +950,7 @@ def simulate(cfg: SimConfig, progress_cb: Optional[Callable[[float], None]] = No
             worst_mop_margin=mop_sum['worst_violation_margin'],
             mop_results=all_mop,
             booster_states=booster_step_results,
+            station_pressures=station_pressures,
             station_shutdown_events=shutdown_events,
             slack_line_risk=pig_result.slack_line_risk,
             meter_valve_active=pig_result.meter_valve_active,

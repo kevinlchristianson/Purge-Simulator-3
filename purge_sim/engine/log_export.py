@@ -8,6 +8,7 @@ data section so it can be parsed or pasted directly for analysis.
 from __future__ import annotations
 
 import datetime
+import math
 from typing import Optional
 
 from .simulator import SimResults, SimConfig
@@ -56,9 +57,10 @@ def export_run_log(results: SimResults, path: str, scenario_name: str = "") -> N
         f"  Target speed:      {cfg.target_speed_mph} mph",
         f"  Speed limits:      {cfg.min_speed_mph} – {cfg.max_speed_mph} mph",
         f"  N2 initial P:      {cfg.n2_initial_pressure_psig:.1f} psig  (auto-calculated)",
-        f"  Max injection:     {cfg.max_injection_psig:.1f} psig / {cfg.max_injection_scfm:.0f} SCFM",
-        f"  MAOP:              {cfg.maop_psig:.1f} psig",
-        f"  Max drive:         {cfg.max_drive_psig:.1f} psig",
+        f"  Max injection:     {cfg.max_injection_scfm:.0f} SCFM"
+        + (f" / {cfg.max_injection_psig:.1f} psig" if math.isfinite(cfg.max_injection_psig) else ""),
+        f"  MAOP:              " + (f"{cfg.maop_psig:.1f} psig" if math.isfinite(cfg.maop_psig) else "unconstrained (MOP profile applies)"),
+        f"  Max drive:         " + (f"{cfg.max_drive_psig:.1f} psig" if math.isfinite(cfg.max_drive_psig) else "unconstrained"),
         f"  Fluid:             SG={cfg.fluid_sg}, visc={cfg.fluid_viscosity_cst} cSt, rough={cfg.fluid_roughness_ft} ft",
         f"  Exit condition:    {cfg.exit_pressure_behavior} {cfg.exit_pressure_run_psig:.1f} psig",
         f"  BPCV:              {bpcv_str}",
@@ -178,16 +180,21 @@ def export_run_log(results: SimResults, path: str, scenario_name: str = "") -> N
         )
 
     # -----------------------------------------------------------------------
-    # 7. Elevation profile (static reference)
+    # 7. Station pressures CSV (one row per station per step)
     # -----------------------------------------------------------------------
-    if cfg.elevation_profile is not None and len(cfg.elevation_profile) > 0:
-        lines += [
-            "",
-            "ELEVATION PROFILE (CSV)",
-            "mp,elev_ft",
-        ]
-        for row in cfg.elevation_profile:
-            lines.append(f"{float(row[0]):.4f},{float(row[1]):.2f}")
+    lines += [
+        "",
+        "STATION PRESSURES (CSV)",
+        "time_hr,pig_mp,station_mp,station_name,discharge_psig,suction_psig,status",
+    ]
+    for s in results.steps:
+        for sp in s.station_pressures:
+            lines.append(
+                f"{s.t_hr:.4f},{s.pig_mp:.4f},"
+                f"{sp['mp']:.4f},{sp['name']},"
+                f"{sp['discharge_psig']:.1f},{sp['suction_psig']:.1f},"
+                f"{sp['status']}"
+            )
 
     # -----------------------------------------------------------------------
     # 8. MOP profile (static reference)

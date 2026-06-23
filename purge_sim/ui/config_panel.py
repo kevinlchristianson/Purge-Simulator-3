@@ -68,6 +68,7 @@ class ConfigPanel(ttk.Frame):
         self._on_change = on_change or (lambda: None)
         self._ili_data: Optional[ILIData] = None
         self._profile_data = None
+        self._mop_joints_cache: list = []   # populated from ILI or loaded scenario
 
         # Scrollable canvas
         canvas = tk.Canvas(self, borderwidth=0, highlightthickness=0)
@@ -112,6 +113,10 @@ class ConfigPanel(ttk.Frame):
         self._sec_exit   = _CollapsibleSection(p, "Exit Condition")
         self._sec_exit.pack(fill=tk.X, pady=2)
         self._build_exit_section(self._sec_exit.content)
+
+        self._sec_plim   = _CollapsibleSection(p, "Pressure Limits")
+        self._sec_plim.pack(fill=tk.X, pady=2)
+        self._build_pressure_limits_section(self._sec_plim.content)
 
         self._sec_infra  = _CollapsibleSection(p, "Infrastructure")
         self._sec_infra.pack(fill=tk.X, pady=2)
@@ -172,8 +177,8 @@ class ConfigPanel(ttk.Frame):
                                  values=["Diesel", "Gasoline", "Crude Oil", "Water", "NGL"], width=14)
         fluid_cb.grid(row=r, column=1, sticky=tk.W); r += 1
 
-        self._sg_var   = tk.DoubleVar(value=0.85)
-        self._visc_var = tk.DoubleVar(value=2.7)
+        self._sg_var   = tk.DoubleVar(value=0.815)
+        self._visc_var = tk.DoubleVar(value=6.0)
         self._rough_var = tk.DoubleVar(value=0.00015)
         self._lf(f, r, "Specific Gravity:", self._sg_var);    r += 1
         self._lf(f, r, "Viscosity (cSt):", self._visc_var);   r += 1
@@ -182,10 +187,8 @@ class ConfigPanel(ttk.Frame):
     def _build_n2_section(self, f):
         r = 0
         self._n2_temp_var       = tk.DoubleVar(value=45.0)
-        self._max_inj_p_var     = tk.DoubleVar(value=200.0)
         self._max_inj_scfm_var  = tk.DoubleVar(value=5000.0)
         self._lf(f, r, "N2 Temperature (°F):",   self._n2_temp_var);       r += 1
-        self._lf(f, r, "Max Injection (psig):",   self._max_inj_p_var);    r += 1
         self._lf(f, r, "Max Injection (SCFM):",   self._max_inj_scfm_var); r += 1
         ttk.Label(f, text="Startup N2 pressure is auto-calculated\n"
                            "from friction + elevation to first exit.",
@@ -207,8 +210,6 @@ class ConfigPanel(ttk.Frame):
         r = 0
         self._exit_run_var   = tk.DoubleVar(value=50.0)
         self._exit_end_var   = tk.DoubleVar(value=10.0)
-        self._maop_var       = tk.DoubleVar(value=1200.0)
-        self._max_drive_var  = tk.DoubleVar(value=1000.0)
         self._exit_bhvr_var  = tk.StringVar(value="taper_last_n_miles")
         self._lf(f, r, "Exit P run (psig):",  self._exit_run_var);  r += 1
         self._lf(f, r, "Exit P end (psig):",  self._exit_end_var);  r += 1
@@ -217,8 +218,22 @@ class ConfigPanel(ttk.Frame):
                      values=["taper_last_n_miles", "step_last_n_miles",
                              "linear_ramp", "constant_run", "constant_end"]
                      ).grid(row=r, column=1, sticky=tk.W); r += 1
-        self._lf(f, r, "MAOP (psig):",       self._maop_var);       r += 1
-        self._lf(f, r, "Max Drive (psig):",   self._max_drive_var);  r += 1
+
+    def _build_pressure_limits_section(self, f):
+        ttk.Label(
+            f, text="Leave blank when an MOP profile is loaded — per-joint\n"
+                    "limits apply. Only needed for profile-free ('dumb') purges.",
+            foreground="gray", font=("", 8),
+        ).pack(anchor=tk.W, pady=(0, 4))
+        inner = ttk.Frame(f)
+        inner.pack(fill=tk.X)
+        r = 0
+        self._maop_var      = tk.StringVar(value="")
+        self._max_drive_var = tk.StringVar(value="")
+        self._max_inj_p_var = tk.StringVar(value="")
+        self._lf(inner, r, "MAOP (psig):",            self._maop_var);      r += 1
+        self._lf(inner, r, "Max Drive (psig):",        self._max_drive_var); r += 1
+        self._lf(inner, r, "Max Injection (psig):",    self._max_inj_p_var); r += 1
 
     def _build_infra_section(self, f):
         ttk.Label(f, text="Check Valves — one per line: mp, name").pack(anchor=tk.W)
@@ -342,6 +357,11 @@ class ConfigPanel(ttk.Frame):
     # Input parsing helpers
     # ------------------------------------------------------------------
 
+    def _parse_optional_float(self, var: tk.StringVar) -> Optional[float]:
+        """Return float value or None if the entry is blank."""
+        v = var.get().strip()
+        return float(v) if v else None
+
     def _parse_pipe_segments(self) -> PipeGeometry:
         geom = PipeGeometry()
         text = self._seg_text.get("1.0", tk.END)
@@ -422,6 +442,26 @@ class ConfigPanel(ttk.Frame):
             mp   = float(parts[0])
             elev = float(parts[1])
             name = parts[2] if len(parts) > 2 else "BPCV"
+            if self._mop_joints_cache:
+                from ..engine.bpcv import BCPVDownstreamJoint
+                from ..engine.physics import fts_to_bph, mph_to_fts, pipe_area_ft2
+                ds_joints = [
+                    BCPVDownstreamJoint(mp=j.mp, mop_psig=j.mop_psig, elevation_ft=j.elevation_ft)
+                    for j in self._mop_joints_cache if j.mp > mp
+                ]
+                geom = self._parse_pipe_segments()
+                ds_od, ds_wt = geom.od_wt_at(mp + 0.1)
+                ds_area = pipe_area_ft2(ds_od, ds_wt)
+                return BPCVConfig(
+                    mp=mp, elevation_ft=elev, name=name,
+                    downstream_joints=ds_joints,
+                    downstream_flow_bph=fts_to_bph(mph_to_fts(float(self._tgt_speed_var.get())), ds_area),
+                    downstream_od_in=ds_od,
+                    downstream_wt_in=ds_wt,
+                    downstream_sg=float(self._sg_var.get()),
+                    downstream_viscosity_cst=float(self._visc_var.get()),
+                    downstream_roughness_ft=float(self._rough_var.get()),
+                )
             return BPCVConfig(mp=mp, elevation_ft=elev, name=name)
         return None
 
@@ -435,13 +475,14 @@ class ConfigPanel(ttk.Frame):
     def _mop_joints(self):
         if self._ili_data:
             return self._ili_data.mop_joints
-        return []
+        return self._mop_joints_cache
 
     # ------------------------------------------------------------------
     # Public API — called by MainWindow
     # ------------------------------------------------------------------
 
     def build_sim_config(self) -> SimConfig:
+        import math
         geom = self._parse_pipe_segments()
         elev = self._elevation_profile()
         return SimConfig(
@@ -453,7 +494,7 @@ class ConfigPanel(ttk.Frame):
             fluid_viscosity_cst=float(self._visc_var.get()),
             fluid_roughness_ft=float(self._rough_var.get()),
             n2_temperature_f=float(self._n2_temp_var.get()),
-            max_injection_psig=float(self._max_inj_p_var.get()),
+            max_injection_psig=self._parse_optional_float(self._max_inj_p_var) or math.inf,
             max_injection_scfm=float(self._max_inj_scfm_var.get()),
             exit_pressure_run_psig=float(self._exit_run_var.get()),
             exit_pressure_end_psig=float(self._exit_end_var.get()),
@@ -462,8 +503,8 @@ class ConfigPanel(ttk.Frame):
             min_speed_mph=float(self._min_speed_var.get()),
             max_speed_mph=float(self._max_speed_var.get()),
             target_speed_mph=float(self._tgt_speed_var.get()),
-            maop_psig=float(self._maop_var.get()),
-            max_drive_psig=float(self._max_drive_var.get()),
+            maop_psig=self._parse_optional_float(self._maop_var) or math.inf,
+            max_drive_psig=self._parse_optional_float(self._max_drive_var) or math.inf,
             mop_joints=self._mop_joints(),
             mop_warning_fraction=0.95,
             check_valves=self._parse_check_valves(),
@@ -517,6 +558,11 @@ class ConfigPanel(ttk.Frame):
         bpcv_dict = ({'mp': bpcv_cfg.mp, 'elevation_ft': bpcv_cfg.elevation_ft, 'name': bpcv_cfg.name}
                      if bpcv_cfg else None)
 
+        mop_joint_dicts = [
+            {'mp': j.mp, 'mop_psig': j.mop_psig, 'elevation_ft': j.elevation_ft,
+             'od_in': j.od_in, 'wt_in': j.wt_in}
+            for j in self._mop_joints()
+        ]
         return ScenarioInputs(
             purge_start_mp=float(self._start_mp_var.get()),
             purge_end_mp=float(self._end_mp_var.get()),
@@ -527,7 +573,7 @@ class ConfigPanel(ttk.Frame):
             fluid_viscosity_cst=float(self._visc_var.get()),
             fluid_roughness_ft=float(self._rough_var.get()),
             n2_temperature_f=float(self._n2_temp_var.get()),
-            max_injection_psig=float(self._max_inj_p_var.get()),
+            max_injection_psig=self._parse_optional_float(self._max_inj_p_var),
             max_injection_scfm=float(self._max_inj_scfm_var.get()),
             exit_pressure_run_psig=float(self._exit_run_var.get()),
             exit_pressure_end_psig=float(self._exit_end_var.get()),
@@ -536,8 +582,8 @@ class ConfigPanel(ttk.Frame):
             min_speed_mph=float(self._min_speed_var.get()),
             max_speed_mph=float(self._max_speed_var.get()),
             target_speed_mph=float(self._tgt_speed_var.get()),
-            maop_psig=float(self._maop_var.get()),
-            max_drive_psig=float(self._max_drive_var.get()),
+            maop_psig=self._parse_optional_float(self._maop_var),
+            max_drive_psig=self._parse_optional_float(self._max_drive_var),
             check_valves=cvs,
             pump_stations=pss,
             booster_stations=bss,
@@ -547,6 +593,7 @@ class ConfigPanel(ttk.Frame):
             spread_suction_min_psig=float(self._spread_suction_min_var.get()),
             spread_max_flow_scfm=float(self._spread_max_scfm_var.get()),
             bpcv=bpcv_dict,
+            mop_joints=mop_joint_dicts,
             dt_hr=float(self._dt_var.get()),
             adaptive_dt=bool(self._adaptive_var.get()),
         )
@@ -560,7 +607,6 @@ class ConfigPanel(ttk.Frame):
         self._rough_var.set(inputs.fluid_roughness_ft)
         self._fluid_var.set(inputs.fluid_name)
         self._n2_temp_var.set(inputs.n2_temperature_f)
-        self._max_inj_p_var.set(inputs.max_injection_psig)
         self._max_inj_scfm_var.set(inputs.max_injection_scfm)
         self._exit_run_var.set(inputs.exit_pressure_run_psig)
         self._exit_end_var.set(inputs.exit_pressure_end_psig)
@@ -569,8 +615,9 @@ class ConfigPanel(ttk.Frame):
         self._min_speed_var.set(inputs.min_speed_mph)
         self._max_speed_var.set(inputs.max_speed_mph)
         self._tgt_speed_var.set(inputs.target_speed_mph)
-        self._maop_var.set(inputs.maop_psig)
-        self._max_drive_var.set(inputs.max_drive_psig)
+        self._maop_var.set(str(inputs.maop_psig) if inputs.maop_psig is not None else "")
+        self._max_drive_var.set(str(inputs.max_drive_psig) if inputs.max_drive_psig is not None else "")
+        self._max_inj_p_var.set(str(inputs.max_injection_psig) if inputs.max_injection_psig is not None else "")
         self._n_spreads_var.set(inputs.n_spreads)
         self._mob_time_var.set(inputs.mob_time_hr)
         self._dt_var.set(inputs.dt_hr)
@@ -624,9 +671,24 @@ class ConfigPanel(ttk.Frame):
             self._data_status_var.set(
                 f"Profile from scenario: {len(arr):,} pts")
 
+        # MOP joints (from ILI, stored in scenario so headless runs work)
+        if inputs.mop_joints:
+            from ..engine.mop_check import MOPJoint
+            self._mop_joints_cache = [
+                MOPJoint(
+                    mp=j['mp'], mop_psig=j['mop_psig'],
+                    elevation_ft=j['elevation_ft'],
+                    od_in=j.get('od_in', 24.0), wt_in=j.get('wt_in', 0.313),
+                )
+                for j in inputs.mop_joints
+            ]
+        else:
+            self._mop_joints_cache = []
+
     def reset(self):
         """Reset to blank state."""
         self._ili_data = None
         self._profile_data = None
+        self._mop_joints_cache = []
         self._data_file_var.set("")
         self._data_status_var.set("No file loaded")

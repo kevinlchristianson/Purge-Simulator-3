@@ -126,6 +126,7 @@ def step_booster(
     segs: SegmentList,
     dt_hr: float,
     pig_face_pressure_psig: float,
+    target_discharge_psig: Optional[float] = None,
 ) -> dict:
     """
     Advance one booster station by dt_hr hours.
@@ -173,12 +174,21 @@ def step_booster(
         _update_state(state, result)
         return result
 
-    # Booster can run — compute flow rate
-    # Flow limited by compressor capacity
-    discharge_psig = min(state.config.discharge_psig, seg_dn.pressure_psig + 200.0)
-    # Don't compress beyond rated discharge
-    discharge_psig = min(discharge_psig, state.config.discharge_psig)
-    result['discharge_psig'] = discharge_psig
+    # Booster can run — compute effective discharge target.
+    # If a target_discharge_psig cap is supplied (set by the simulator for the pig-adjacent
+    # booster when pig is at target speed), cap discharge there. This prevents the booster
+    # from driving pig face above the minimum needed pressure, which would waste stored N2
+    # (N2 consumption scales linearly with pig face pressure via mass conservation).
+    # In drive-limited mode (pig below target speed), no cap is passed so the booster
+    # runs at rated discharge to recover pig speed as fast as possible.
+    if target_discharge_psig is not None:
+        effective_discharge_psig = min(
+            state.config.discharge_psig,
+            max(target_discharge_psig, suction_psig + 5.0),  # never below suction + headroom
+        )
+    else:
+        effective_discharge_psig = state.config.discharge_psig
+    result['discharge_psig'] = effective_discharge_psig
 
     # SCF transferred = min of: capacity, available above suction floor, downstream headroom
     scf_available = seg_up.scf_at_pressure(state.config.suction_min_psig)
@@ -186,8 +196,8 @@ def step_booster(
 
     max_scf_per_step = state.config.max_flow_scfm * dt_hr * 60.0
 
-    # Don't over-pressurize downstream beyond rated discharge
-    scf_headroom_dn = max(0.0, seg_dn.scf_at_pressure(state.config.discharge_psig) - seg_dn.scf)
+    # Don't over-pressurize downstream beyond effective discharge target
+    scf_headroom_dn = max(0.0, seg_dn.scf_at_pressure(effective_discharge_psig) - seg_dn.scf)
 
     scf_to_transfer = min(scf_can_send, max_scf_per_step, scf_headroom_dn)
     # Flow-limited: compressor is running at rated capacity (upstream/downstream not the limit)

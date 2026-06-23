@@ -61,7 +61,7 @@ class ScenarioInputs:
 
     # N2 gas
     n2_temperature_f: float = 45.0
-    max_injection_psig: float = 900.0
+    max_injection_psig: Optional[float] = None
     max_injection_scfm: float = 20_000.0
 
     # Exit / endpoint
@@ -76,8 +76,8 @@ class ScenarioInputs:
     target_speed_mph: float = 2.0
 
     # MAOP / drive envelope
-    maop_psig: float = 900.0
-    max_drive_psig: float = 900.0
+    maop_psig: Optional[float] = None
+    max_drive_psig: Optional[float] = None
 
     # Infrastructure (manually entered or auto-detected from ILI)
     check_valves: List[dict] = field(default_factory=list)
@@ -98,6 +98,11 @@ class ScenarioInputs:
 
     bpcv: Optional[dict] = None
     # e.g. {'mp': 205.64, 'elevation_ft': 137.0, 'name': 'St Cesaire BPCV'}
+
+    # MOP joints from ILI data — saved here so headless runs and reloaded scenarios
+    # have full per-joint pressure limits without needing the original ILI file.
+    # Each dict: {mp, mop_psig, elevation_ft, od_in, wt_in}
+    mop_joints: List[dict] = field(default_factory=list)
 
     # Data source reference
     data_source: str = ""   # 'ILI', 'KMZ', 'TXT', 'Excel', 'manual'
