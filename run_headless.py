@@ -142,10 +142,22 @@ def main():
     print("Simulating...")
     results = simulate(cfg, progress_cb=_progress)
 
+    if results.roadmap is not None:
+        print("\n" + results.roadmap.report())
+
+    if results.booster_plan is not None:
+        bp = results.booster_plan
+        print("\nBooster siting plan:")
+        for note in bp.notes:
+            print(f"  {note}")
+        for mp in bp.sites_mp:
+            print(f"    MP {mp:.1f}: {bp.reasons.get(mp, '')}")
+
     status = 'COMPLETED' if results.completed else f'ABORTED: {results.abort_reason}'
     print(f"\nStatus:    {status}")
     print(f"Steps:     {len(results.steps):,}")
     print(f"N2 total:  {results.total_scf_injected:,.0f} SCF")
+    print(f"N2 vented: {results.total_scf_vented:,.0f} SCF  (MOP relief)")
     print(f"Wall time: {results.wall_time_s:.1f}s")
 
     if results.steps:

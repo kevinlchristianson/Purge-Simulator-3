@@ -31,8 +31,109 @@ from dataclasses import dataclass, field
 from typing import List, Optional, Dict, Tuple
 import math
 
+import numpy as np
+
 from .backward_pass import BackwardPassResult, BackwardPassConfig, run_backward_pass
 from .booster import BoosterConfig, BoosterSpread
+
+
+@dataclass
+class BoosterSitePlan:
+    """Which booster stations actually earn a spread, derived from the roadmap.
+
+    A booster is only worth placing where the gas column from the current
+    pressure source (SP injection, or the last upstream booster) CANNOT deliver
+    the drive the pig needs without exceeding the MOP of some joint between the
+    source and the pig — i.e. a gas-MOP bottleneck on a climb. Stations on flat
+    or downhill stretches, where the floor is low and gravity helps, are skipped.
+    This mirrors the reference model, which staged compression up the long
+    SP->summit grade (NW partway, LS at the crest) and ran NO boosters on the
+    descent.
+    """
+    sites_mp: List[float] = field(default_factory=list)
+    reasons: Dict[float, str] = field(default_factory=dict)   # mp -> why placed
+    uncovered: List[Tuple[float, float, float]] = field(default_factory=list)
+    # each: (mp, floor_required, deliverable_mop) where no station could relieve
+    notes: List[str] = field(default_factory=list)
+
+
+def plan_booster_sites(
+    roadmap,
+    station_mps: List[float],
+    start_mp: float,
+    end_mp: float,
+    margin_psi: float = 1.0,
+) -> BoosterSitePlan:
+    """Greedy minimal-booster siting over the pre-run roadmap.
+
+    Walk the route upstream->downstream tracking a `source` (the active pressure
+    origin). The most the source can drive at point x without a new booster is
+    the *minimum joint MOP between the source and x* (a connected gas column is
+    ~uniform, so its weakest joint caps it). The drive the pig needs at x is
+    roadmap.floor_at(x). Where required floor exceeds deliverable MOP, the source
+    can't reach: drop a booster at the LAST candidate station before x (greatest
+    reach for the previous source), reset the source to it, and continue. This is
+    the classic minimum-stops interval cover and yields the fewest boosters that
+    keep the column legal up every climb.
+
+    Returns a BoosterSitePlan. `uncovered` lists points no station can relieve
+    (genuine infeasibility — same spots the roadmap flags floor > ceiling).
+    """
+    mp_grid = np.asarray(roadmap.mp, dtype=float)
+    mop_grid = np.asarray(roadmap.mop_psig, dtype=float)
+    floor = np.asarray(roadmap.floor_psig, dtype=float)
+    n = len(mp_grid)
+
+    stations = sorted(s for s in station_mps if start_mp < s < end_mp)
+
+    def min_mop_between(a: float, b: float) -> float:
+        m = (mp_grid >= a) & (mp_grid <= b)
+        return float(np.min(mop_grid[m])) if m.any() else math.inf
+
+    plan = BoosterSitePlan()
+    placed: set[float] = set()
+    source = start_mp
+    i = 0
+    while i < n:
+        x = float(mp_grid[i])
+        if x <= source:
+            i += 1
+            continue
+        deliverable = min_mop_between(source, x)
+        required = float(floor[i])
+        if required > deliverable + margin_psi:
+            cand = [s for s in stations if source < s < x and s not in placed]
+            if not cand:
+                plan.uncovered.append((x, required, deliverable))
+                i += 1   # cannot relieve here; record and move on
+                continue
+            site = max(cand)             # place as late as possible (max reach)
+            placed.add(site)
+            plan.sites_mp.append(site)
+            plan.reasons[site] = (
+                f"relieves gas-MOP bottleneck by MP {x:.1f}: floor {required:.0f} psi "
+                f"> deliverable {deliverable:.0f} psi from MP {source:.1f}"
+            )
+            source = site
+            # re-test the same x against the new, closer source
+        else:
+            i += 1
+
+    plan.sites_mp.sort()
+    if not plan.sites_mp:
+        plan.notes.append("No booster needed — SP injection covers the whole route "
+                          "within MOP (no gas-side bottleneck).")
+    else:
+        plan.notes.append(
+            f"{len(plan.sites_mp)} booster site(s) selected: "
+            + ", ".join(f"MP {m:.1f}" for m in plan.sites_mp))
+    if plan.uncovered:
+        worst = max(plan.uncovered, key=lambda u: u[1] - u[2])
+        plan.notes.append(
+            f"{len(plan.uncovered)} point(s) cannot be relieved by any station "
+            f"(worst MP {worst[0]:.1f}: short {worst[1]-worst[2]:.0f} psi) — "
+            f"add a station, lower target speed, or re-batch.")
+    return plan
 
 
 @dataclass

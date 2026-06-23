@@ -48,6 +48,8 @@ from .mop_check import (
     check_mop_liquid_side, check_mop_gas_side,
     build_gas_pressure_profile, mop_summary, thin_mop_joints,
 )
+from .roadmap import Roadmap, build_roadmap
+from .optimizer import plan_booster_sites, BoosterSitePlan
 
 
 # ---------------------------------------------------------------------------
@@ -87,6 +89,11 @@ class SimConfig:
     # --- MOP check ---
     mop_joints: List[MOPJoint] = field(default_factory=list)
     mop_warning_fraction: float = 0.95
+    # How far ahead the controller reads the pressure roadmap when capping drive.
+    # The pig-adjacent N2 persists behind the pig until consumed, so the cap honors
+    # the LOWEST ceiling within this horizon — drawing the column down BEFORE a
+    # low-MOP valley instead of over-building and venting. 0 = react at current mp.
+    mop_lookahead_mi: float = 8.0
 
     # --- Infrastructure ---
     check_valves: List[CheckValve] = field(default_factory=list)
@@ -180,6 +187,9 @@ class SimResults:
     abort_reason: str = ""
     wall_time_s: float = 0.0
     total_scf_injected: float = 0.0
+    total_scf_vented: float = 0.0   # N2 bled off to hold gas column under MOP
+    roadmap: Optional["Roadmap"] = None   # pre-run pressure corridor (feasibility + caps)
+    booster_plan: Optional["BoosterSitePlan"] = None  # roadmap-driven booster siting
     spread_events: List[dict] = field(default_factory=list)
     # Each entry: {spread_id, from_mp, to_mp, reason, t_hr, arrive_at_hr}
 
@@ -249,6 +259,137 @@ def compute_initial_n2_pressure(
 
     p = exit_psig + friction_psi + head_psi
     return float(max(exit_psig + 5.0, min(p, cfg.maop_psig * 0.9)))
+
+
+def _compute_mop_cap(
+    mj_mp, mj_mop, mj_elev,
+    pig_mp: float,
+    exit_mp: float,
+    pig_elevation_ft: float,
+    od_in: float,
+    wt_in: float,
+    cfg: "SimConfig",
+    gas_lookahead_mi: float = 20.0,
+) -> float:
+    """
+    Highest pig-face N2 pressure (psig) the weakest joint can tolerate — the MOP
+    hard ceiling. MOP is zero-tolerance, so this caps injection, booster discharge,
+    AND the drive used by the pig-speed solver.
+
+    Gas side:    min MOP of joints in the N2 column (purge_start → pig_mp), with a
+                 lookahead so the face ramps DOWN before a low-MOP joint enters
+                 the column rather than after.
+
+    Liquid side: min_j [ MOP_j + friction(pig→j) + head(j vs peak ahead) ] for
+                 downstream j. This is PROACTIVE — it looks ahead at the terrain
+                 rather than only the pig's current elevation.
+
+                 The static-head term uses the HIGHEST elevation between the pig and
+                 joint j (a running max), not the current pig elevation. Reason: the
+                 pig must climb any intervening peak, and the liquid column behind that
+                 peak presses down on joint j with its full static head. So the binding
+                 moment for j is when the pig sits on the upcoming peak. Capping for that
+                 now means the system never builds pressure it would later have to vent
+                 as the pig crests the peak and descends toward a low-elevation joint.
+
+                 Friction is evaluated at MIN speed (a slower pig produces less friction
+                 drop → higher downstream pressure → lower safe ceiling), guaranteeing
+                 the cap holds at whatever speed the solver chooses, including below
+                 min_speed.
+
+    Returns math.inf when there are no joints (no constraint).
+    """
+    mop_cap = math.inf
+    if mj_mp is None:
+        return mop_cap
+
+    # Gas side cap
+    g_hi = int(np.searchsorted(mj_mp, pig_mp + gas_lookahead_mi, side='right'))
+    if g_hi > 0:
+        mop_cap = float(np.min(mj_mop[:g_hi]))
+
+    # Liquid side cap (joints between pig and exit), conservative min-speed friction
+    pig_idx = int(np.searchsorted(mj_mp, pig_mp, side='right'))
+    l_hi    = int(np.searchsorted(mj_mp, exit_mp, side='right'))
+    if pig_idx < l_hi:
+        lj_mps   = mj_mp  [pig_idx:l_hi]
+        lj_mops  = mj_mop [pig_idx:l_hi]
+        lj_elevs = mj_elev[pig_idx:l_hi]
+        _D_ft = (od_in - 2.0 * wt_in) / 12.0
+        _v    = mph_to_fts(cfg.min_speed_mph)
+        _m    = 0.3048
+        _D_m, _v_m = _D_ft * _m, _v * _m
+        _rho = 999.0 * cfg.fluid_sg
+        _nu  = cfg.fluid_viscosity_cst * 1e-6
+        _Re  = _v_m * _D_m / max(1e-12, _nu)
+        _eps = cfg.fluid_roughness_ft * _m
+        _f   = (64.0 / max(1.0, _Re)) if _Re < 2300 else \
+               (0.25 / (math.log10(_eps / (3.7 * _D_m) + 5.74 / _Re**0.9)) ** 2)
+        _fric_pft = _f / _D_m * 0.5 * _rho * _v_m**2 / 6894.757 * _m
+        _L_arr    = (lj_mps - pig_mp) * 5280.0
+        # Proactive lookahead: the static head pressing on joint j is set by the
+        # HIGHEST point the liquid column reaches between the pig and j, not the
+        # pig's current elevation. Take a running max of the downstream elevations
+        # (seeded with the pig's own elevation) so an upcoming peak caps drive NOW —
+        # before the system builds pressure that the peak would later make illegal.
+        run_max_elev = np.maximum(np.maximum.accumulate(lj_elevs), pig_elevation_ft)
+        _head_arr = (lj_elevs - run_max_elev) * cfg.fluid_sg * 62.4 / 144.0
+        liq_cap   = float(np.min(lj_mops + _fric_pft * _L_arr + _head_arr))
+        mop_cap   = min(mop_cap, liq_cap)
+
+    return mop_cap
+
+
+def _segment_mop_ceiling(seg_lo_mp, seg_hi_mp, mj_mp, mj_mop) -> float:
+    """Minimum joint MOP (psig) over the pipe a segment occupies, [seg_lo_mp, seg_hi_mp].
+
+    This is the highest pressure that segment of N2 may legally hold. A booster
+    compressing into this segment must never target above it — that is the proactive,
+    per-location gas-side cap that replaces after-the-fact venting.
+    Returns math.inf when there are no joints in range (no constraint).
+    """
+    if mj_mp is None:
+        return math.inf
+    lo = int(np.searchsorted(mj_mp, seg_lo_mp, side='left'))
+    hi = int(np.searchsorted(mj_mp, seg_hi_mp, side='right'))
+    if hi > lo:
+        return float(np.min(mj_mop[lo:hi]))
+    return math.inf
+
+
+def _bleed_gas_to_mop(
+    segs: SegmentList,
+    mj_mp, mj_mop,
+    n2_temperature_f: float,
+) -> float:
+    """
+    LAST-RESORT gas-overpressure relief. Vents N2 from any segment whose pressure
+    exceeds the MOP of the pipe THAT GAS ACTUALLY SITS IN (its own weakest joint).
+
+    This is purely a gas-side safety net and should almost never fire: the roadmap
+    drive/target caps draw the column down before it can over-pressurize its own pipe.
+    It deliberately does NOT enforce the downstream-liquid ceiling — that is a limit on
+    how hard the pig may PRESS the liquid (handled by capping drive and pig speed), not
+    a reason to vent gas. Venting gas to satisfy a liquid-side limit is exactly the
+    waste this model is built to avoid, so it is kept out of here.
+
+    Returns total SCF vented this call.
+    """
+    if mj_mp is None:
+        return 0.0
+    vented = 0.0
+    n = len(segs)
+    for i in range(n):
+        seg = segs[i]
+        lo = int(np.searchsorted(mj_mp, seg.upstream_mp,   side='left'))
+        hi = int(np.searchsorted(mj_mp, seg.downstream_mp, side='right'))
+        ceiling = float(np.min(mj_mop[lo:hi])) if hi > lo else math.inf
+        if math.isfinite(ceiling) and seg.pressure_psig > ceiling:
+            target_scf = seg.scf_at_pressure(max(0.0, ceiling))
+            excess = seg.scf - target_scf
+            if excess > 0:
+                vented += seg.remove_scf(excess)
+    return vented
 
 
 def _compute_station_pressures(
@@ -412,6 +553,37 @@ def simulate(cfg: SimConfig, progress_cb: Optional[Callable[[float], None]] = No
                            bounds_error=False, fill_value=(elev_arr[0, 1], elev_arr[-1, 1]))
     elevation_at: Callable[[float], float] = lambda mp: float(elev_interp(mp))
 
+    # --- Build the pre-run pressure roadmap (the corridor) ---
+    # ceiling(x) = max safe pig-face drive (gas + liquid MOP limits), floor(x) = min
+    # drive to avoid a stall. The controller reads ceiling looking ahead so the column
+    # is drawn down before low-MOP pipe instead of over-built and vented. Where
+    # floor > ceiling the route is infeasible — reported here, before the run.
+    roadmap = build_roadmap(_mj_mp, _mj_mop, _mj_elev, cfg, elevation_at)
+    results.roadmap = roadmap
+
+    # --- Roadmap-driven booster siting ---
+    # Decide WHICH booster stations actually earn a spread before the run: only
+    # those that relieve a gas-MOP bottleneck on a climb (where SP injection / the
+    # last upstream booster cannot deliver the needed drive without overpressuring
+    # an upstream joint). Stations on flats and the descent are skipped — there
+    # gravity drives and a booster would only build gas that must later be vented.
+    # planned_booster_mps gates live activation below; an empty plan (or no
+    # roadmap) falls back to the legacy "every passed station" behavior so existing
+    # scenarios are unchanged when siting can't be computed.
+    booster_plan: Optional[BoosterSitePlan] = None
+    planned_booster_mps: Optional[set] = None
+    if roadmap is not None and cfg.booster_configs:
+        booster_plan = plan_booster_sites(
+            roadmap,
+            [b.mp for b in cfg.booster_configs],
+            cfg.purge_start_mp, cfg.purge_end_mp,
+        )
+        results.booster_plan = booster_plan
+        planned_booster_mps = {
+            min((b.mp for b in cfg.booster_configs), key=lambda m: abs(m - s))
+            for s in booster_plan.sites_mp
+        }
+
     # --- Auto-compute initial N2 pressure (override user-supplied value) ---
     cfg.n2_initial_pressure_psig = compute_initial_n2_pressure(cfg, elevation_at)
 
@@ -434,11 +606,18 @@ def simulate(cfg: SimConfig, progress_cb: Optional[Callable[[float], None]] = No
     # spread_assignment: booster_mp -> BoosterSpread currently assigned there
     spread_assignment: Dict[float, BoosterSpread] = {}
     if cfg.n_spreads > 0 and booster_states:
-        for i in range(min(cfg.n_spreads, len(booster_states))):
+        # Pre-position spreads at the first planned (load-bearing) stations in pig
+        # order. Falls back to the first N stations when no plan is available.
+        if planned_booster_mps:
+            target_stations = [bs.mp for bs in booster_states
+                               if bs.mp in planned_booster_mps]
+        else:
+            target_stations = [bs.mp for bs in booster_states]
+        for i in range(min(cfg.n_spreads, len(target_stations))):
             sp = BoosterSpread(spread_id=i,
-                               current_mp=booster_states[i].mp,
+                               current_mp=target_stations[i],
                                available_at_hr=0.0)
-            spread_assignment[booster_states[i].mp] = sp
+            spread_assignment[target_stations[i]] = sp
 
     # --- Initialize pump station states ---
     station_states: List[PumpStationState] = [
@@ -456,6 +635,7 @@ def simulate(cfg: SimConfig, progress_cb: Optional[Callable[[float], None]] = No
     t_hr   = 0.0
     dt_hr  = cfg.dt_hr
     total_scf_injected = 0.0
+    total_scf_vented   = 0.0
     stall_start_t_hr: Optional[float] = None   # time when pig first stalled (None = not stalled)
 
     for step_num in range(cfg.max_steps):
@@ -512,6 +692,35 @@ def simulate(cfg: SimConfig, progress_cb: Optional[Callable[[float], None]] = No
             tankage_mp=tankage_mp,
         )
 
+        # --- MOP hard ceiling (computed BEFORE the speed solve) ---
+        # MOP is zero-tolerance. mop_cap is the highest pig-face N2 pressure the
+        # weakest joint (gas column or downstream liquid) can hold. It caps the
+        # drive the pig-speed solver may use, so when the system could supply more
+        # pressure than MOP allows the pig is throttled — below min_speed if needed
+        # — instead of overpressuring a joint. It also caps injection and booster
+        # discharge targets further below.
+        #
+        # Primary source is the pre-run roadmap, read with a forward horizon so the
+        # column is drawn down BEFORE a low-ceiling valley (proactive — nothing to
+        # vent). _compute_mop_cap remains the fallback when no roadmap exists.
+        #
+        # The proactive drawdown must never starve the pig below the drive it needs to
+        # keep moving NOW: cap = min(ceiling_here, max(floor_here, min_ceiling_ahead)).
+        # In feasible terrain floor <= ceiling, so when a low valley looms the cap eases
+        # down toward the floor (pig slows, column not over-built) but never below it
+        # (no artificial stall). Only a genuinely infeasible span can force a conflict.
+        if roadmap is not None:
+            _ceil_here  = roadmap.ceiling_at(pig_mp)
+            _floor_here = roadmap.floor_at(pig_mp)
+            _ahead      = roadmap.min_ceiling_ahead(pig_mp, cfg.mop_lookahead_mi)
+            mop_cap = min(_ceil_here, max(_floor_here, _ahead))
+        else:
+            mop_cap = _compute_mop_cap(
+                _mj_mp, _mj_mop, _mj_elev,
+                pig_mp, exit_mp, pig_elevation_ft, od_in, wt_in, cfg,
+            )
+        mop_ceiling = mop_cap if (math.isfinite(mop_cap) and mop_cap > 0) else None
+
         # --- Pig speed solve ---
         pig_solver_cfg = PigSolverConfig(
             od_in=od_in,
@@ -531,6 +740,7 @@ def simulate(cfg: SimConfig, progress_cb: Optional[Callable[[float], None]] = No
             pig_face_psig,
             elevation_at,
             bpcv_gas_constraint_psig=bpcv_gas_constraint,
+            mop_drive_ceiling_psig=mop_ceiling,
         )
 
         # --- Activate boosters (unconditional) ---
@@ -553,6 +763,10 @@ def simulate(cfg: SimConfig, progress_cb: Optional[Callable[[float], None]] = No
                     newly = True
                 else:
                     newly = False
+            elif planned_booster_mps is not None and bs.mp not in planned_booster_mps:
+                # Roadmap says this station is not load-bearing (flat/descent) —
+                # don't fire it. Firing here only builds gas that must later vent.
+                newly = False
             else:
                 # Unlimited spreads (legacy): activate immediately when pig passes
                 newly = activate_booster_if_pig_passed(bs, pig_mp)
@@ -682,54 +896,11 @@ def simulate(cfg: SimConfig, progress_cb: Optional[Callable[[float], None]] = No
                 fill_pressure_psig     = max(fill_pressure_psig,     _transition_floor)
                 pig_face_target_psig   = max(pig_face_target_psig,   _transition_floor)
 
-        # --- MOP hard ceiling ---
-        # MOP violations are zero-tolerance. The pig slows below configured minimum
-        # before we allow any joint to be overpressured. Cap ALL injection and booster
-        # targets at the maximum pressure the weakest joint can tolerate.
-        #
-        # Gas side:    min MOP of joints in the N2 column (purge_start → pig_mp).
-        #              Injection and booster discharge cannot push any segment above this.
-        #
-        # Liquid side: min_j [ MOP_j + friction(pig→j) + head(pig→j) ] for j downstream.
-        #              If pig face exceeds this, pressure at joint j would exceed MOP_j.
-        mop_cap = math.inf
-        if _mj_mp is not None:
-            # Gas side cap: include a 20-mile lookahead so face ramps DOWN before a
-            # low-MOP joint enters the gas column (not after). Uses a separate index
-            # from the liquid side so the two computations don't interfere.
-            _GAS_LOOKAHEAD_MI = 20.0
-            g_hi_gas = int(np.searchsorted(_mj_mp, pig_mp + _GAS_LOOKAHEAD_MI, side='right'))
-            if g_hi_gas > 0:
-                mop_cap = float(np.min(_mj_mop[:g_hi_gas]))
-
-            # Liquid side cap: joints between pig_mp and exit_mp.
-            # Uses pig_mp (not pig+lookahead) so nearby downhill joints are captured.
-            pig_idx = int(np.searchsorted(_mj_mp, pig_mp, side='right'))
-            l_hi = int(np.searchsorted(_mj_mp, exit_mp, side='right'))
-            if pig_idx < l_hi:
-                lj_mps   = _mj_mp  [pig_idx:l_hi]
-                lj_mops  = _mj_mop [pig_idx:l_hi]
-                lj_elevs = _mj_elev[pig_idx:l_hi]
-                _D_ft_c  = (od_in - 2.0 * wt_in) / 12.0
-                _v_c     = mph_to_fts(cfg.target_speed_mph)
-                _m       = 0.3048
-                _D_m, _v_m = _D_ft_c * _m, _v_c * _m
-                _rho = 999.0 * cfg.fluid_sg
-                _nu  = cfg.fluid_viscosity_cst * 1e-6
-                _Re  = _v_m * _D_m / max(1e-12, _nu)
-                _eps = cfg.fluid_roughness_ft * _m
-                _f   = (64.0 / max(1.0, _Re)) if _Re < 2300 else \
-                       (0.25 / (math.log10(_eps / (3.7 * _D_m) + 5.74 / _Re**0.9)) ** 2)
-                _fric_pft = _f / _D_m * 0.5 * _rho * _v_m**2 / 6894.757 * _m
-                _L_arr    = (lj_mps - pig_mp) * 5280.0
-                # head_arr = (j_elev - pig_elev) × sg × 0.433
-                # Positive when j is above pig (uphill → less pressure at j → higher pig cap allowed)
-                # Negative when j is below pig (downhill → more pressure at j → lower pig cap required)
-                # Bernoulli: P_pig_max = MOP_j + head_arr + fric
-                _head_arr = (lj_elevs - pig_elevation_ft) * cfg.fluid_sg * 62.4 / 144.0
-                liq_cap   = float(np.min(lj_mops + _fric_pft * _L_arr + _head_arr))
-                mop_cap   = min(mop_cap, liq_cap)
-
+        # --- Apply MOP hard ceiling to injection / pig-face targets ---
+        # mop_cap was computed before the speed solve (and already capped the drive
+        # the solver was allowed to use). Here it also caps the pressure injection
+        # and the booster chain aim for, so the actual pig-face pressure relaxes
+        # down to the ceiling rather than overpressuring a joint.
         if math.isfinite(mop_cap) and mop_cap > 0:
             fill_pressure_psig   = min(fill_pressure_psig,   mop_cap)
             pig_face_target_psig = min(pig_face_target_psig, mop_cap)
@@ -784,17 +955,35 @@ def simulate(cfg: SimConfig, progress_cb: Optional[Callable[[float], None]] = No
         booster_step_results = []
         for bs in booster_states:
             if bs.mp < pig_mp:  # only boosters the pig has passed
-                tgt_discharge = (
-                    pig_face_target_psig
-                    if (last_active_mp >= 0 and abs(bs.mp - last_active_mp) < 0.001)
-                    else None
-                )
-                # MOP cap applies to every booster, not just the last active.
-                # A booster must never discharge into a segment above the minimum
-                # MOP of joints within that segment or anywhere downstream.
+                is_pig_adjacent = (last_active_mp >= 0 and abs(bs.mp - last_active_mp) < 0.001)
+                tgt_discharge = pig_face_target_psig if is_pig_adjacent else None
+                # Per-booster PROACTIVE MOP cap, looking ahead along the gas's FORWARD
+                # PATH. A booster's gas does not stay in its immediate downstream
+                # segment — as intervening booster boundaries merge while the pig
+                # advances, that gas flows forward and eventually occupies every stretch
+                # of pipe between the booster and the pig. So the binding limit is the
+                # MINIMUM MOP over the whole path [booster -> pig]. Storing gas any higher
+                # guarantees it will later sit in pipe rated below it and have to be
+                # relieved. Capping here means the column is never over-built in the first
+                # place — the pig simply slows (the speed solver allows sub-min speed)
+                # where terrain/MOP cannot support full drive, instead of building
+                # pressure that must be vented.
+                local_cap = _segment_mop_ceiling(bs.mp, pig_mp, _mj_mp, _mj_mop)
+                # FLOOR-BIASED: every booster stage honors the pig-face forward ceiling
+                # (mop_cap), not just the pig-adjacent one. In a connected gas column the
+                # pressure is ~uniform, so an upstream stage that builds its segment above
+                # the forward ceiling simply pre-loads gas that the pig will drag into
+                # lower-MOP pipe and have to vent. Capping ALL stages at mop_cap keeps the
+                # whole column lean and drawn down ahead of a low-MOP valley — the
+                # reference model's strategy (a low N2 column, never over-built, that
+                # rides expansion through climbs rather than venting). This also closes
+                # the drive-limited hole where last_active_mp = -1 left every booster
+                # uncapped against the forward lookahead.
                 if math.isfinite(mop_cap) and mop_cap > 0:
-                    tgt_discharge = min(tgt_discharge, mop_cap) if tgt_discharge is not None \
-                                    else mop_cap
+                    local_cap = min(local_cap, mop_cap)
+                if math.isfinite(local_cap) and local_cap > 0:
+                    tgt_discharge = min(tgt_discharge, local_cap) if tgt_discharge is not None \
+                                    else local_cap
                 bsr = step_booster(bs, segs, dt_hr, pig_face_psig,
                                    target_discharge_psig=tgt_discharge)
                 booster_step_results.append({
@@ -819,10 +1008,15 @@ def simulate(cfg: SimConfig, progress_cb: Optional[Callable[[float], None]] = No
                 if spread.in_transit:
                     continue
 
-                # Find next uncovered booster station ahead
+                # Find next uncovered booster station ahead. Only move spreads to
+                # planned (load-bearing) stations — skip flat/descent stations the
+                # roadmap left out, so the limited spreads go where they relieve a
+                # real MOP bottleneck.
                 next_target = None
                 for next_bs in sorted(booster_states, key=lambda b: b.mp):
-                    if next_bs.mp > mp and next_bs.mp not in covered_mps:
+                    if (next_bs.mp > mp and next_bs.mp not in covered_mps
+                            and (planned_booster_mps is None
+                                 or next_bs.mp in planned_booster_mps)):
                         next_target = next_bs.mp
                         break
                 if next_target is None:
@@ -874,6 +1068,16 @@ def simulate(cfg: SimConfig, progress_cb: Optional[Callable[[float], None]] = No
 
         # --- Check valve cascade merges ---
         evaluate_check_valves(segs, check_valves, active_mps)
+
+        # --- Last-resort gas-overpressure relief ---
+        # Pure gas-side safety net: vents only a segment that exceeds the MOP of its
+        # OWN pipe. The roadmap drive/target caps should keep this from firing; any
+        # venting here flags a spot the proactive drawdown could not fully prevent.
+        scf_vented = _bleed_gas_to_mop(segs, _mj_mp, _mj_mop, cfg.n2_temperature_f)
+        total_scf_vented += scf_vented
+        # Pig-face pressure may have dropped after the bleed; refresh for the MOP
+        # check and step record below so they reflect the relieved state.
+        pig_face_psig = segs.pig_face_pressure_psig()
 
         # --- Pump station shutdowns ---
         # Ultimate endpoint for hydraulic necessity check: BPCV (if upstream) or tankage
@@ -999,5 +1203,6 @@ def simulate(cfg: SimConfig, progress_cb: Optional[Callable[[float], None]] = No
             stall_start_t_hr = None  # reset if pig starts moving again
 
     results.total_scf_injected = total_scf_injected
+    results.total_scf_vented = total_scf_vented
     results.wall_time_s = time.monotonic() - t_wall_start
     return results

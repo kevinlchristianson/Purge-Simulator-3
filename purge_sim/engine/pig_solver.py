@@ -101,6 +101,7 @@ def solve_pig_speed(
     pig_face_psig: float,          # current N2 pressure behind pig (from segment model)
     elevation_at: callable,        # elevation_at(mp) -> ft
     bpcv_gas_constraint_psig: Optional[float] = None,  # min pig-face N2 after pig passes BPCV
+    mop_drive_ceiling_psig: Optional[float] = None,    # max pig-face N2 allowed by MOP
 ) -> PigSolverResult:
     """
     Solve for pig speed given current system state.
@@ -115,6 +116,13 @@ def solve_pig_speed(
       3. If pig can exceed target, meter valve activates (back-pressure = excess drive)
       4. Final speed = min(achievable_speed, target_speed)
       5. Flag slack line if achievable < min
+
+    MOP is zero-tolerance. `mop_drive_ceiling_psig` is the highest pig-face N2
+    pressure the weakest joint (gas column or downstream liquid) can tolerate.
+    The drive available to push the pig is capped at this ceiling, so when the
+    system *could* supply more pressure than MOP allows, the pig is throttled —
+    below min_speed if necessary — rather than overpressuring a joint. This is
+    the only place pig speed is allowed to fall below min_speed by design.
     """
     area_ft2 = pipe_area_ft2(cfg.od_in, cfg.wt_in)
     D_ft     = (cfg.od_in - 2 * cfg.wt_in) / 12.0
@@ -133,9 +141,15 @@ def solve_pig_speed(
     def _drive_available() -> float:
         # If BPCV constraint active (pig past BPCV in gas phase), drive is limited by BPCV.
         # Zero set point means BPCV is wide open — no constraint.
+        d = pig_face_psig
         if bpcv_gas_constraint_psig is not None and bpcv_gas_constraint_psig > 0:
-            return min(pig_face_psig, bpcv_gas_constraint_psig)
-        return pig_face_psig
+            d = min(d, bpcv_gas_constraint_psig)
+        # MOP hard ceiling: never use more drive than the weakest joint can hold.
+        # If this forces achievable speed below min_speed, the pig slows (or stalls)
+        # instead of overpressuring a joint — MOP is zero-tolerance.
+        if mop_drive_ceiling_psig is not None and mop_drive_ceiling_psig > 0:
+            d = min(d, mop_drive_ceiling_psig)
+        return d
 
     drive = _drive_available()
     v_min = mph_to_fts(cfg.min_speed_mph)
@@ -182,10 +196,28 @@ def solve_pig_speed(
     meter_back_psi = 0.0
 
     if drive >= res_at_tgt:
-        # Pig would go faster than target — meter valve throttles
-        v_actual = v_tgt
+        # Enough drive for at least target speed. The pig is allowed to run FASTER
+        # than target — up to max_speed — when drive is excessive (downhill static-head
+        # assist, surplus N2, or booster overshoot). Symmetric with the slow-down case:
+        # just as the pig may fall below min_speed when drive is MOP-limited, it may rise
+        # above target when drive is abundant. The meter valve only throttles once the pig
+        # reaches max_speed, banking any remaining excess drive as back-pressure.
         meter_valve_active = True
-        meter_back_psi = drive - res_at_tgt
+        res_at_max = _resistance_at_speed(v_max)
+        if drive >= res_at_max:
+            v_actual = v_max
+            meter_back_psi = drive - res_at_max
+        else:
+            # Natural speed between target and max where drive = resistance
+            lo, hi = v_tgt, v_max
+            for _ in range(40):
+                mid = 0.5 * (lo + hi)
+                if _resistance_at_speed(mid) <= drive:
+                    lo = mid
+                else:
+                    hi = mid
+            v_actual = lo
+            meter_back_psi = 0.0
     else:
         # Pig speed is between min and target — bisect
         lo, hi = v_min, v_tgt
@@ -196,12 +228,6 @@ def solve_pig_speed(
             else:
                 hi = mid
         v_actual = lo
-
-    # Clamp to physical maximum
-    if v_actual > v_max:
-        v_actual = v_max
-        meter_valve_active = True
-        meter_back_psi = drive - _resistance_at_speed(v_max)
 
     fric = liquid_friction_loss_psi(L_liq_ft, D_ft, v_actual, cfg.sg, cfg.viscosity_cst, eps_ft)
     inj_scfm = scfm_from_pig_velocity(v_actual, area_ft2,
