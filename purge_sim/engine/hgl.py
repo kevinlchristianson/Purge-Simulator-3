@@ -48,6 +48,41 @@ class HGLProfile:
         return float(np.min(liq)) if liq.size else float("nan")
 
 
+def build_liquid_hgl(grid_mp, pig_mp, pig_face_psig, pumps, bpcv_mp, bpcv_psig,
+                     end_mp, tank_psig, elev_at, fric_head, grad, margin_ft: float = 20.0):
+    """Liquid HGL (ft of head) ahead of the pig as PIECEWISE-STRAIGHT friction gradients —
+    each fluid column has its OWN grade line, exactly like the real operating profile:
+
+        pig -> first running pump   : one straight gradient (held to the pump's suction)
+        pump -> next pump / BPCV     : one straight gradient (off the pump's discharge)
+        below the BPCV -> tankage    : one straight gradient to the line exit
+
+    A pump adds a square step UP (suction -> discharge); the BPCV adds a step DOWN. Each
+    segment's slope is just the friction gradient (steeper = higher flow). `pumps` is a sorted
+    list of (mp, suction_psig, discharge_psig), all upstream of the BPCV.
+    """
+    pumps = sorted(pumps)
+    out = []
+    for x in grid_mp:
+        if bpcv_mp is not None and x > bpcv_mp:            # below the valve: tankage gradient
+            h = elev_at(end_mp) + tank_psig / grad + fric_head(x, end_mp)
+        else:
+            up = None                                     # the pump whose discharge feeds x
+            for p in pumps:
+                if p[0] <= x:
+                    up = p
+            if up is not None:                            # off a pump's discharge (falls downstream)
+                h = elev_at(up[0]) + up[2] / grad - fric_head(up[0], x)
+            elif pumps:                                   # upstream of the first pump: its suction line
+                p0 = pumps[0]
+                h = elev_at(p0[0]) + p0[1] / grad + fric_head(x, p0[0])
+            else:                                         # NO pump ahead: the PIG drives the column
+                # (the BPCV only sets the exit backpressure / drop — it never lifts the line).
+                h = elev_at(pig_mp) + pig_face_psig / grad - fric_head(pig_mp, x)
+        out.append((x, max(h, elev_at(x) + margin_ft)))   # never below ground (rule #3 floor)
+    return out
+
+
 def _gas_lookup(gas_profile: List[tuple], mp: float) -> float:
     """Step-function: pressure of the segment whose span contains `mp`."""
     p = gas_profile[0][1] if gas_profile else 0.0

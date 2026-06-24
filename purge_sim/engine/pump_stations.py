@@ -50,6 +50,7 @@ class PumpStationConfig:
     mp: float
     name: str = ""
     suction_psig: float = 0.0    # minimum suction pressure (what the pump needs at inlet)
+    enabled: bool = True         # False = this station never runs (scenario can disable it)
     # Note: stations don't have a fixed 'discharge' in the pig context —
     # after shutdown, the pig just has to push liquid past the station entirely.
 

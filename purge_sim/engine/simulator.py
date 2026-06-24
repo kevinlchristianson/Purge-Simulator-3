@@ -427,6 +427,8 @@ def _compute_station_pressures(
     roughness_ft: float,
     flow_bph: float,
     elevation_at,
+    ultimate_mp: Optional[float] = None,
+    ultimate_psig: Optional[float] = None,
 ) -> List[dict]:
     """
     Estimate pressure at each pump station for the current timestep.
@@ -474,15 +476,54 @@ def _compute_station_pressures(
         if s.status == StationStatus.SHUT_DOWN and s.mp > pig_mp
     ]
 
-    # --- Running stations: build HGL discharge from exit backwards ---
+    # --- Running pumps ahead: dynamic suction + peak-clearing discharge ---
+    # A pump raises its SUCTION just enough to keep the liquid full (>= margin) over the
+    # highest point UPSTREAM of it (between it and the previous anchor — pig or previous pump),
+    # and DISCHARGES just enough to keep the HGL above the terrain (Tug/Sutton Mtn) all the way
+    # to the next anchor (next pump suction, or the BPCV / tankage). The BPCV is NOT a pump —
+    # it only sets the downstream backpressure; it never lifts the upstream HGL.
+    grad = sg * 62.4 / 144.0
+    margin_psi = 25.0    # keep the liquid column comfortably full (~68 ft of head) over peaks
+
+    def _peak_clear_discharge(a_mp: float, b_mp: float) -> float:
+        # Min discharge pressure at a_mp keeping HGL >= terrain+margin over [a_mp, b_mp].
+        # Sample finely (0.1 mi) so no sharp terrain peak between samples is missed.
+        n = max(2, int(abs(b_mp - a_mp) / 0.1) + 1)
+        ea, best = elevation_at(a_mp), 0.0
+        for k in range(n + 1):
+            x = a_mp + (b_mp - a_mp) * k / n
+            fric, _ = _fric_and_head(a_mp, x)
+            best = max(best, (elevation_at(x) - ea) * grad + margin_psi + fric)
+        return best
+
+    def _antislack_suction(prev_mp: float, p_mp: float) -> float:
+        # Min suction at p_mp keeping HGL >= terrain+margin over the upstream [prev_mp, p_mp].
+        # Sample finely (0.1 mi) so no sharp terrain peak between samples is missed.
+        n = max(2, int(abs(p_mp - prev_mp) / 0.1) + 1)
+        ep, best = elevation_at(p_mp), 0.0
+        for k in range(n + 1):
+            x = prev_mp + (p_mp - prev_mp) * k / n
+            fric, _ = _fric_and_head(x, p_mp)
+            best = max(best, (elevation_at(x) - ep) * grad + margin_psi - fric)
+        return best
+
+    ra = sorted(running_ahead, key=lambda s: s.mp)
+    suction_by_mp: dict[float, float] = {}
+    for i, st in enumerate(ra):
+        prev_mp = ra[i - 1].mp if i > 0 else pig_mp
+        suction_by_mp[st.mp] = max(st.config.suction_psig, _antislack_suction(prev_mp, st.mp))
+
+    # The discharge chain ends at the ULTIMATE downstream anchor (the BPCV, or tankage) —
+    # NOT the pig's near exit. The pig's exit can be the first pump itself (degenerate); a
+    # pump must discharge toward what's beyond it (over Tug/Sutton to the BPCV).
     discharge_by_mp: dict[float, float] = {}
-    next_mp   = exit_mp
-    next_psig = exit_psig
-    for station in reversed(running_ahead):
-        fric, head = _fric_and_head(station.mp, next_mp)
-        discharge_by_mp[station.mp] = next_psig + fric + head
-        next_mp   = station.mp
-        next_psig = station.config.suction_psig
+    nxt_mp = ultimate_mp if ultimate_mp is not None else exit_mp
+    nxt_p  = ultimate_psig if ultimate_psig is not None else exit_psig
+    for st in reversed(ra):
+        fric_n, head_n = _fric_and_head(st.mp, nxt_mp)
+        discharge_by_mp[st.mp] = max(_peak_clear_discharge(st.mp, nxt_mp),
+                                     nxt_p + fric_n + head_n)
+        nxt_mp, nxt_p = st.mp, suction_by_mp[st.mp]
 
     # --- Shutdown stations ahead of pig: passive liquid HGL from pig face forward ---
     passive_by_mp: dict[float, float] = {}
@@ -502,12 +543,11 @@ def _compute_station_pressures(
                 'status': 'bypassed',
             })
         elif s.is_active:
-            # Running pump ahead of pig
-            disc = discharge_by_mp.get(s.mp, pig_face_psig)
+            # Running pump ahead of pig — dynamic suction + peak-clearing discharge
             out.append({
                 'mp': s.mp, 'name': s.config.name,
-                'discharge_psig': disc,
-                'suction_psig': s.config.suction_psig,
+                'discharge_psig': discharge_by_mp.get(s.mp, pig_face_psig),
+                'suction_psig': suction_by_mp.get(s.mp, s.config.suction_psig),
                 'status': 'running',
             })
         else:
@@ -642,7 +682,10 @@ def simulate(cfg: SimConfig, progress_cb: Optional[Callable[[float], None]] = No
 
     # --- Initialize pump station states ---
     station_states: List[PumpStationState] = [
-        PumpStationState(config=pc) for pc in sorted(cfg.pump_stations, key=lambda s: s.mp)
+        PumpStationState(config=pc,
+                         status=StationStatus.RUNNING if getattr(pc, 'enabled', True)
+                         else StationStatus.SHUT_DOWN)
+        for pc in sorted(cfg.pump_stations, key=lambda s: s.mp)
     ]
 
     # --- Initialize BPCV ---
@@ -1192,13 +1235,25 @@ def simulate(cfg: SimConfig, progress_cb: Optional[Callable[[float], None]] = No
 
         # --- MOP check and station pressures ---
         gas_profile = build_gas_pressure_profile(segs.summary())
+        # Ultimate downstream anchor for the pump discharge chain: the BPCV (its set point)
+        # while the pig is upstream of it, otherwise tankage at the route end.
+        if cfg.bpcv is not None and pig_mp < cfg.bpcv.mp:
+            _ult_mp = cfg.bpcv.mp
+            _ult_p  = bpcv_set_point_psig if bpcv_set_point_psig is not None else cfg.exit_pressure_run_psig
+        else:
+            _ult_mp = cfg.purge_end_mp
+            _ult_p  = cfg.exit_pressure_run_psig
         station_pressures = _compute_station_pressures(
             station_states, pig_mp, pig_face_psig,
             exit_psig, exit_mp, gas_profile,
             od_in, wt_in,
             cfg.fluid_sg, cfg.fluid_viscosity_cst, cfg.fluid_roughness_ft,
-            flow_bph=fts_to_bph(mph_to_fts(cfg.target_speed_mph), area_ft2),
+            # Size the station hydraulics at the ACTUAL flow (pig speed, floored at min) so the
+            # suction/discharge are consistent with the friction the HGL is drawn at.
+            flow_bph=fts_to_bph(mph_to_fts(max(pig_result.pig_speed_mph, cfg.min_speed_mph)),
+                                area_ft2),
             elevation_at=elevation_at,
+            ultimate_mp=_ult_mp, ultimate_psig=_ult_p,
         )
         mop_liq = check_mop_liquid_side(
             pig_mp, pig_face_psig, mop_joints,
