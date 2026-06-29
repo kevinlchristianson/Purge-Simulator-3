@@ -49,17 +49,24 @@ class HGLProfile:
 
 
 def build_liquid_hgl(grid_mp, pig_mp, pig_face_psig, pumps, bpcv_mp, bpcv_psig,
-                     end_mp, tank_psig, elev_at, fric_head, grad, margin_ft: float = 20.0):
+                     end_mp, tank_psig, elev_at, fric_head, grad, margin_ft: float = 20.0,
+                     clamp_to_ground: bool = True):
     """Liquid HGL (ft of head) ahead of the pig as PIECEWISE-STRAIGHT friction gradients —
     each fluid column has its OWN grade line, exactly like the real operating profile:
 
-        pig -> first running pump   : one straight gradient (held to the pump's suction)
+        pig -> first running pump   : the PIG'S drive gradient (a pump cannot lift its own
+                                      upstream column — only the pig holds it; this can fall
+                                      BELOW ground = slack / column separation)
         pump -> next pump / BPCV     : one straight gradient (off the pump's discharge)
         below the BPCV -> tankage    : one straight gradient to the line exit
 
     A pump adds a square step UP (suction -> discharge); the BPCV adds a step DOWN. Each
     segment's slope is just the friction gradient (steeper = higher flow). `pumps` is a sorted
     list of (mp, suction_psig, discharge_psig), all upstream of the BPCV.
+
+    clamp_to_ground=True floors the line at ground+margin (a cosmetic "full line" view);
+    False plots EXACTLY what the model produces, so slack shows as the HGL dipping below
+    ground.
     """
     pumps = sorted(pumps)
     out = []
@@ -73,13 +80,12 @@ def build_liquid_hgl(grid_mp, pig_mp, pig_face_psig, pumps, bpcv_mp, bpcv_psig,
                     up = p
             if up is not None:                            # off a pump's discharge (falls downstream)
                 h = elev_at(up[0]) + up[2] / grad - fric_head(up[0], x)
-            elif pumps:                                   # upstream of the first pump: its suction line
-                p0 = pumps[0]
-                h = elev_at(p0[0]) + p0[1] / grad + fric_head(x, p0[0])
-            else:                                         # NO pump ahead: the PIG drives the column
-                # (the BPCV only sets the exit backpressure / drop — it never lifts the line).
+            else:                                         # upstream of the first running pump (or
+                # none ahead): the PIG drives the column. A pump cannot hold the column upstream
+                # of its own suction, and the BPCV only sets the exit drop — so this stretch is
+                # the pig's drive gradient, which goes slack where the drive can't hold a hill.
                 h = elev_at(pig_mp) + pig_face_psig / grad - fric_head(pig_mp, x)
-        out.append((x, max(h, elev_at(x) + margin_ft)))   # never below ground (rule #3 floor)
+        out.append((x, max(h, elev_at(x) + margin_ft) if clamp_to_ground else h))
     return out
 
 

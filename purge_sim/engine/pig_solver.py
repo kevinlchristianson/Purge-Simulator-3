@@ -30,6 +30,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional, List
 import math
+import numpy as np
 
 from .physics import (
     liquid_friction_loss_psi,
@@ -42,6 +43,7 @@ from .physics import (
     mph_to_fts,
     psig_to_psia,
     scfm_from_pig_velocity,
+    clearance_candidates,
 )
 
 
@@ -102,6 +104,9 @@ def solve_pig_speed(
     elevation_at: callable,        # elevation_at(mp) -> ft
     bpcv_gas_constraint_psig: Optional[float] = None,  # min pig-face N2 after pig passes BPCV
     mop_drive_ceiling_psig: Optional[float] = None,    # max pig-face N2 allowed by MOP
+    terrain_mp=None,               # route terrain vertices (mp) between pig and exit
+    terrain_elev=None,             # route terrain vertices (elevation ft)
+    slack_margin_psi: float = 25.0,
 ) -> PigSolverResult:
     """
     Solve for pig speed given current system state.
@@ -133,10 +138,19 @@ def solve_pig_speed(
 
     head_psi = static_head_psi(exit_elevation_ft - pig_elevation_ft, cfg.sg)
 
+    # Peak-aware resistance: the drive must keep the HGL above terrain at EVERY point ahead,
+    # not just the exit. Precompute the clearance constraints once (base + length per
+    # candidate); friction is linear in length, so resistance(v) = max(base + fric_per_ft*L).
+    # With no terrain supplied this degenerates to the single exit term (legacy behavior).
+    _cl_base, _cl_len = clearance_candidates(
+        pig_mp, pig_elevation_ft, exit_mp, exit_psig, exit_elevation_ft,
+        terrain_mp, terrain_elev, cfg.sg, slack_margin_psi,
+    )
+
     # Bisect on speed to find where drive = resistance
     def _resistance_at_speed(v_fts: float) -> float:
-        fric = liquid_friction_loss_psi(L_liq_ft, D_ft, v_fts, cfg.sg, cfg.viscosity_cst, eps_ft)
-        return exit_psig + fric + head_psi
+        fpf = liquid_friction_loss_psi(1.0, D_ft, v_fts, cfg.sg, cfg.viscosity_cst, eps_ft)
+        return float(np.max(_cl_base + fpf * _cl_len))
 
     def _drive_available() -> float:
         # If BPCV constraint active (pig past BPCV in gas phase), drive is limited by BPCV.

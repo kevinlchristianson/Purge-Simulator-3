@@ -116,9 +116,24 @@ class SimConfig:
     pump_stations: List[PumpStationConfig] = field(default_factory=list)
     bpcv: Optional[BPCVConfig] = None
 
+    # Explicit booster deployment override: if set, deploy EXACTLY these booster MPs (snapped
+    # to the nearest booster_config) instead of the optimizer's auto-siting. None = optimizer.
+    deployed_booster_mps: Optional[List[float]] = None
+
     # --- Injection limits ---
     max_injection_psig: float = 200.0
     max_injection_scfm: float = 5000.0
+
+    # Allow boosters to inject FRESH N2 (last-resort makeup) when recompression alone cannot
+    # hold the pig. Default OFF: boosters recompress upstream gas only, fed by SP injection.
+    allow_booster_fresh: bool = False
+
+    # PACK-AND-COAST strategy (operator-style): if n2_budget_scf is set, hold drive near the
+    # MOP ceiling (drive_mop_fraction * MOP) while injecting, until this much N2 has been
+    # injected; then cut SP and let the stored compressed column do PV work to finish the run.
+    # None = the lean floor-defending controller (default).
+    n2_budget_scf: Optional[float] = None
+    drive_mop_fraction: float = 0.9
 
     # --- MAOP / drive envelope ---
     maop_psig: float = 1200.0
@@ -644,6 +659,13 @@ def simulate(cfg: SimConfig, progress_cb: Optional[Callable[[float], None]] = No
             min((b.mp for b in cfg.booster_configs), key=lambda m: abs(m - s))
             for s in booster_plan.sites_mp
         }
+        # Explicit deployment override (scenario-pinned): deploy exactly these, ignore optimizer.
+        if cfg.deployed_booster_mps is not None:
+            planned_booster_mps = {
+                min((b.mp for b in cfg.booster_configs), key=lambda m: abs(m - s))
+                for s in cfg.deployed_booster_mps
+            }
+            booster_plan.sites_mp = sorted(planned_booster_mps)
 
     # --- Auto-compute initial N2 pressure (override user-supplied value) ---
     cfg.n2_initial_pressure_psig = compute_initial_n2_pressure(cfg, elevation_at)
@@ -806,6 +828,7 @@ def simulate(cfg: SimConfig, progress_cb: Optional[Callable[[float], None]] = No
             elevation_at,
             bpcv_gas_constraint_psig=bpcv_gas_constraint,
             mop_drive_ceiling_psig=mop_ceiling,
+            terrain_mp=_mj_mp, terrain_elev=_mj_elev, slack_margin_psi=25.0,
         )
 
         # --- Activate boosters (unconditional) ---
@@ -969,6 +992,70 @@ def simulate(cfg: SimConfig, progress_cb: Optional[Callable[[float], None]] = No
                 fill_pressure_psig     = max(fill_pressure_psig,     _transition_floor)
                 pig_face_target_psig   = max(pig_face_target_psig,   _transition_floor)
 
+        # --- Proactive, CAPACITY-DERIVED drive target (the no-slack mandate) ------------
+        # AIM the pig face at the worst upcoming peak-clearing floor, projected back to here
+        # at the fastest pressure-build slope the equipment can actually sustain — not at the
+        # peak-blind exit-only `_min_face_psig`, and not over a guessed fixed horizon. The pig
+        # face is built by the pig-adjacent booster recompressing the upstream column forward
+        # (limited by its throughput), fed by SP; when no booster is behind the pig yet, SP is
+        # the sole source. Converting that mass rate to a drive-build slope (psi/mile) and
+        # projecting each future floor back along it (roadmap.capacity_projected_floor) gives
+        # the EXACT lead distance to start building: a fast build discounts distant climbs
+        # (build just-in-time), a slow build starts early. If even the max slope can't reach a
+        # floor in time, the speed solver lets the pig slow rather than go slack (an equipment
+        # limit, not a modeling fudge).
+        _front_bs = max((bs for bs in booster_states if bs.requested and bs.mp < pig_mp),
+                        key=lambda b: b.mp, default=None)
+        _booster_behind = _front_bs is not None
+        if roadmap is not None:
+            _area = math.pi / 4.0 * ((od_in - 2.0 * wt_in) / 12.0) ** 2
+            if _booster_behind:
+                _build_scfm = _front_bs.config.max_flow_scfm     # booster relays forward (limiter)
+                _bay_len_mi = max(0.1, pig_mp - _front_bs.mp)     # pig-face bay it pressurizes
+            else:
+                _build_scfm = cfg.max_injection_scfm             # SP is the sole source
+                _bay_len_mi = max(0.1, pig_mp - cfg.purge_start_mp)
+            _bay_vol = _bay_len_mi * 5280.0 * _area
+            _p_psia = psig_to_psia(max(pig_face_psig, 0.0))
+            _scf_per_psi = max(1e-6,
+                scf_from_pressure_volume(_p_psia + 1.0, _bay_vol, cfg.n2_temperature_f)
+                - scf_from_pressure_volume(_p_psia, _bay_vol, cfg.n2_temperature_f))
+            _dP_dt_max = _build_scfm * 60.0 / _scf_per_psi        # psi per hour
+            _v_build   = max(pig_result.pig_speed_mph, cfg.min_speed_mph)
+            _dP_dx_max = _dP_dt_max / _v_build                    # psi per mile of travel
+            _target = roadmap.capacity_projected_floor(pig_mp, _dP_dx_max)
+            if not _booster_behind:
+                # Pre-first-booster, SP is the sole source and can't pressurize a long column
+                # quickly, so the capacity projection discounts distant climbs to ~0 (it "gives
+                # up"). But the right play is to build EARLY — from mile zero while the column is
+                # short — and carry it forward, so the pig arrives at the first station with drive
+                # already up instead of catching up after it sheds. So target the worst upcoming
+                # floor directly and let SP build toward it at max from the start.
+                _target = max(_target, roadmap.max_floor_ahead(pig_mp, 80.0))
+            pig_face_target_psig = max(pig_face_target_psig, _target)
+            if not _booster_behind:    # SP itself must build the column to the target
+                fill_pressure_psig = max(fill_pressure_psig, _target)
+
+        # --- PACK-AND-COAST: pack the line hot until the N2 budget is spent ---
+        # While injecting (budget not yet spent), aim the drive at drive_mop_fraction * MOP
+        # (the gas-side ceiling). The MOP cap below still clips it back before a low-MOP bay
+        # ahead. Once the budget is reached, SP cuts (further down) and the stored column coasts.
+        if cfg.n2_budget_scf is not None and roadmap is not None \
+                and total_scf_injected < cfg.n2_budget_scf:
+            _pack = cfg.drive_mop_fraction * roadmap.ceiling_at(pig_mp)
+            pig_face_target_psig = max(pig_face_target_psig, _pack)
+            fill_pressure_psig   = max(fill_pressure_psig,   _pack)
+            # The CONNECTED N2 column behind the pig cannot be packed above its OWN weakest joint
+            # — the bay-based ceiling misses a lower-MOP joint further back in the same column,
+            # which is exactly what trips the gas-side safety bleed (a 1-psi overshoot vented as
+            # ~48k SCF over 55 mi). Cap pack + fill at drive_mop_fraction * min(MOP behind pig).
+            if _mj_mp is not None:
+                _behind = _mj_mop[_mj_mp <= pig_mp]
+                if _behind.size:
+                    _gas_cap = cfg.drive_mop_fraction * float(np.min(_behind))
+                    pig_face_target_psig = min(pig_face_target_psig, _gas_cap)
+                    fill_pressure_psig   = min(fill_pressure_psig,   _gas_cap)
+
         # --- Apply MOP hard ceiling to injection / pig-face targets ---
         # mop_cap was computed before the speed solve (and already capped the drive
         # the solver was allowed to use). Here it also caps the pressure injection
@@ -994,15 +1081,18 @@ def simulate(cfg: SimConfig, progress_cb: Optional[Callable[[float], None]] = No
         )
         scf_inject = scf_deficit + scf_to_fill_new_vol
 
-        # Drive-limited without boosters: also pressurize injection segment to fill_pressure
-        # so pig face builds up from injection directly.
-        if not pig_result.meter_valve_active and min_suction_floor == 0:
+        # Drive-limited with NO booster behind the pig (incl. pre-first-booster): SP is the
+        # sole pressure source, so pressurize the injection column to fill_pressure to build
+        # the pig face directly. (Gated on a booster actually being behind the pig, not on the
+        # scenario having zero boosters — pre-NW the pig has none behind it even though the run
+        # uses boosters, and previously the build never fired there, leaving the column slack.)
+        if not pig_result.meter_valve_active and not _booster_behind:
             target_scf = inj_seg.scf_at_pressure(fill_pressure_psig)
             scf_inject = max(scf_inject, target_scf - inj_seg.scf)
 
-        # Stalled with no boosters: inject at max rate regardless of fill calculation —
-        # only way to build pig-face pressure and recover.
-        if is_stalled and min_suction_floor == 0.0:
+        # Stalled with no booster behind: inject at max rate — the only way to build pig-face
+        # pressure and recover when there is no booster to relay it forward.
+        if is_stalled and not _booster_behind:
             scf_inject = max(scf_inject, cfg.max_injection_scfm * dt_hr * 60.0)
 
         # --- COAST: ride the stored column instead of injecting more ---
@@ -1022,7 +1112,7 @@ def simulate(cfg: SimConfig, progress_cb: Optional[Callable[[float], None]] = No
         # worst-ahead floor) to zero (a band above it). The abrupt cut was what stalled the
         # pig — it coasted to empty, then injection couldn't recover fast enough into a climb.
         # The taper resumes injection gradually as the column draws down, smoothing recovery.
-        if roadmap is not None and not below_min:
+        if roadmap is not None and not below_min and cfg.n2_budget_scf is None:
             floor_ahead = roadmap.max_floor_ahead(pig_mp, COAST_HORIZON_MI)
             over = pig_face_psig - floor_ahead
             if over >= COAST_RAMP_BAND_PSI:
@@ -1036,6 +1126,11 @@ def simulate(cfg: SimConfig, progress_cb: Optional[Callable[[float], None]] = No
         # Cap by max rate
         max_scf_step = cfg.max_injection_scfm * dt_hr * 60.0
         scf_inject = min(max(0.0, scf_inject), max_scf_step)
+
+        # PACK-AND-COAST: once the N2 budget is spent, SP is OFF — the stored compressed column
+        # does PV work (boosters may still recompress it forward) to finish the run.
+        if cfg.n2_budget_scf is not None and total_scf_injected >= cfg.n2_budget_scf:
+            scf_inject = 0.0
 
         inj_seg.add_scf(scf_inject)
         total_scf_injected += scf_inject
@@ -1108,7 +1203,8 @@ def simulate(cfg: SimConfig, progress_cb: Optional[Callable[[float], None]] = No
                 # fires at the front booster when the pig genuinely cannot hold min speed.
                 bsr = step_booster(bs, segs, dt_hr, pig_face_psig,
                                    target_discharge_psig=tgt_discharge,
-                                   allow_fresh=(below_min and abs(bs.mp - front_booster_mp) < 1e-9))
+                                   allow_fresh=(cfg.allow_booster_fresh and below_min
+                                                and abs(bs.mp - front_booster_mp) < 1e-9))
                 booster_step_results.append({
                     'mp': bs.mp,
                     'name': bs.config.name,
@@ -1231,6 +1327,7 @@ def simulate(cfg: SimConfig, progress_cb: Optional[Callable[[float], None]] = No
             roughness_ft=cfg.fluid_roughness_ft,
             elevation_at=elevation_at,
             sim_time_hr=t_hr,
+            terrain_mp=_mj_mp, terrain_elev=_mj_elev, slack_margin_psi=25.0,
         )
 
         # --- MOP check and station pressures ---

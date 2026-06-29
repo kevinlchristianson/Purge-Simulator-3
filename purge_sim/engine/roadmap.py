@@ -40,7 +40,7 @@ from typing import List, Optional, Tuple, Callable
 import math
 import numpy as np
 
-from .physics import liquid_friction_loss_psi, mph_to_fts
+from .physics import liquid_friction_loss_psi, mph_to_fts, clearance_candidates
 
 
 @dataclass
@@ -80,6 +80,27 @@ class Roadmap:
         if hi <= lo:
             return self.ceiling_at(mp)
         return float(np.min(self.ceiling_psig[lo:hi]))
+
+    def capacity_projected_floor(self, mp: float, dP_dx_max: float,
+                                 horizon_mi: float = 200.0) -> float:
+        """Drive to aim for NOW so the pig can just reach every upcoming floor in time, given
+        the equipment's max pressure-build slope ``dP_dx_max`` (psi of drive gained per mile of
+        travel).
+
+        For a future point x', reaching floor(x') in the distance (x'-mp) at build slope
+        dP_dx_max requires the pig face to already be at  floor(x') - dP_dx_max*(x'-mp)  now.
+        The target is the max of that over all x' ahead — the binding upcoming climb. This is
+        the capacity-derived replacement for a fixed look-ahead horizon: a fast build slope
+        discounts distant climbs heavily (build just-in-time); a slow one barely discounts them
+        (start early). Never below the floor right here.
+        """
+        here = self.floor_at(mp)
+        lo = int(np.searchsorted(self.mp, mp, side='left'))
+        hi = int(np.searchsorted(self.mp, mp + horizon_mi, side='right'))
+        if hi <= lo:
+            return here
+        proj = self.floor_psig[lo:hi] - max(0.0, dP_dx_max) * (self.mp[lo:hi] - mp)
+        return float(max(here, float(np.max(proj))))
 
     def max_floor_ahead(self, mp: float, horizon_mi: float) -> float:
         """Highest floor between `mp` and `mp + horizon_mi` (worst upcoming demand).
@@ -203,23 +224,30 @@ def build_roadmap(
             head = (elev[j0:] - E_x) * grad
             ceil_liq[i] = float(np.min(mop[j0:] + fric + head))
 
-        # --- floor: drive needed to lift over the worst peak before the exit ---
-        # exit = nearest pump station ahead (its suction), else tankage end.
+        # --- floor: peak-aware min drive to keep the column full to the exit ---
+        # Same shared model as the solver / shutdown check: deliver exit_psig at the exit AND
+        # clear every intervening hill (+ slack margin). exit = nearest pump station ahead
+        # (its suction), else tankage end (the peak-clearing term covers Tug/Sutton either way).
         ahead_sta = sta_mp[sta_mp > x] if sta_mp.size else np.empty(0)
         if ahead_sta.size:
             exit_mp   = float(ahead_sta[0])
             exit_psig = float(sta_suc[exit_mp])
+            exit_elev = elevation_at(exit_mp)
         else:
             exit_mp   = end
             exit_psig = cfg.exit_pressure_run_psig
-        seg = (mp > x) & (mp <= exit_mp)
-        peak_ahead = float(np.max(elev[seg])) if seg.any() else E_x
-        lift = max(0.0, (peak_ahead - E_x)) * grad
-        L_exit = max(0.0, exit_mp - x) * 5280.0
-        floor[i] = exit_psig + fric_per_ft * L_exit + lift
+            exit_elev = elevation_at(end)
+        _b, _l = clearance_candidates(x, E_x, exit_mp, exit_psig, exit_elev,
+                                      mp, elev, cfg.fluid_sg)
+        floor[i] = float(np.max(_b + fric_per_ft * _l))
 
-    ceiling = np.minimum(ceil_gas, ceil_liq)
-    ceiling = np.minimum(ceiling, drive_cap)
+    # Drive ceiling = GAS-side MOP only (the N2 column behind the pig vs. local pipe MOP).
+    # The liquid-side limit (the crude column ahead pressing its head onto descending joints)
+    # is moot for a gas displacement: the pump stations / BPCV regulate the liquid side as it
+    # is received, so it does not cap the pig drive. ceil_liq is kept as a diagnostic only.
+    # (Including it wrongly cratered the ceiling on the Tug descent and stalled the pig there;
+    # past LS the gas-side MOP is ~930, far above the ~400 psi needed to crest Tug.)
+    ceiling = np.minimum(ceil_gas, drive_cap)
 
     # --- infeasible spans (floor exceeds ceiling) ---
     infeasible = floor > ceiling

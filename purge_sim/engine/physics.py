@@ -211,6 +211,51 @@ def liquid_friction_loss_psi(L_ft: float, D_ft: float, v_fts: float,
 
 
 # ---------------------------------------------------------------------------
+# Peak-aware liquid drive requirement (the one shared model)
+# ---------------------------------------------------------------------------
+# A full liquid column cannot have negative gauge pressure: the hydraulic grade line
+# must stay above the ground at EVERY point ahead of the pig, not just at the exit.
+# Only the pig's drive can hold the column over a hill that lies upstream of the next
+# running pump (a pump adds head only downstream of itself). So the minimum pig-face
+# drive is the WORST of two requirements over [pig -> exit]:
+#   * deliver exit_psig at the exit, and
+#   * keep the HGL >= terrain + slack margin at every intervening terrain peak.
+# Darcy friction is exactly linear in length (f depends on velocity, not length), so the
+# requirement is max_k(base_k + fric_per_ft(v) * length_k): one friction eval, then a max.
+
+def clearance_candidates(pig_mp, pig_elev_ft, exit_mp, exit_psig, exit_elev_ft,
+                         terrain_mp, terrain_elev_ft, sg, slack_margin_psi=25.0):
+    """Return (base_psig, length_ft) arrays for the simultaneous peak-clearing constraints
+    on the pig drive over [pig_mp, exit_mp]. Required drive at friction-per-foot ``fpf`` is
+    ``max(base + fpf * length)``. ``terrain_*`` are (mp, elevation) vertices of the route;
+    only those strictly between the pig and the exit are used (piecewise-linear terrain ->
+    the max of head over a span is always at a vertex)."""
+    grad = float(sg) * 62.4 / 144.0
+    bases = [float(exit_psig) + grad * (float(exit_elev_ft) - float(pig_elev_ft))]
+    lens  = [max(0.0, float(exit_mp) - float(pig_mp)) * 5280.0]
+    if terrain_mp is not None and len(terrain_mp):
+        tm = np.asarray(terrain_mp, dtype=float)
+        te = np.asarray(terrain_elev_ft, dtype=float)
+        sel = (tm > pig_mp) & (tm <= exit_mp)
+        if sel.any():
+            bases.extend(slack_margin_psi + grad * (te[sel] - pig_elev_ft))
+            lens.extend((tm[sel] - pig_mp) * 5280.0)
+    return np.asarray(bases, dtype=float), np.asarray(lens, dtype=float)
+
+
+def required_drive_to_clear(pig_mp, pig_elev_ft, exit_mp, exit_psig, exit_elev_ft,
+                            terrain_mp, terrain_elev_ft, D_ft, v_fts,
+                            sg, viscosity_cst, roughness_ft, slack_margin_psi=25.0):
+    """Minimum pig-face drive (psig) to keep the liquid column full from the pig to the exit
+    over terrain at speed ``v_fts``: deliver exit_psig at the exit AND clear every intervening
+    peak by ``slack_margin_psi``. See ``clearance_candidates``."""
+    bases, lens = clearance_candidates(pig_mp, pig_elev_ft, exit_mp, exit_psig, exit_elev_ft,
+                                       terrain_mp, terrain_elev_ft, sg, slack_margin_psi)
+    fpf = liquid_friction_loss_psi(1.0, D_ft, v_fts, sg, viscosity_cst, roughness_ft)
+    return float(np.max(bases + fpf * lens))
+
+
+# ---------------------------------------------------------------------------
 # SCFM injection rate
 # ---------------------------------------------------------------------------
 

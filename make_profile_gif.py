@@ -22,7 +22,7 @@ from purge_sim.engine import simulator as S
 from purge_sim.ui.charts import plot_pipeline_profile
 
 BASE = "C:/Users/kevin/PurgeSimScenarios/"
-SCENARIO = BASE + "SP to MT_Unlimited Boosters_Unlimited Booster Flow.json"
+SCENARIO = BASE + "SP to MT_pack-and-coast 58M.json"
 OUT_GIF = "C:/Users/kevin/Purge-Simulator-3/profile_animation.gif"
 OUT_PNG = "C:/Users/kevin/Purge-Simulator-3/profile_frame_test.png"
 
@@ -63,6 +63,9 @@ CACHE = "C:/Users/kevin/Purge-Simulator-3/.profile_sim_cache.pkl"
 
 
 def _load_or_run():
+    # The config (LS-alone pumps, NW+LS boosters / HW off) now lives in the scenario file.
+    # Cache the sim for fast chart-only iteration; delete .profile_sim_cache.pkl to force a
+    # fresh sim after an engine change.
     import pickle
     if os.path.exists(CACHE):
         with open(CACHE, "rb") as f:
@@ -70,6 +73,8 @@ def _load_or_run():
             return pickle.load(f)
     cfg = build_sim_config(load_scenario(SCENARIO).inputs)
     r = S.simulate(cfg)
+    print("pumps:", [(p.name, round(p.mp, 1)) for p in cfg.pump_stations],
+          " deployed boosters:", sorted(r.booster_plan.sites_mp) if r.booster_plan else None)
     with open(CACHE, "wb") as f:
         pickle.dump((cfg, r), f)
     return cfg, r

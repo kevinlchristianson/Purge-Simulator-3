@@ -64,6 +64,11 @@ class ScenarioInputs:
     max_injection_psig: Optional[float] = None
     max_injection_scfm: float = 20_000.0
 
+    # Pack-and-coast strategy: inject this many SCF holding drive near MOP, then cut SP and
+    # coast on PV. None = lean floor-defending controller.
+    n2_budget_scf: Optional[float] = None
+    drive_mop_fraction: float = 0.9
+
     # Exit / endpoint
     exit_pressure_run_psig: float = 50.0
     exit_pressure_end_psig: float = 10.0
@@ -89,6 +94,11 @@ class ScenarioInputs:
     booster_stations: List[dict] = field(default_factory=list)
     # e.g. [{'mp': 26.45, 'name': 'RY'}, {'mp': 51.62, 'name': 'NW'}, ...]
     # Location only — pressure/flow specs come from spread settings below.
+
+    deployed_booster_mps: Optional[List[float]] = None
+    # If set, deploy EXACTLY these booster MPs (snapped to nearest booster_stations entry)
+    # instead of the auto-optimizer. None = let the optimizer choose. Lets a scenario pin a
+    # specific booster set (e.g. NW+LS only, HW off).
 
     n_spreads: int = 2
     mob_time_hr: float = 18.0            # hours per move (travel + rig-up)

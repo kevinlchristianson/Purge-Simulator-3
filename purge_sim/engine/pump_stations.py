@@ -35,7 +35,8 @@ from dataclasses import dataclass
 from enum import Enum, auto
 from typing import List, Optional
 
-from .physics import liquid_friction_loss_psi, static_head_psi, pipe_area_ft2, bph_to_fts
+from .physics import (liquid_friction_loss_psi, static_head_psi, pipe_area_ft2, bph_to_fts,
+                      required_drive_to_clear)
 
 
 class StationStatus(Enum):
@@ -104,12 +105,19 @@ def check_hydraulic_necessity(
     viscosity_cst: float,
     roughness_ft: float,
     elevation_at: callable,
+    terrain_mp=None,
+    terrain_elev=None,
+    slack_margin_psi: float = 25.0,
 ) -> tuple[bool, float, float]:
     """
     Check whether `station` is still hydraulically necessary.
 
     The test: if this station shuts down, can the pig's N2 drive pressure still push
-    liquid to the NEXT active station (or the actual endpoint if none remain)?
+    liquid to the NEXT active station (or the actual endpoint if none remain) — keeping
+    the column full over EVERY intervening hill, not just at the target (peak-aware)?
+    A pump cannot hold a column upstream of itself, so any hill between the pig and the
+    next anchor is the pig's drive to hold; the station is only unnecessary once the pig
+    face can clear all of them (plus a slack margin).
 
     Args:
         pig_mp:          current pig milepost
@@ -137,16 +145,16 @@ def check_hydraulic_necessity(
     D_ft     = (od_in - 2 * wt_in) / 12.0
     v_fts    = bph_to_fts(flow_bph, area_ft2)
 
-    L_ft     = max(0.0, target_mp - pig_mp) * 5280.0
-    fric_psi = liquid_friction_loss_psi(L_ft, D_ft, v_fts, sg, viscosity_cst, roughness_ft)
-
-    pig_elev    = elevation_at(pig_mp)
-    target_elev = elevation_at(target_mp)
-    head_psi    = static_head_psi(target_elev - pig_elev, sg)
-
-    available   = pig_face_psig - fric_psi - head_psi
-    unnecessary = available >= required_psig
-    return unnecessary, available, required_psig
+    # Peak-aware: drive needed to deliver required_psig at the target AND clear every hill
+    # between the pig and the target (+ slack margin). The station is unnecessary only when
+    # the pig face already exceeds that.
+    required = required_drive_to_clear(
+        pig_mp, elevation_at(pig_mp), target_mp, required_psig, elevation_at(target_mp),
+        terrain_mp, terrain_elev, D_ft, v_fts, sg, viscosity_cst, roughness_ft,
+        slack_margin_psi,
+    )
+    unnecessary = pig_face_psig >= required
+    return unnecessary, pig_face_psig, required
 
 
 def evaluate_shutdowns(
@@ -164,6 +172,9 @@ def evaluate_shutdowns(
     elevation_at: callable,
     sim_time_hr: float,
     hard_limit_miles: float = 1.0,
+    terrain_mp=None,
+    terrain_elev=None,
+    slack_margin_psi: float = 25.0,
 ) -> List[dict]:
     """
     Evaluate all running stations for shutdown eligibility this timestep.
@@ -222,7 +233,7 @@ def evaluate_shutdowns(
             pig_mp, pig_face_psig, station, next_dn,
             ultimate_endpoint_psig, ultimate_endpoint_mp, flow_bph,
             od_in, wt_in, sg, viscosity_cst, roughness_ft,
-            elevation_at,
+            elevation_at, terrain_mp, terrain_elev, slack_margin_psi,
         )
 
         if unnecessary:
