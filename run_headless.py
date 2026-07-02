@@ -28,6 +28,7 @@ from purge_sim.engine.bpcv import BPCVConfig, BCPVDownstreamJoint
 from purge_sim.engine.physics import fts_to_bph, mph_to_fts, pipe_area_ft2
 from purge_sim.engine.mop_check import MOPJoint
 from purge_sim.engine.log_export import export_run_log
+from purge_sim.engine.purge_report import export_purge_report
 
 
 def build_sim_config(inp: ScenarioInputs) -> SimConfig:
@@ -177,6 +178,23 @@ def main():
 
     print(f"\nExporting log -> {log_path}")
     export_run_log(results, log_path, scenario_name=scenario.meta.name)
+
+    xlsx_path = os.path.splitext(log_path)[0].rstrip('_log').rstrip('log') + '_report.xlsx'
+    try:
+        pi = {
+            "project": scenario.meta.name,
+            "notes":   scenario.meta.notes,
+            "date":    scenario.meta.modified_at[:10],
+        }
+        export_purge_report(results, xlsx_path, scenario_name=scenario.meta.name,
+                            project_info=pi)
+        print(f"Exported xlsx  -> {xlsx_path}")
+    except ImportError as e:
+        print(f"xlsx export skipped (missing library): {e}")
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        print(f"xlsx export failed: {e}")
+
     print("Done.")
 
 
