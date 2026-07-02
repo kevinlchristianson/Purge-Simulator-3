@@ -179,7 +179,8 @@ def main():
     print(f"\nExporting log -> {log_path}")
     export_run_log(results, log_path, scenario_name=scenario.meta.name)
 
-    xlsx_path = os.path.splitext(log_path)[0].rstrip('_log').rstrip('log') + '_report.xlsx'
+    _base = os.path.splitext(log_path)[0]
+    xlsx_path = (_base[:-4] if _base.endswith('_log') else _base) + '_report.xlsx'
     try:
         pi = {
             "project": scenario.meta.name,
