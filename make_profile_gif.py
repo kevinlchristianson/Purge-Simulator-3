@@ -1,115 +1,121 @@
-"""Render the reference-style animated pipeline profile to a GIF.
-
-Runs a scenario, samples timesteps by pig position, draws plot_pipeline_profile for
-each, and assembles an animated GIF (pillow). Also drops a single mid-run PNG for a
-quick eyeball. ffmpeg isn't required (GIF via pillow).
-
-Usage:  python make_profile_gif.py
 """
-import io
-import sys
-import os
+Animated pipeline profile GIF / MP4 generator — CLI wrapper.
 
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-from PIL import Image
+Usage:
+    python make_profile_gif.py [--scenario <path.json>]
+                               [--out-dir <directory>]
+                               [--mp-step 3.0]
+                               [--no-mp4]
+                               [--no-cache]
+
+Without --scenario, defaults to the SP->MT pack-and-coast 58M scenario.
+Delete the .pkl cache file to force a fresh simulation.
+"""
+import argparse
+import os
+import pickle
+import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from run_headless import build_sim_config
+
 from purge_sim.data.scenario import load_scenario
 from purge_sim.engine import simulator as S
-from purge_sim.ui.charts import plot_pipeline_profile
-
-BASE = "C:/Users/kevin/PurgeSimScenarios/"
-SCENARIO = BASE + "SP to MT_pack-and-coast 58M.json"
-OUT_GIF = "C:/Users/kevin/Purge-Simulator-3/profile_animation.gif"
-OUT_PNG = "C:/Users/kevin/Purge-Simulator-3/profile_frame_test.png"
-
-# Operational narrative keyed to pig milepost (from the reference annotations).
-PHASES = [
-    (0,   14,  "Begin nitrogen injection at SP"),
-    (14,  22,  "Shut off N2 injection — expansion drives the pig (coast)"),
-    (22,  50,  "Resume modest SP injection"),
-    (50,  70,  "Compressor at NW to avoid higher SP injection pressures/volumes"),
-    (70,  90,  "Valve-controlled transfer of upstream N2 — no compressor at SH"),
-    (90,  114, "Compressor at LS as interface ascends Tug Mtn"),
-    (114, 160, "Over Tug Mtn; boost intermittently through the ups/downs"),
-    (160, 174, "Compressor at HW as interface climbs Sutton Mtn"),
-    (174, 205, "Descend Sutton Mtn — cease SC backpressure before the pig arrives"),
-    (205, 234, "Open MT control valve; pig approaching the trap"),
-]
+from purge_sim.engine.animation import generate_animation
+from run_headless import build_sim_config
 
 
-def annotation_for(mp: float) -> str:
-    for lo, hi, txt in PHASES:
-        if lo <= mp < hi:
-            return txt
-    return "Pig landing at MT"
+_DEFAULT_SCENARIO = "C:/Users/kevin/PurgeSimScenarios/SP to MT_pack-and-coast 58M.json"
 
 
-def render(step, cfg, roadmap):
-    fig = plt.figure(figsize=(12, 7), dpi=96)
-    plot_pipeline_profile(fig, step, cfg, roadmap=roadmap,
-                          annotation=annotation_for(step.pig_mp))
-    buf = io.BytesIO()
-    fig.savefig(buf, format="png")
-    plt.close(fig)
-    buf.seek(0)
-    return Image.open(buf).convert("RGB")
+def _load_or_run(scenario_path: str, cache_path):
+    """Load a cached (cfg, results) pair or run the simulation fresh."""
+    if cache_path and os.path.exists(cache_path):
+        with open(cache_path, "rb") as fh:
+            print(f"Loaded cached sim from {cache_path}")
+            return pickle.load(fh)
+
+    scenario = load_scenario(scenario_path)
+    cfg = build_sim_config(scenario.inputs)
+    print(f"Simulating: {scenario.meta.name} ...")
+    results = S.simulate(cfg)
+    print(f"  -> {len(results.steps)} steps  "
+          f"N2 {results.total_scf_n2 / 1e6:.2f} MMscf  "
+          f"wall {results.wall_time_s:.1f}s")
+
+    if cache_path:
+        os.makedirs(os.path.dirname(os.path.abspath(cache_path)) or ".", exist_ok=True)
+        with open(cache_path, "wb") as fh:
+            pickle.dump((cfg, results), fh)
+        print(f"Cached sim -> {cache_path}")
+
+    return cfg, results
 
 
-CACHE = "C:/Users/kevin/Purge-Simulator-3/.profile_sim_cache.pkl"
+def main():
+    parser = argparse.ArgumentParser(
+        description="Generate animated pipeline profile GIF / MP4"
+    )
+    parser.add_argument(
+        "--scenario", default=_DEFAULT_SCENARIO,
+        help="Path to scenario JSON  (default: SP->MT pack-and-coast 58M)"
+    )
+    parser.add_argument(
+        "--out-dir", default=None,
+        help="Output directory  (default: same folder as the scenario JSON)"
+    )
+    parser.add_argument(
+        "--mp-step", type=float, default=3.0,
+        help="Miles between animation frames  (default: 3.0)"
+    )
+    parser.add_argument(
+        "--no-mp4", action="store_true",
+        help="Skip MP4 -- produce GIF only"
+    )
+    parser.add_argument(
+        "--no-cache", action="store_true",
+        help="Force a fresh simulation even if a cache file exists"
+    )
+    args = parser.parse_args()
 
+    if not os.path.exists(args.scenario):
+        print(f"ERROR: scenario not found: {args.scenario}", file=sys.stderr)
+        sys.exit(1)
 
-def _load_or_run():
-    # The config (LS-alone pumps, NW+LS boosters / HW off) now lives in the scenario file.
-    # Cache the sim for fast chart-only iteration; delete .profile_sim_cache.pkl to force a
-    # fresh sim after an engine change.
-    import pickle
-    if os.path.exists(CACHE):
-        with open(CACHE, "rb") as f:
-            print("loaded cached sim")
-            return pickle.load(f)
-    cfg = build_sim_config(load_scenario(SCENARIO).inputs)
-    r = S.simulate(cfg)
-    print("pumps:", [(p.name, round(p.mp, 1)) for p in cfg.pump_stations],
-          " deployed boosters:", sorted(r.booster_plan.sites_mp) if r.booster_plan else None)
-    with open(CACHE, "wb") as f:
-        pickle.dump((cfg, r), f)
-    return cfg, r
+    base    = os.path.splitext(os.path.basename(args.scenario))[0]
+    out_dir = args.out_dir or os.path.dirname(os.path.abspath(args.scenario))
+    os.makedirs(out_dir, exist_ok=True)
 
+    cache_path = (
+        None if args.no_cache
+        else os.path.join(out_dir, f".{base}_anim_cache.pkl")
+    )
+    out_gif = os.path.join(out_dir, f"{base}_profile.gif")
+    out_mp4 = None if args.no_mp4 else os.path.join(out_dir, f"{base}_profile.mp4")
 
-def main(mp_step=3.0):
-    cfg, r = _load_or_run()
-    print(f"sim: {len(r.steps)} steps, total N2 {r.total_scf_n2/1e6:.1f}M")
+    cfg, results = _load_or_run(args.scenario, cache_path)
 
-    # one mid-run PNG to eyeball
-    mid = min(r.steps, key=lambda s: abs(s.pig_mp - 60))
-    fig = plt.figure(figsize=(12, 7), dpi=96)
-    plot_pipeline_profile(fig, mid, cfg, roadmap=r.roadmap,
-                          annotation=annotation_for(mid.pig_mp))
-    fig.savefig(OUT_PNG)
-    plt.close(fig)
-    print("saved", OUT_PNG)
+    span = cfg.purge_end_mp - cfg.purge_start_mp
+    approx_frames = max(1, int(span / args.mp_step))
+    print(f"Building animation: ~{approx_frames} frames "
+          f"({cfg.purge_start_mp:.1f}->{cfg.purge_end_mp:.1f} mi, "
+          f"step {args.mp_step} mi) ...")
 
-    # sample steps by pig MP and build the GIF
-    targets, mp = [], cfg.purge_start_mp
-    while mp <= cfg.purge_end_mp:
-        targets.append(mp)
-        mp += mp_step
-    seen = set()
-    frames = []
-    for tgt in targets:
-        st = min(r.steps, key=lambda s: abs(s.pig_mp - tgt))
-        if id(st) in seen:
-            continue
-        seen.add(id(st))
-        frames.append(render(st, cfg, r.roadmap))
-    print(f"rendered {len(frames)} frames")
-    frames[0].save(OUT_GIF, save_all=True, append_images=frames[1:],
-                   duration=450, loop=0, optimize=True)
-    print("saved", OUT_GIF)
+    def _progress(done, total):
+        if done % max(1, total // 10) == 0 or done == total:
+            print(f"  frame {done}/{total}", flush=True)
+
+    generate_animation(
+        results, cfg,
+        out_gif=out_gif,
+        out_mp4=out_mp4,
+        mp_step=args.mp_step,
+        progress_cb=_progress,
+    )
+
+    print(f"Saved GIF -> {out_gif}")
+    if out_mp4 and os.path.exists(out_mp4):
+        print(f"Saved MP4 -> {out_mp4}")
+    print("Done.")
 
 
 if __name__ == "__main__":
