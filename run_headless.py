@@ -232,7 +232,8 @@ def main():
                 _last_anim[0] = pct
         generate_animation(results, cfg,
                            out_gif=gif_path, out_mp4=mp4_path,
-                           progress_cb=_anim_cb)
+                           progress_cb=_anim_cb,
+                           scenario_name=scenario.meta.name)
         print(f"Exported GIF    -> {gif_path}")
         if os.path.exists(mp4_path):
             print(f"Exported MP4    -> {mp4_path}")

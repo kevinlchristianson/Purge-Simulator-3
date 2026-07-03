@@ -51,62 +51,86 @@ def plot_pig_speed(fig, times_hr: List[float], mps: List[float], speeds_mph: Lis
     fig.tight_layout()
 
 
-def plot_pipeline_profile(fig, step, cfg, roadmap=None, annotation: str = ""):
-    """Reference-style dual-axis pipeline profile at a SINGLE timestep.
+def plot_pipeline_profile(fig, step, cfg, roadmap=None, annotation: str = "",
+                          title: str = None, start_label: str = None, end_label: str = None,
+                          xlim=None):
+    """Dual-axis pipeline profile at a SINGLE timestep.
 
-    Left Y: Elevation / Total Head (ft).  Right Y: Pressure (psig), aligned so 0 psig
-    sits on the 4,000-ft head gridline.  X: Milepost (all 9 stations ticked).
+    Left Y: Elevation / Total Head (ft).  Right Y: Pressure (psig).
+    X: Milepost (pump stations + configured start/end labels ticked).
 
-    Renders, matching the 24ML reference:
-      - ground elevation (navy) and the MOP envelope (orange), as head
-      - AHEAD of the pig: the Operating Head Gradient / liquid HGL (blue, station dots),
-        built from the pump-supported station discharge pressures (stays above ground)
-      - BEHIND the pig: ONLY the N2 gas pressure (teal) — the sole physical data there
-      - N2 interface (green vertical) + pig (orange square) with face-pressure label
-      - active booster/compressor markers (gold), the BPCV at SC (red dashed)
-      - floating flow-rate marker (magenta, right margin) and SP injection marker (green)
-      - per-station operating-pressure labels
+    Parameters
+    ----------
+    title : str or None
+        Chart title; auto-generated from pipe size and distance if None.
+    start_label, end_label : str or None
+        Labels for the purge-start and purge-end on the X axis.
+        Derived from pump stations if None; falls back to "MP X.X".
+    xlim : (float, float) or None
+        Override X-axis range. None → (purge_start-3, purge_end+3).
+        Set to (ep_mp[0]-3, ep_mp[-1]+3) for a full-pipeline context view.
     """
     from ..engine.physics import (pipe_area_ft2, mph_to_fts, fts_to_bph, bph_to_fts,
                                    liquid_friction_loss_psi)
 
-    grad = cfg.fluid_sg * 62.4 / 144.0          # psi per ft of head
+    grad = cfg.fluid_sg * 62.4 / 144.0
     elev = np.asarray(cfg.elevation_profile, dtype=float)
     ep_mp, ep_el = elev[:, 0], elev[:, 1]
     def elev_at(x): return float(np.interp(x, ep_mp, ep_el))
     start, end = cfg.purge_start_mp, cfg.purge_end_mp
-    pig  = float(step.pig_mp)
+    pig   = float(step.pig_mp)
     pface = float(step.pig_face_psig)
-    sps  = step.station_pressures or []
+    sps   = step.station_pressures or []
+    inj_scfm = max(0.0, getattr(step, 'injection_scfm', 0.0))
 
-    ax  = fig.add_subplot(111)                   # LEFT: elevation / head (ft)
-    axp = ax.twinx()                             # RIGHT: pressure (psig) — everything else
+    ax  = fig.add_subplot(111)
+    axp = ax.twinx()
 
-    # friction model for the ahead operating-pressure walk
     od, wt = cfg.pipe_geometry.od_wt_at(pig)
     D_ft = (od - 2.0 * wt) / 12.0
     area = pipe_area_ft2(od, wt)
-    flow_bph = fts_to_bph(mph_to_fts(step.pig_speed_mph), area)            # actual (for marker)
-    # friction for the HGL is drawn at the SAME flow the engine sized the stations at
-    # (pig speed floored at min) so the grade lines and station suction/discharge are consistent.
-    v_fts = bph_to_fts(fts_to_bph(mph_to_fts(max(step.pig_speed_mph, cfg.min_speed_mph)), area),
-                       area) if area > 0 else 0.0
+    flow_bph = fts_to_bph(mph_to_fts(step.pig_speed_mph), area)
+    v_fts = (bph_to_fts(fts_to_bph(mph_to_fts(max(step.pig_speed_mph, cfg.min_speed_mph)), area),
+                        area) if area > 0 else 0.0)
 
-    # ============ RIGHT AXIS (psig): operating pressure everywhere ===================
-    # BEHIND the pig: N2 gas — FLAT per segment (uniform pressure inside a gas segment).
+    # ============ Y-AXIS AUTO-SCALING ============================================
+    # Head axis: cover the elevation range + full MOP headroom.
+    # Use only the purge section for scaling so zoomed views aren't skewed by far tails.
+    purge_mask = (ep_mp >= start) & (ep_mp <= end)
+    el_pu = ep_el[purge_mask] if purge_mask.any() else ep_el
+    min_el = float(np.min(el_pu))
+    max_el = float(np.max(el_pu))
+
+    mop_max = float(np.max(roadmap.mop_psig)) if roadmap is not None else max(700.0, pface * 1.2)
+    p_top = max(1000.0, mop_max * 1.05)
+
+    # y_max = highest point on ground + full MOP above it
+    y_max = max_el + p_top / grad * 1.05
+    y_max = max(y_max, 2000.0)
+    y_min = max(0.0, min_el - 300.0)
+
+    # Near-sea-level pipelines: give extra vertical room so the elevation profile
+    # doesn't crowd the bottom of the chart and HGL reads clearly above it.
+    if min_el < 500.0:
+        y_min = 0.0
+        y_max = max(y_max, max_el * 3.0)
+
+    # Pressure axis: maintain grad-consistent scale (p_range = grad * head_range)
+    # so that slope-of-HGL = hydraulic gradient visually.
+    p_bot = p_top - grad * (y_max - y_min)
+    p_bot = max(p_bot, -p_top)
+
+    # ============ RIGHT AXIS (psig): N2 behind pig — flat per segment ============
     gas_lab = False
     for seg in (step.segments or []):
         if seg['upstream_mp'] >= pig:
             continue
         a, b, p = seg['upstream_mp'], min(seg['downstream_mp'], pig), seg['pressure_psig']
         axp.plot([a, b], [p, p], color='deepskyblue', lw=1.8, zorder=4,
-                 label=None if gas_lab else 'Operating Pressure')
+                 label=None if gas_lab else 'N2 Gas Pressure')
         gas_lab = True
 
-    # AHEAD of the pig: the engine builds the liquid HGL as the upper envelope of the physical
-    # supports (pig drive + pump suction/discharge lifts + BPCV backpressure), clamped so it
-    # never rides below ground. The chart just plots it — operating pressure on the psi axis
-    # (= (HGL - ground) * grad, always >= 0) and the HGL itself on the head axis (later).
+    # AHEAD of the pig: liquid HGL
     from ..engine.hgl import build_liquid_hgl
     from ..engine.bpcv import compute_bpcv_upstream_min_set_point, compute_bpcv_set_point
 
@@ -114,12 +138,11 @@ def plot_pipeline_profile(fig, step, cfg, roadmap=None, annotation: str = ""):
     bpcv_mp = bpcv.mp if (bpcv is not None and pig < bpcv.mp) else None
     mt_psig = getattr(cfg, 'exit_pressure_run_psig', step.exit_psig)
 
-    def _fric_head(a, b):                         # friction head (ft) between mileposts a,b
+    def _fric_head(a, b):
         L = abs(b - a) * 5280.0
         return liquid_friction_loss_psi(L, D_ft, v_fts, cfg.fluid_sg,
                                         cfg.fluid_viscosity_cst, cfg.fluid_roughness_ft) / grad
 
-    # BPCV set point (its backpressure, capped at downstream MOP) — the same the engine uses
     bpcv_sp = mt_psig
     if bpcv_mp is not None:
         smin = compute_bpcv_upstream_min_set_point(
@@ -133,80 +156,74 @@ def plot_pipeline_profile(fig, step, cfg, roadmap=None, annotation: str = ""):
              if s.get('status') == 'running' and s['mp'] > pig]
     grid = sorted(set([m for m in ep_mp if pig < m <= end]
                       + [p[0] for p in pumps] + ([bpcv_mp] if bpcv_mp else []) + [end]))
-    # clamp_to_ground=False: plot EXACTLY what the model produces — where the pig's drive
-    # cannot hold the column over a hill the HGL falls below ground (slack / column separation),
-    # and we want that visible rather than cosmetically floored at terrain.
     hgl_pts = build_liquid_hgl(grid, pig, pface, pumps, bpcv_mp, bpcv_sp, end, mt_psig,
                                elev_at, _fric_head, grad, clamp_to_ground=False)
 
     ox = [pig] + [m for m, _ in hgl_pts]
     oy = [pface] + [(h - elev_at(m)) * grad for m, h in hgl_pts]
-    for pmp, suc, dis in pumps:                    # clean vertical lift edge at each pump
+    for pmp, suc, dis in pumps:
         ox += [pmp, pmp]; oy += [suc, dis]
     order = np.argsort(ox)
     ox = list(np.asarray(ox)[order]); oy = list(np.asarray(oy)[order])
     axp.plot(ox, oy, color='deepskyblue', lw=1.8, zorder=4,
-             label=None if gas_lab else 'Operating Pressure')
+             label=None if gas_lab else 'N2 Gas Pressure')
 
-    # MOP (psig) on the right axis
     if roadmap is not None:
         axp.plot(np.asarray(roadmap.mp, float), np.asarray(roadmap.mop_psig, float),
                  color='darkorange', lw=1.1, zorder=3, label='MOP (psig)')
 
-    # station operating-pressure dots + labels (right axis)
     for s in sps:
         axp.plot([s['mp']], [s['discharge_psig']], 'o', color='royalblue', ms=5, zorder=6)
         axp.annotate(f"{s['discharge_psig']:.0f}", (s['mp'], s['discharge_psig']),
                      color='royalblue', fontsize=10, fontweight='bold', ha='center',
                      xytext=(0, 7), textcoords='offset points')
 
-    # interface pressure: its OWN dot on the green line, on the psi scale
-    axp.plot([pig], [pface], 'o', color='limegreen', ms=9, markeredgecolor='darkgreen',
-             zorder=10)
+    axp.plot([pig], [pface], 'o', color='limegreen', ms=9, markeredgecolor='darkgreen', zorder=10)
     axp.annotate(f"{pface:.0f}", (pig, pface), color='darkgreen', fontsize=12,
                  fontweight='bold', ha='left', xytext=(7, 0), textcoords='offset points')
 
-    # flow + SP injection markers (right axis, value/10 like the reference)
-    axp.plot([end - 3], [flow_bph / 10.0], 'o', color='magenta', ms=12, zorder=11)
-    axp.annotate(f"Flow {flow_bph:,.0f} BPH", (end - 3, flow_bph / 10.0), color='magenta',
-                 fontsize=10, fontweight='bold', ha='right', va='center',
-                 xytext=(-12, 0), textcoords='offset points')
-    inj_scfm = max(0.0, getattr(step, 'injection_scfm', 0.0))
-    # SP injection rate on the LEFT (head) axis, rescaled so it stays on screen:
-    # 0 SCFM -> 0 ft, max injection rate -> 5,000 ft of head.
-    _max_inj = max(1.0, getattr(cfg, 'max_injection_scfm', 5000.0))
-    _inj_y = min(inj_scfm / _max_inj, 1.0) * 5000.0
-    ax.plot([start + 3], [_inj_y], '^', color='green', ms=13, zorder=11)
-    ax.annotate(f"SP inj {inj_scfm:,.0f} SCFM", (start + 3, _inj_y), color='green',
-                fontsize=10, fontweight='bold', ha='left', va='center',
-                xytext=(12, 0), textcoords='offset points')
+    # ============ FLOATING RATE MARKERS ==========================================
+    # Both markers scale from 0 (bottom of their axis) to 80% up at max rate.
+    # This gives a visual "thermometer" effect independent of axis scale.
 
-    # ============ LEFT AXIS (ft): elevation + HGL only ===============================
+    # Injection rate (green triangle, left margin on head axis)
+    _max_inj = max(1.0, getattr(cfg, 'max_injection_scfm', 5000.0))
+    _inj_y = min(inj_scfm / _max_inj, 1.0) * 0.80 * (y_max - y_min) + y_min
+    ax.plot([start + 1.0], [_inj_y], '^', color='green', ms=11, zorder=11,
+            clip_on=False)
+    ax.annotate(f"{inj_scfm:,.0f} SCFM", (start + 1.0, _inj_y), color='darkgreen',
+                fontsize=9, fontweight='bold', ha='left', va='center',
+                xytext=(10, 0), textcoords='offset points')
+
+    # Flow rate (magenta dot, right margin on pressure axis)
+    _max_flow_bph = fts_to_bph(mph_to_fts(max(getattr(cfg, 'max_speed_mph', 5.0) or 5.0, 1.0)),
+                                area)
+    _flow_p = p_bot + min(flow_bph / max(1.0, _max_flow_bph), 1.0) * 0.80 * (p_top - p_bot)
+    axp.plot([end - 1.0], [_flow_p], 'o', color='magenta', ms=11, zorder=11, clip_on=False)
+    axp.annotate(f"{flow_bph:,.0f} BPH", (end - 1.0, _flow_p), color='magenta',
+                 fontsize=9, fontweight='bold', ha='right', va='center',
+                 xytext=(-10, 0), textcoords='offset points')
+
+    # ============ LEFT AXIS (ft): elevation + MOP head + HGL ====================
     ax.plot(ep_mp, ep_el, color='navy', lw=1.3, zorder=2, label='Ground Elevation')
-    # MOP as HEAD (red) on the left axis: the ceiling the HGL must stay under.
+
     if roadmap is not None:
         mp_m = np.asarray(roadmap.mp, float)
         ax.plot(mp_m, np.interp(mp_m, ep_mp, ep_el) + np.asarray(roadmap.mop_psig, float) / grad,
                 color='red', lw=1.0, zorder=2, label='Max Operating Head')
-    # HGL ahead = elev + operating_pressure/grad — carries the pump lifts and BPCV drop
-    hgl_ft = [elev_at(x) + p / grad for x, p in zip(ox, oy)]
-    ax.plot(ox, hgl_ft, color='royalblue', lw=1.9, zorder=5,
-            label='Operating Head Gradient (HGL)')
 
-    # SLACK: where the HGL falls below ground the liquid column has separated (negative gauge
-    # pressure — physically impossible in a full line). Shaded red, exactly as the model
-    # produces it (no ground clamp), so column separation is visible instead of hidden.
+    hgl_ft = [elev_at(x) + p / grad for x, p in zip(ox, oy)]
+    ax.plot(ox, hgl_ft, color='royalblue', lw=1.9, zorder=5, label='Operating Head (HGL)')
+
     _gnd = np.array([elev_at(x) for x in ox]); _hgl = np.array(hgl_ft, dtype=float)
     if np.any(_hgl < _gnd - 0.5):
         ax.fill_between(ox, _hgl, _gnd, where=(_hgl < _gnd), interpolate=True,
-                        color='red', alpha=0.35, zorder=4, label='SLACK (column separation)')
+                        color='red', alpha=0.35, zorder=4, label='SLACK')
 
-    # N2 interface (green vertical) + pig square (on the HGL/left at its head)
     ax.axvline(pig, color='limegreen', lw=2.4, zorder=6)
     ax.plot([pig], [elev_at(pig) + pface / grad], marker='s', color='orange', ms=6,
             markeredgecolor='k', zorder=8, label='PIG')
 
-    # active booster / compressor markers (gold) + their N2 flow rate (SCFM)
     used = False
     for bs in (step.booster_states or []):
         if bs.get('running'):
@@ -223,103 +240,92 @@ def plot_pipeline_profile(fig, step, cfg, roadmap=None, annotation: str = ""):
 
     if bpcv is not None:
         ax.axvline(bpcv.mp, color='crimson', lw=1.0, ls=':', zorder=3)
-        ax.annotate("BPCV", (bpcv.mp, 250), color='crimson', fontsize=9, fontweight='bold',
-                    rotation=90, ha='center')
+        ax.annotate("BPCV", (bpcv.mp, y_min + (y_max - y_min) * 0.05),
+                    color='crimson', fontsize=9, fontweight='bold', rotation=90, ha='center')
 
-    # ============ REFERENCE HGL SLOPE RULERS (left axis, dotted) ====================
-    # Idealized constant-diameter friction gradients, each anchored at 6,000 ft of head
-    # on the left axis, one per flow rate. They are slope rulers: compare the drawn HGL's
-    # slope against them to read off the flow it implies. Drawn at the pig's local pipe ID
-    # so they match the HGL's own friction model (real HGL bends where OD/WT change).
-    x_left, x_right = start - 3, end + 3
+    # ============ HGL SLOPE RULERS (large-bore multi-pump systems only) ===========
+    # These slope rulers let engineers read off equivalent flow from the HGL slope.
+    # Only relevant for large-diameter liquid-full lines with multiple pump stations.
+    if od >= 12.0 and len(getattr(cfg, 'pump_stations', [])) > 1:
+        def _slope_fthead_per_mi(bph, D, A):
+            v = bph_to_fts(bph, A) if A > 0 else 0.0
+            return liquid_friction_loss_psi(5280.0, D, v, cfg.fluid_sg,
+                                            cfg.fluid_viscosity_cst, cfg.fluid_roughness_ft) / grad
 
-    def _slope_fthead_per_mi(bph, D, A):
-        v = bph_to_fts(bph, A) if A > 0 else 0.0
-        return liquid_friction_loss_psi(5280.0, D, v, cfg.fluid_sg,
-                                        cfg.fluid_viscosity_cst, cfg.fluid_roughness_ft) / grad
+        ruler_anchor = y_min + (y_max - y_min) * 0.90  # top 90% of head axis
+        x_left, x_right = start - 3, end + 3
+        for q, col in [(4000, '#9467bd'), (5000, '#8c564b'),
+                       (6000, '#7f7f7f'), (7000, '#bcbd22')]:
+            s_val = _slope_fthead_per_mi(q, D_ft, area)
+            ax.plot([x_left, x_right],
+                    [ruler_anchor, ruler_anchor - s_val * (x_right - x_left)],
+                    ls=':', color=col, lw=1.1, alpha=0.85, zorder=2,
+                    label=f"{q:,.0f} BPH slope")
 
-    def _flow_bph_for_slope(slope_fthead_per_mi, D, A):
-        # Invert the (monotonic) friction relation: find the flow whose gradient matches.
-        target = max(0.0, slope_fthead_per_mi) * grad        # psi per mile
-        lo, hi = 0.0, 40.0                                   # ft/s search bracket
-        for _ in range(60):
-            mid = 0.5 * (lo + hi)
-            f = liquid_friction_loss_psi(5280.0, D, mid, cfg.fluid_sg,
-                                         cfg.fluid_viscosity_cst, cfg.fluid_roughness_ft)
-            if f < target:
-                lo = mid
-            else:
-                hi = mid
-        return fts_to_bph(0.5 * (lo + hi), A)
+    # ============ X-AXIS TICKS ===================================================
+    # Priority: pump stations → booster stations (if no pumps) → just start/end.
+    # start_label / end_label override the auto-derived names.
+    _sl = start_label or _derive_label(cfg, cfg.purge_start_mp, is_start=True)
+    _el = end_label   or _derive_label(cfg, cfg.purge_end_mp,   is_start=False)
 
-    for q, col in [(4000, '#9467bd'), (5000, '#8c564b'),
-                   (6000, '#7f7f7f'), (7000, '#bcbd22')]:
-        s = _slope_fthead_per_mi(q, D_ft, area)
-        ax.plot([x_left, x_right], [6000.0, 6000.0 - s * (x_right - x_left)],
-                ls=':', color=col, lw=1.1, alpha=0.85, zorder=2,
-                label=f"{q:,.0f} BPH HGL slope")
+    tick_map: dict = {start: _sl, end: _el}
+    if getattr(cfg, 'pump_stations', []):
+        for ps in getattr(cfg, 'pump_stations', []):
+            if start < ps.mp < end:
+                tick_map[ps.mp] = ps.name
+    elif getattr(cfg, 'booster_configs', []):
+        for b in getattr(cfg, 'booster_configs', []):
+            if start < b.mp < end:
+                tick_map[b.mp] = b.name
 
-    # Tug-Sutton minimum-clearance HGL: the straight grade line touching BOTH peak tops
-    # plus the 25-psi slack margin. Its slope -> the flow at which both peaks are just held
-    # full; back-extrapolated to LS it gives the required drive, forward it gives the BPCV
-    # set point. Flow is inverted at the pipe ID in the Tug-Sutton span (not at the pig).
-    def _peak_in(lo_mp, hi_mp):
-        m = (ep_mp >= lo_mp) & (ep_mp <= hi_mp)
-        if not m.any():
-            return None
-        i = int(np.argmax(ep_el[m]))
-        return float(ep_mp[m][i]), float(ep_el[m][i])
+    sorted_ticks = sorted(tick_map.items())
+    ax.set_xticks([m for m, _ in sorted_ticks])
+    ax.set_xticklabels([n for _, n in sorted_ticks], fontsize=9)
 
-    tug, sut = _peak_in(100, 135), _peak_in(160, 195)
-    if tug and sut and sut[0] != tug[0]:
-        margin_ft = 25.0 / grad
-        h_tug, h_sut = tug[1] + margin_ft, sut[1] + margin_ft
-        slope_ts = (h_sut - h_tug) / (sut[0] - tug[0])       # ft head / mile (negative)
-        od2, wt2 = cfg.pipe_geometry.od_wt_at(0.5 * (tug[0] + sut[0]))
-        D2, A2 = (od2 - 2.0 * wt2) / 12.0, pipe_area_ft2(od2, wt2)
-        ts_flow = _flow_bph_for_slope(abs(slope_ts), D2, A2)
-        # Draw the clearance line only across the span it governs: LS -> SC (the BPCV).
-        _ls = next((b.mp for b in cfg.booster_configs if b.name == 'LS'), start)
-        _sc = next((b.mp for b in cfg.booster_configs if b.name == 'SC'), end)
-        ax.plot([_ls, _sc],
-                [h_tug + slope_ts * (_ls - tug[0]), h_tug + slope_ts * (_sc - tug[0])],
-                ls='--', color='black', lw=0.8, zorder=5,
-                label=f"Tug-Sutton clear (+25 psi) ≈ {ts_flow:,.0f} BPH")
-        ax.plot([tug[0], sut[0]], [h_tug, h_sut], 'x', color='black', ms=8, mew=2, zorder=6)
-
-    # --- all 9 station ticks --------------------------------------------------------
-    bsta = sorted(cfg.booster_configs, key=lambda b: b.mp)
-    ticks = [(start, 'SP')] + [(b.mp, b.name) for b in bsta] + [(end, 'MT')]
-    ax.set_xticks([m for m, _ in ticks])
-    ax.set_xticklabels([n for _, n in ticks], fontsize=9)
-
-    # --- axes framing: align 0 psig with the 4,000-ft head gridline ------------------
-    ax.set_xlim(start - 3, end + 3)
-    ax.set_ylim(0, 6500)
-    frac = 4000.0 / 6500.0
-    mop_max = float(np.max(roadmap.mop_psig)) if roadmap is not None else 700.0
-    p_top = max(1000.0, mop_max * 1.05)
-    p_bot = -frac / (1.0 - frac) * p_top         # 0 psig lands on the 4,000-ft line
+    # ============ AXES FRAMING ===================================================
+    x_lo = xlim[0] if xlim else start - 3
+    x_hi = xlim[1] if xlim else end + 3
+    ax.set_xlim(x_lo, x_hi)
+    ax.set_ylim(y_min, y_max)
     axp.set_ylim(p_bot, p_top)
+
     ax.set_xlabel("Milepost")
     ax.set_ylabel("Elevation / Total Head, ft")
     axp.set_ylabel("Pressure, psig")
-    ax.set_title("24-inch Main Line Profile — Nitrogen Displacement of Crude Oil Line-fill",
+
+    _pipe_desc = f"{od:.3g}″"
+    _dist = end - start
+    ax.set_title(title or f"{_pipe_desc} Pipeline Profile — {_dist:.0f}-mi N₂ Purge",
                  fontsize=11, fontweight='bold')
     ax.grid(alpha=0.25)
 
     t_hr = getattr(step, 't_hr', 0.0)
-    ax.text(0.01, 0.02, f"t = {t_hr:.1f} h    pig MP {pig:.1f}    {step.pig_speed_mph:.2f} mph",
-            transform=ax.transAxes, fontsize=8, color='dimgray')
+    ax.text(0.01, 0.98, f"t = {t_hr:.1f} h  |  pig MP {pig:.1f}  |  {step.pig_speed_mph:.2f} mph",
+            transform=ax.transAxes, fontsize=8, color='dimgray', va='top')
     if annotation:
-        ax.text(0.30, 0.80, annotation, transform=ax.transAxes, fontsize=10,
-                ha='left', va='top', bbox=dict(boxstyle='round', fc='lightyellow',
-                                               ec='goldenrod'))
+        ax.text(0.50, 0.94, annotation, transform=ax.transAxes, fontsize=10,
+                ha='center', va='top', bbox=dict(boxstyle='round', fc='lightyellow',
+                                                  ec='goldenrod', alpha=0.9))
 
     h1, l1 = ax.get_legend_handles_labels()
     h2, l2 = axp.get_legend_handles_labels()
-    ax.legend(h1 + h2, l1 + l2, fontsize=8, loc='upper right', ncol=2)
-    fig.tight_layout()
+    ax.legend(h1 + h2, l1 + l2, fontsize=7, loc='upper center',
+              bbox_to_anchor=(0.5, -0.10), ncol=5, framealpha=0.9)
+    fig.tight_layout(rect=[0, 0.13, 1, 1])
+
+
+def _derive_label(cfg, mp: float, is_start: bool) -> str:
+    """Return a human label for a purge endpoint from cfg infrastructure."""
+    # Pump station at this MP
+    for ps in getattr(cfg, 'pump_stations', []):
+        if abs(ps.mp - mp) < 2.0:
+            return ps.name
+    # BPCV at end
+    if not is_start:
+        bpcv = getattr(cfg, 'bpcv', None)
+        if bpcv and abs(bpcv.mp - mp) < 2.0:
+            return bpcv.name
+    return f"MP {mp:.0f}"
 
 
 def plot_pressure_profile(fig, results: SimResults):
