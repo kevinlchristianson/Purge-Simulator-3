@@ -23,7 +23,8 @@ from typing import List, Optional
 import numpy as np
 
 from .simulator import SimResults, SimConfig
-from .purge_report import _build_rows, _select_n, _mop_at, _elev_interp, _PSIG_PER_FT
+from .purge_report import (_build_rows, _select_n, _mop_at, _elev_interp,
+                           _PSIG_PER_FT, _deployed_boosters)
 
 try:
     import openpyxl
@@ -61,21 +62,22 @@ _F_BODY   = Font(name="Calibri", size=10)
 _F_ITAL   = Font(name="Calibri", italic=True, size=9, color="595959")
 _F_NUM    = Font(name="Calibri", size=10)
 
+# Base data-table columns (Head Pressure + Exit Pressure dropped per field request).
+# Per-booster Flow / Cum Flow columns are appended dynamically after Pig Speed.
 _FILL_COLS = [
     "Miles", "Elevation (ft)", "Elapsed Time (hr)",
-    "Drive Pressure (psi)", "Friction Loss (psi)", "Head Pressure (psi)",
-    "Exit Pressure (psi)", "Injection Rate (SCFM)", "Cumulative N2 (SCF)",
-    "Pig Speed (mph)",
+    "Drive Pressure (psi)", "Friction Loss (psi)",
+    "Injection Rate (SCFM)", "Cumulative N2 (SCF)", "Pig Speed (mph)",
 ]
 _DATA_KEYS = [
     "miles", "elevation_ft", "elapsed_hr",
-    "drive_psi", "friction_psi", "head_psi",
-    "exit_psi", "inj_scfm", "cum_scf", "speed_mph",
+    "drive_psi", "friction_psi",
+    "inj_scfm", "cum_scf", "speed_mph",
 ]
 _DATA_FMTS = [
     "0.000", "0.0", "0.000",
-    "0.0", "0.0", "0.0",
-    "0.0", "0.0", "#,##0", "0.000",
+    "0.0", "0.0",
+    "0.0", "#,##0", "0.000",
 ]
 
 
@@ -119,6 +121,7 @@ def export_formatted_report(
     _sheet_fill_report(wb, results, cfg, scenario_name, pi, rows_50)
     _sheet_pressure_profile(wb, results, cfg, scenario_name, rows)
     _sheet_run_profile(wb, results, cfg, scenario_name, rows)
+    _sheet_booster_profile(wb, results, cfg, scenario_name)
 
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
     wb.save(path)
@@ -138,16 +141,29 @@ def _sheet_fill_report(wb, results, cfg, scenario_name, pi, rows_50):
     n_b   = len(cfg.booster_configs)
     n_ps  = len(cfg.pump_stations)
 
+    # Dynamic data-table columns: base table + per-booster Flow / Cum Flow
+    # (appended to the right of Pig Speed, in milepost order).
+    bnames = [nm for nm, _mp in _deployed_boosters(results)]
+    cols = list(_FILL_COLS)
+    keys = list(_DATA_KEYS)
+    fmts = list(_DATA_FMTS)
+    for nm in bnames:
+        cols += [f"{nm} Booster Flow (SCFM)", f"{nm} Booster Cum Flow (SCF)"]
+        keys += [f"__bflow__{nm}", f"__bcum__{nm}"]
+        fmts += ["#,##0", "#,##0"]
+    ncols    = len(cols)
+    last_col = get_column_letter(ncols)
+
     # ---- Title bar -----------------------------------------------------------
     t = ws.cell(row=1, column=1, value="NITROGEN PURGE SIMULATION")
     t.font = _F_TITLE; t.fill = _fill(_C_TITLE)
     t.alignment = Alignment(horizontal="center", vertical="center")
-    ws.merge_cells("A1:J1"); ws.row_dimensions[1].height = 34
+    ws.merge_cells(f"A1:{last_col}1"); ws.row_dimensions[1].height = 34
 
     t2 = ws.cell(row=2, column=1, value=scenario_name)
     t2.font = Font(name="Calibri", bold=True, size=12)
     t2.alignment = Alignment(horizontal="center")
-    ws.merge_cells("A2:J2"); ws.row_dimensions[2].height = 20
+    ws.merge_cells(f"A2:{last_col}2"); ws.row_dimensions[2].height = 20
 
     # ---- Header block (2-column layout, rows 4–13) ---------------------------
     def _pair(r, lbl, val, rlbl, rval):
@@ -183,13 +199,13 @@ def _sheet_fill_report(wb, results, cfg, scenario_name, pi, rows_50):
                "RESOLUTION:", f"{len(rows_50)}-point")
 
     # Separator
-    for col in range(1, 11):
+    for col in range(1, ncols + 1):
         ws.cell(row=16, column=col).fill = _fill(_C_TITLE)
     ws.row_dimensions[16].height = 4
 
     # ---- 50-point data table -------------------------------------------------
     hdr_row = 17
-    for ci, h in enumerate(_FILL_COLS, 1):
+    for ci, h in enumerate(cols, 1):
         c = ws.cell(row=hdr_row, column=ci, value=h)
         c.font = _F_HDR; c.fill = _fill(_C_HDR)
         c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
@@ -200,8 +216,13 @@ def _sheet_fill_report(wb, results, cfg, scenario_name, pi, rows_50):
     for ri, row in enumerate(rows_50):
         r = hdr_row + 1 + ri
         row_fill = fills[ri % 2]
-        for ci, (key, fmt) in enumerate(zip(_DATA_KEYS, _DATA_FMTS), 1):
-            v = row.get(key)
+        for ci, (key, fmt) in enumerate(zip(keys, fmts), 1):
+            if key.startswith("__bflow__"):
+                v = row.get("booster_flow", {}).get(key[9:], 0.0)
+            elif key.startswith("__bcum__"):
+                v = row.get("booster_cum", {}).get(key[8:], 0.0)
+            else:
+                v = row.get(key)
             c = ws.cell(row=r, column=ci, value=v)
             c.font = _F_NUM; c.fill = row_fill
             c.number_format = fmt; c.border = _border()
@@ -222,18 +243,16 @@ def _sheet_fill_report(wb, results, cfg, scenario_name, pi, rows_50):
         booster_note = "BOOSTER STATIONS: " + ", ".join(
             f"{b.name} @ MP {b.mp:.1f}" for b in cfg.booster_configs)
         ws.cell(row=note_row, column=1, value=booster_note).font = _F_ITAL
-        ws.merge_cells(f"A{note_row}:J{note_row}")
+        ws.merge_cells(f"A{note_row}:{last_col}{note_row}")
         note_row += 1
     if n_ps > 0:
         pump_note = "PUMP STATIONS: " + ", ".join(
             f"{p.name} @ MP {p.mp:.1f}" for p in cfg.pump_stations)
         ws.cell(row=note_row, column=1, value=pump_note).font = _F_ITAL
-        ws.merge_cells(f"A{note_row}:J{note_row}")
+        ws.merge_cells(f"A{note_row}:{last_col}{note_row}")
 
-    _set_col_widths(ws, [15, 2, 20, 2, 2, 25, 2, 20, 2, 2])
-
-    # Wide data columns
-    col_widths_data = [10, 12, 12, 14, 14, 13, 13, 15, 15, 12]
+    # Wide data columns: base widths + per-booster (Flow, Cum Flow)
+    col_widths_data = [10, 12, 12, 14, 14, 15, 15, 12] + [15, 18] * len(bnames)
     for i, w in enumerate(col_widths_data, 1):
         ws.column_dimensions[get_column_letter(i)].width = w
 
@@ -400,6 +419,104 @@ def _sheet_run_profile(wb, results, cfg, scenario_name, rows):
     img.anchor = "A4"
     img.width  = 900
     img.height = 480
+    ws.add_image(img)
+
+
+# ---------------------------------------------------------------------------
+# Sheet 4 — Booster Profile (embedded chart: pressures, flow, cumulative)
+# ---------------------------------------------------------------------------
+
+def _sheet_booster_profile(wb, results, cfg, scenario_name):
+    ws = wb.create_sheet("Booster Profile")
+
+    t = ws.cell(row=1, column=1,
+                value=f"{scenario_name}  —  Booster Profile (Inlet/Outlet, Flow, Cumulative)")
+    t.font = Font(name="Calibri", bold=True, size=12)
+    ws.merge_cells("A1:N1")
+
+    sub = ws.cell(row=2, column=1,
+                  value="Per booster vs pig milepost.  Top: suction (dashed) & discharge "
+                        "(solid) pressure.  Middle: flow rate (SCFM).  Bottom: cumulative "
+                        "volume relayed (SCF).  Pressures shown only while the booster runs.")
+    sub.font = _F_ITAL
+    ws.merge_cells("A2:N2")
+
+    bnames = [nm for nm, _mp in _deployed_boosters(results)]
+    bmp    = {nm: mp for nm, mp in _deployed_boosters(results)}
+    if not bnames:
+        ws.cell(row=4, column=1,
+                value="No boosters deployed in this run.").font = _F_ITAL
+        return
+    if not _MPL:
+        ws.cell(row=4, column=1, value="matplotlib not available — chart skipped")
+        return
+
+    steps = results.steps
+    # Full per-step series (with running cumulative), then evenly sample by index.
+    mp_all  = [s.pig_mp for s in steps]
+    suc = {nm: [] for nm in bnames}
+    dis = {nm: [] for nm in bnames}
+    flo = {nm: [] for nm in bnames}
+    cum = {nm: [] for nm in bnames}
+    run = {nm: 0.0 for nm in bnames}
+    for s in steps:
+        by = {b.get("name"): b for b in (s.booster_states or []) if b.get("name")}
+        for nm in bnames:
+            b = by.get(nm)
+            running = bool(b and b.get("running"))
+            suc[nm].append(b.get("suction_psig")   if running else np.nan)
+            dis[nm].append(b.get("discharge_psig") if running else np.nan)
+            flo[nm].append(b.get("flow_scfm", 0.0) if running else 0.0)
+            run[nm] += (b.get("scf_transferred", 0.0) or 0.0) if b else 0.0
+            cum[nm].append(run[nm])
+
+    n = len(steps)
+    idxs = np.round(np.linspace(0, n - 1, min(600, n))).astype(int)
+    idxs = list(dict.fromkeys(idxs))
+    def samp(arr): return [arr[i] for i in idxs]
+    mps = samp(mp_all)
+
+    palette = ["#1F77B4", "#FF7F0E", "#2CA02C", "#D62728", "#9467BD", "#8C564B"]
+    col = {nm: palette[i % len(palette)] for i, nm in enumerate(bnames)}
+
+    fig, (axP, axF, axC) = plt.subplots(3, 1, figsize=(13, 10), sharex=True)
+    fig.patch.set_facecolor("#F7FBFF")
+
+    for nm in bnames:
+        c = col[nm]
+        axP.plot(mps, samp(dis[nm]), color=c, lw=1.8, label=f"{nm} discharge")
+        axP.plot(mps, samp(suc[nm]), color=c, lw=1.2, ls="--", label=f"{nm} suction")
+        axF.plot(mps, samp(flo[nm]), color=c, lw=1.6, label=f"{nm} flow")
+        axC.plot(mps, samp(cum[nm]), color=c, lw=1.8, label=f"{nm} cumulative")
+
+    # booster station markers
+    for ax in (axP, axF, axC):
+        for nm in bnames:
+            ax.axvline(bmp[nm], color=col[nm], ls=":", lw=0.8, alpha=0.5)
+        ax.grid(alpha=0.3)
+    if math.isfinite(cfg.maop_psig):
+        axP.axhline(cfg.maop_psig, color="red", ls="--", lw=1.0,
+                    label=f"MAOP ({cfg.maop_psig:.0f})")
+
+    axP.set_ylabel("Pressure (psi)", fontsize=10)
+    axP.set_title(f"{scenario_name} — Booster Profile", fontsize=12, fontweight="bold")
+    axP.legend(loc="upper right", fontsize=8, ncol=max(1, len(bnames)), framealpha=0.85)
+
+    axF.set_ylabel("Flow (SCFM)", fontsize=10)
+    axF.legend(loc="upper right", fontsize=8, framealpha=0.85)
+
+    axC.set_ylabel("Cumulative relayed (SCF)", fontsize=10)
+    axC.set_xlabel("Pig Milepost", fontsize=11)
+    axC.yaxis.set_major_formatter(
+        matplotlib.ticker.FuncFormatter(lambda x, _: f"{x/1e6:.1f}M" if abs(x) >= 1e6
+                                        else f"{x:,.0f}"))
+    axC.legend(loc="upper left", fontsize=8, framealpha=0.85)
+
+    fig.tight_layout()
+    img = _fig_to_xl_image(fig)
+    img.anchor = "A4"
+    img.width  = 900
+    img.height = 720
     ws.add_image(img)
 
 

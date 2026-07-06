@@ -168,6 +168,7 @@ def _build_rows(results: SimResults) -> List[dict]:
     area  = pipe_area_ft2(od, wt)
 
     rows = []
+    _cum_b: dict = {}   # booster name -> cumulative SCF transferred (relayed) so far
     for s in results.steps:
         pe    = elev(s.pig_mp)
         ee    = elev(s.exit_mp)
@@ -175,6 +176,14 @@ def _build_rows(results: SimResults) -> List[dict]:
         fric  = s.pig_face_psig - s.exit_psig - head
         bph   = s.pig_speed_mph * 5280.0 * area / _SCF_PER_BBL
         mop   = _mop_at(s.pig_mp, cfg)
+        # per-booster instantaneous flow + running cumulative relayed volume
+        bflow: dict = {}
+        for bs in (s.booster_states or []):
+            nm = bs.get("name")
+            if not nm:
+                continue
+            bflow[nm] = bs.get("flow_scfm", 0.0) or 0.0
+            _cum_b[nm] = _cum_b.get(nm, 0.0) + (bs.get("scf_transferred", 0.0) or 0.0)
         rows.append({
             "miles":          s.pig_mp,
             "elevation_ft":   pe,
@@ -192,8 +201,23 @@ def _build_rows(results: SimResults) -> List[dict]:
             "mop_margin":     (mop - s.pig_face_psig) if mop else None,
             "slack":          s.slack_line_risk,
             "mop_viol":       s.mop_violations > 0,
+            "booster_flow":   bflow,          # {name: SCFM this step}
+            "booster_cum":    dict(_cum_b),   # {name: cumulative SCF relayed}
         })
     return rows
+
+
+def _deployed_boosters(results: SimResults) -> List[tuple]:
+    """Ordered (name, mp) of boosters that actually RUN during the run, by milepost.
+    booster_states carries every configured booster (most with running=False); only the
+    ones that actually run (deployed) should appear in reports/charts."""
+    seen: dict = {}
+    for s in results.steps:
+        for bs in (s.booster_states or []):
+            nm = bs.get("name")
+            if nm and bs.get("running") and nm not in seen:
+                seen[nm] = bs.get("mp", 0.0)
+    return sorted(seen.items(), key=lambda kv: kv[1])
 
 
 def _select_n(rows: List[dict], n: int) -> List[dict]:
