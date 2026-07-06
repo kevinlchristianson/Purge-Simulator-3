@@ -132,7 +132,7 @@ def export_formatted_report(
 # ---------------------------------------------------------------------------
 
 def _sheet_fill_report(wb, results, cfg, scenario_name, pi, rows_50):
-    ws = wb.create_sheet("FILL REPORT")
+    ws = wb.create_sheet("Purge Report")
 
     last  = results.steps[-1] if results.steps else None
     od, wt = cfg.pipe_geometry.od_wt_at(cfg.purge_start_mp)

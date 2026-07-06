@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 from typing import List, Optional
 import numpy as np
 
-from .physics import liquid_friction_loss_psi, mph_to_fts
+from .physics import liquid_friction_loss_psi, mph_to_fts, fts_to_bph, pipe_area_ft2
 
 
 @dataclass
@@ -136,21 +136,52 @@ def compute_hgl(step, cfg, elevation_at=None) -> HGLProfile:
     for i in np.where(is_gas)[0]:
         pressure[i] = _gas_lookup(gas_profile, mp[i])
 
-    # --- Liquid side (ahead of the pig): walk forward from the pig face ---
+    # --- Liquid side (ahead of the pig): the REAL operating HGL ---
+    # The liquid ahead of the pig is held up by the RUNNING pump stations and the BPCV /
+    # tankage ahead — NOT by the pig alone. A pig-only forward walk (pig_face - friction +
+    # descent head) falsely droops below ground over a big climb and reads as slack even
+    # though the downstream pumps hold the line full. Use the same pump/BPCV-aware model as
+    # the profile chart (build_liquid_hgl) so the MOP-check sheet and the animation agree.
     ahead = np.where(~is_gas)[0]
-    p_prev = float(step.pig_face_psig)
-    mp_prev = pig_mp
-    el_prev = elevation_at(pig_mp)
-    for i in ahead:
-        od, wt = cfg.pipe_geometry.od_wt_at(0.5 * (mp_prev + mp[i]))
-        d_ft = (od - 2.0 * wt) / 12.0
-        l_ft = max(0.0, (mp[i] - mp_prev)) * 5280.0
-        fric = liquid_friction_loss_psi(l_ft, d_ft, v_fts, cfg.fluid_sg,
-                                        cfg.fluid_viscosity_cst, cfg.fluid_roughness_ft)
-        head = (el_prev - elevation_ft[i]) * grad        # descending => +pressure
-        p_prev = p_prev - fric + head
-        pressure[i] = p_prev
-        mp_prev, el_prev = mp[i], elevation_ft[i]
+    if ahead.size:
+        od0, wt0 = cfg.pipe_geometry.od_wt_at(pig_mp)
+        D_ft = (od0 - 2.0 * wt0) / 12.0
+        area0 = pipe_area_ft2(od0, wt0)
+        flow_bph = fts_to_bph(v_fts, area0)
+
+        def _fric_head(a, b):
+            L = abs(b - a) * 5280.0
+            return liquid_friction_loss_psi(L, D_ft, v_fts, cfg.fluid_sg,
+                                            cfg.fluid_viscosity_cst, cfg.fluid_roughness_ft) / grad
+
+        tank_psig = getattr(cfg, 'exit_pressure_run_psig', float(step.exit_psig))
+        bpcv = getattr(cfg, 'bpcv', None)
+        bpcv_mp = bpcv.mp if (bpcv is not None and pig_mp < bpcv.mp) else None
+        bpcv_sp = tank_psig
+        if bpcv_mp is not None:
+            try:
+                from .bpcv import (compute_bpcv_upstream_min_set_point,
+                                   compute_bpcv_set_point)
+                smin = compute_bpcv_upstream_min_set_point(
+                    bpcv, pig_mp, elev_prof, flow_bph, cfg.fluid_sg, cfg.fluid_viscosity_cst)
+                smax = compute_bpcv_set_point(
+                    bpcv, flow_bph, cfg.fluid_sg, cfg.fluid_viscosity_cst)
+                bpcv_sp = max(0.0, smin)
+                if smax and np.isfinite(smax) and smax > 0:
+                    bpcv_sp = min(bpcv_sp, smax)
+            except Exception:
+                bpcv_sp = tank_psig
+
+        sps = getattr(step, 'station_pressures', None) or []
+        pumps = [(float(s['mp']), float(s.get('suction_psig', 0.0)), float(s['discharge_psig']))
+                 for s in sps if s.get('status') == 'running' and s['mp'] > pig_mp]
+
+        ahead_mp = [float(mp[i]) for i in ahead]
+        hgl_pts = build_liquid_hgl(ahead_mp, pig_mp, float(step.pig_face_psig), pumps,
+                                   bpcv_mp, bpcv_sp, end, tank_psig,
+                                   elevation_at, _fric_head, grad, clamp_to_ground=False)
+        for i, (_m, h) in zip(ahead, hgl_pts):
+            pressure[i] = (h - elevation_ft[i]) * grad
 
     total_head_ft = elevation_ft + pressure / grad
 

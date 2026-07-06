@@ -263,24 +263,28 @@ def plot_pipeline_profile(fig, step, cfg, roadmap=None, annotation: str = "",
                     label=f"{q:,.0f} BPH slope")
 
     # ============ X-AXIS TICKS ===================================================
-    # Priority: pump stations → booster stations (if no pumps) → just start/end.
+    # Label EVERY station (pumps AND boosters) at its milepost, plus start/end.
     # start_label / end_label override the auto-derived names.
     _sl = start_label or _derive_label(cfg, cfg.purge_start_mp, is_start=True)
     _el = end_label   or _derive_label(cfg, cfg.purge_end_mp,   is_start=False)
 
     tick_map: dict = {start: _sl, end: _el}
-    if getattr(cfg, 'pump_stations', []):
-        for ps in getattr(cfg, 'pump_stations', []):
-            if start < ps.mp < end:
-                tick_map[ps.mp] = ps.name
-    elif getattr(cfg, 'booster_configs', []):
-        for b in getattr(cfg, 'booster_configs', []):
-            if start < b.mp < end:
-                tick_map[b.mp] = b.name
+    for ps in getattr(cfg, 'pump_stations', []):
+        if start < ps.mp < end:
+            tick_map[ps.mp] = ps.name
+    for b in getattr(cfg, 'booster_configs', []):
+        if start < b.mp < end:
+            tick_map.setdefault(b.mp, b.name)   # keep a pump's name if same MP
 
     sorted_ticks = sorted(tick_map.items())
     ax.set_xticks([m for m, _ in sorted_ticks])
     ax.set_xticklabels([n for _, n in sorted_ticks], fontsize=9)
+
+    # Minor tick marks every 5 miles (unlabeled) for distance reference.
+    from matplotlib.ticker import MultipleLocator
+    ax.xaxis.set_minor_locator(MultipleLocator(5))
+    ax.tick_params(axis='x', which='minor', length=4, color='gray')
+    ax.tick_params(axis='x', which='major', length=7)
 
     # ============ AXES FRAMING ===================================================
     x_lo = xlim[0] if xlim else start - 3
