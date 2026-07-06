@@ -1174,7 +1174,11 @@ def simulate(cfg: SimConfig, progress_cb: Optional[Callable[[float], None]] = No
         booster_step_results = []
         for bs in booster_states:
             if bs.mp < pig_mp:  # only boosters the pig has passed
-                is_pig_adjacent = (last_active_mp >= 0 and abs(bs.mp - last_active_mp) < 0.001)
+                # A run_at_max booster is never floor-throttled: it drops the pig-adjacent
+                # lean cap and targets the forward MOP ceiling (below), so it holds max flow
+                # and pre-builds drive instead of chasing the minimum pig-face pressure.
+                is_pig_adjacent = (last_active_mp >= 0 and abs(bs.mp - last_active_mp) < 0.001
+                                   and not bs.config.run_at_max)
                 tgt_discharge = pig_face_target_psig if is_pig_adjacent else None
                 # Per-booster PROACTIVE MOP cap, looking ahead along the gas's FORWARD
                 # PATH. A booster's gas does not stay in its immediate downstream

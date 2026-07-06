@@ -45,13 +45,17 @@ def build_sim_config(inp: ScenarioInputs) -> SimConfig:
         for ps in inp.pump_stations
     ]
 
+    # Per-booster overrides (max_flow_scfm / discharge_psig / suction_min_psig) fall back
+    # to the global spread_* params. Lets one booster (e.g. LS feeding the Sutton climb) run
+    # more aggressively than the rest without changing the whole spread.
     bss = [
         BoosterConfig(
             mp=b['mp'],
             name=b['name'],
-            discharge_psig=inp.spread_discharge_psig,
-            suction_min_psig=inp.spread_suction_min_psig,
-            max_flow_scfm=inp.spread_max_flow_scfm,
+            discharge_psig=b.get('discharge_psig', inp.spread_discharge_psig),
+            suction_min_psig=b.get('suction_min_psig', inp.spread_suction_min_psig),
+            max_flow_scfm=b.get('max_flow_scfm', inp.spread_max_flow_scfm),
+            run_at_max=b.get('run_at_max', False),
         )
         for b in inp.booster_stations
     ]

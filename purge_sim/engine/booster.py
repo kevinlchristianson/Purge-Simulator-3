@@ -42,6 +42,12 @@ class BoosterConfig:
     discharge_psig: float = 1200.0 # maximum discharge pressure the booster can achieve
     suction_min_psig: float = 50.0 # minimum upstream pressure to keep running
     max_flow_scfm: float = 15_000.0 # maximum throughput (compressor capacity, SCFM)
+    # Run flat-out: when True this booster is NOT throttled to the lean pig-face floor while
+    # it is the pig-adjacent booster. It targets the forward MOP ceiling instead, so it holds
+    # max flow (bounded only by that ceiling and the suction floor), pre-building drive ahead
+    # of a hard climb rather than floating/chasing the minimum. Redistributes existing gas
+    # (recompression) — it does NOT inject fresh N2, so total N2 is unchanged.
+    run_at_max: bool = False
 
 
 @dataclass
