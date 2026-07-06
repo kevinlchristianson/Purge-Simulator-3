@@ -247,6 +247,10 @@ def build_roadmap(
     # is received, so it does not cap the pig drive. ceil_liq is kept as a diagnostic only.
     # (Including it wrongly cratered the ceiling on the Tug descent and stalled the pig there;
     # past LS the gas-side MOP is ~930, far above the ~400 psi needed to crest Tug.)
+    # Operating margin: hold the gas-side drive a fixed fraction below MOP (default 1.0 = at
+    # MOP). This scales the whole gas ceiling, so the drive, injection, and boosters all keep
+    # the margin — the pig-face never rides up to MOP and gets bled back down.
+    ceil_gas = ceil_gas * cfg.drive_ceiling_fraction
     ceiling = np.minimum(ceil_gas, drive_cap)
 
     # --- infeasible spans (floor exceeds ceiling) ---

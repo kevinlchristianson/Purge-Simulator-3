@@ -112,6 +112,7 @@ def build_sim_config(inp: ScenarioInputs) -> SimConfig:
         deployed_booster_mps=inp.deployed_booster_mps,
         n2_budget_scf=inp.n2_budget_scf,
         drive_mop_fraction=inp.drive_mop_fraction,
+        drive_ceiling_fraction=inp.drive_ceiling_fraction,
         bpcv=bpcv,
         n_spreads=inp.n_spreads,
         mob_time_hr=inp.mob_time_hr,

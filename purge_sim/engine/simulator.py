@@ -104,6 +104,13 @@ class SimConfig:
     # --- MOP check ---
     mop_joints: List[MOPJoint] = field(default_factory=list)
     mop_warning_fraction: float = 0.95
+    # Operating margin below MOP for the DRIVE (gas-side) ceiling. 1.0 = drive right up
+    # to MOP (only the 0.95 safety bleed backstops it). Set to 0.90 to hold the pig-face
+    # drive — and therefore the boosters and injection — a hard 10% below MOP at all
+    # times. Scales the gas-side ceiling everywhere it is computed (roadmap + fallback),
+    # so the solver, injection, and booster stages all respect the margin (no overshoot
+    # that later has to be bled). Default 1.0 leaves existing scenarios unchanged.
+    drive_ceiling_fraction: float = 1.0
     # How far ahead the controller reads the pressure roadmap when capping drive.
     # The pig-adjacent N2 persists behind the pig until consumed, so the cap honors
     # the LOWEST ceiling within this horizon — drawing the column down BEFORE a
@@ -339,10 +346,10 @@ def _compute_mop_cap(
     if mj_mp is None:
         return mop_cap
 
-    # Gas side cap
+    # Gas side cap (scaled by the operating margin below MOP)
     g_hi = int(np.searchsorted(mj_mp, pig_mp + gas_lookahead_mi, side='right'))
     if g_hi > 0:
-        mop_cap = float(np.min(mj_mop[:g_hi]))
+        mop_cap = cfg.drive_ceiling_fraction * float(np.min(mj_mop[:g_hi]))
 
     # Liquid side cap (joints between pig and exit), conservative min-speed friction
     pig_idx = int(np.searchsorted(mj_mp, pig_mp, side='right'))

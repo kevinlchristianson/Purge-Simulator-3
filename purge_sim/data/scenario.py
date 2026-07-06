@@ -68,6 +68,9 @@ class ScenarioInputs:
     # coast on PV. None = lean floor-defending controller.
     n2_budget_scf: Optional[float] = None
     drive_mop_fraction: float = 0.9
+    # Operating margin below MOP for the drive/injection/boosters. 1.0 = up to MOP;
+    # 0.90 = hold a hard 10% below MOP at all times.
+    drive_ceiling_fraction: float = 1.0
 
     # Exit / endpoint
     exit_pressure_run_psig: float = 50.0
