@@ -1,0 +1,1351 @@
+{
+  "meta": {
+    "name": "Tipville BV to Santa Rita - East 10in Crude Purge (3 mph)",
+    "created_at": "2026-07-08T00:00:00",
+    "modified_at": "2026-07-08T00:00:00",
+    "notes": "Customer: CHS Pipeline. N2 displacement of crude oil, East 10-inch line, Tipville BV (purge start, MP 0) south to Santa Rita tankage (MP 10.118). Route from 'CANADA BORDER TO SANTA RITA 10IN A 1984' KMZ, inverted so MP increases southbound in the direction of pig travel; purge start pin at 10.12 mi from the Santa Rita end (13.95 mi south of the Canada border). Elevations USGS 3DEP. Crude 325 cSt / SG 0.93 (heavy, laminar flow at run speed). 10.75 x 0.250 WT (assumed, 1984 vintage). MOP 1000 psig. Target speed 3.0 mph (min_speed 2.75 so controller defends ~3), delivery floor 50 psig at tankage. Crest 4,166 ft at MP 2.72, then downhill run to 3,782 ft; friction exceeds gravity assist at 2.5 mph so no slack-line concern. Pig stop = fluid delivery (tankage).",
+    "source_files": [
+      "10 Purge Start.kmz",
+      "CANADA BORDER TO SANTA RITA 10IN A 1984.kmz",
+      "USGS 3DEP elevation"
+    ]
+  },
+  "inputs": {
+    "purge_start_mp": 0.0,
+    "purge_end_mp": 10.118,
+    "liquid_exit_mp": null,
+    "pipe_segments": [
+      {
+        "start_mp": 0.0,
+        "end_mp": 10.118,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      }
+    ],
+    "elevation_profile": [
+      [
+        0.0,
+        4084.8
+      ],
+      [
+        0.032,
+        4084.8
+      ],
+      [
+        0.1215,
+        4091.7
+      ],
+      [
+        0.1653,
+        4096.9
+      ],
+      [
+        0.2515,
+        4091.8
+      ],
+      [
+        0.3376,
+        4085.5
+      ],
+      [
+        0.4238,
+        4096.8
+      ],
+      [
+        0.5099,
+        4092.1
+      ],
+      [
+        0.6092,
+        4094.3
+      ],
+      [
+        0.7085,
+        4085.6
+      ],
+      [
+        0.8078,
+        4079.2
+      ],
+      [
+        0.9071,
+        4068.2
+      ],
+      [
+        0.9272,
+        4067.8
+      ],
+      [
+        1.0548,
+        4063.3
+      ],
+      [
+        1.1613,
+        4071.9
+      ],
+      [
+        1.2677,
+        4066.0
+      ],
+      [
+        1.3742,
+        4064.6
+      ],
+      [
+        1.4844,
+        4065.0
+      ],
+      [
+        1.5947,
+        4065.5
+      ],
+      [
+        1.6995,
+        4065.6
+      ],
+      [
+        1.8043,
+        4069.3
+      ],
+      [
+        1.9576,
+        4083.5
+      ],
+      [
+        2.0423,
+        4091.2
+      ],
+      [
+        2.127,
+        4099.9
+      ],
+      [
+        2.2117,
+        4128.6
+      ],
+      [
+        2.2964,
+        4134.7
+      ],
+      [
+        2.3811,
+        4126.5
+      ],
+      [
+        2.4658,
+        4118.8
+      ],
+      [
+        2.5505,
+        4124.2
+      ],
+      [
+        2.6357,
+        4153.9
+      ],
+      [
+        2.7209,
+        4166.4
+      ],
+      [
+        2.8061,
+        4160.1
+      ],
+      [
+        2.8913,
+        4106.7
+      ],
+      [
+        2.9766,
+        4107.0
+      ],
+      [
+        3.0618,
+        4065.8
+      ],
+      [
+        3.147,
+        4028.9
+      ],
+      [
+        3.2322,
+        4032.2
+      ],
+      [
+        3.3174,
+        4059.4
+      ],
+      [
+        3.4027,
+        4053.3
+      ],
+      [
+        3.4879,
+        4001.1
+      ],
+      [
+        3.5731,
+        3992.7
+      ],
+      [
+        3.6583,
+        4033.6
+      ],
+      [
+        3.7436,
+        4065.2
+      ],
+      [
+        3.8321,
+        4079.4
+      ],
+      [
+        3.9276,
+        4062.9
+      ],
+      [
+        4.023,
+        4072.5
+      ],
+      [
+        4.1191,
+        4076.1
+      ],
+      [
+        4.2152,
+        4064.6
+      ],
+      [
+        4.3017,
+        4027.5
+      ],
+      [
+        4.4423,
+        4006.7
+      ],
+      [
+        4.5584,
+        4003.3
+      ],
+      [
+        4.6745,
+        3980.3
+      ],
+      [
+        4.7599,
+        3969.4
+      ],
+      [
+        4.8453,
+        3959.3
+      ],
+      [
+        4.9306,
+        3946.5
+      ],
+      [
+        5.016,
+        3937.3
+      ],
+      [
+        5.1643,
+        3927.3
+      ],
+      [
+        5.3,
+        3921.1
+      ],
+      [
+        5.3916,
+        3908.7
+      ],
+      [
+        5.4832,
+        3900.8
+      ],
+      [
+        5.5748,
+        3892.6
+      ],
+      [
+        5.5923,
+        3890.9
+      ],
+      [
+        5.6086,
+        3889.9
+      ],
+      [
+        5.6927,
+        3886.4
+      ],
+      [
+        5.7769,
+        3881.4
+      ],
+      [
+        5.861,
+        3877.9
+      ],
+      [
+        5.9452,
+        3875.2
+      ],
+      [
+        6.0309,
+        3871.4
+      ],
+      [
+        6.1167,
+        3868.5
+      ],
+      [
+        6.2024,
+        3864.2
+      ],
+      [
+        6.2882,
+        3859.8
+      ],
+      [
+        6.3739,
+        3857.7
+      ],
+      [
+        6.4596,
+        3855.9
+      ],
+      [
+        6.4844,
+        3855.2
+      ],
+      [
+        6.565,
+        3855.8
+      ],
+      [
+        6.6456,
+        3863.0
+      ],
+      [
+        6.7262,
+        3872.6
+      ],
+      [
+        6.8106,
+        3865.7
+      ],
+      [
+        6.8949,
+        3856.0
+      ],
+      [
+        6.9793,
+        3846.0
+      ],
+      [
+        7.0637,
+        3841.2
+      ],
+      [
+        7.1481,
+        3842.6
+      ],
+      [
+        7.2325,
+        3843.4
+      ],
+      [
+        7.314,
+        3828.8
+      ],
+      [
+        7.3955,
+        3826.9
+      ],
+      [
+        7.477,
+        3829.7
+      ],
+      [
+        7.5586,
+        3839.3
+      ],
+      [
+        7.6401,
+        3841.7
+      ],
+      [
+        7.7216,
+        3841.4
+      ],
+      [
+        7.7652,
+        3839.5
+      ],
+      [
+        7.8584,
+        3836.8
+      ],
+      [
+        7.9556,
+        3826.6
+      ],
+      [
+        8.0528,
+        3812.7
+      ],
+      [
+        8.1372,
+        3806.7
+      ],
+      [
+        8.2216,
+        3802.3
+      ],
+      [
+        8.3061,
+        3799.7
+      ],
+      [
+        8.3905,
+        3798.4
+      ],
+      [
+        8.4749,
+        3797.2
+      ],
+      [
+        8.5593,
+        3797.4
+      ],
+      [
+        8.6438,
+        3795.3
+      ],
+      [
+        8.7282,
+        3795.9
+      ],
+      [
+        8.8127,
+        3794.8
+      ],
+      [
+        8.8971,
+        3794.6
+      ],
+      [
+        8.9816,
+        3793.3
+      ],
+      [
+        9.066,
+        3794.1
+      ],
+      [
+        9.1505,
+        3795.8
+      ],
+      [
+        9.2349,
+        3792.5
+      ],
+      [
+        9.3254,
+        3786.2
+      ],
+      [
+        9.4158,
+        3783.0
+      ],
+      [
+        9.5062,
+        3786.9
+      ],
+      [
+        9.5967,
+        3793.5
+      ],
+      [
+        9.6792,
+        3802.5
+      ],
+      [
+        9.7618,
+        3802.0
+      ],
+      [
+        9.8443,
+        3796.7
+      ],
+      [
+        9.9269,
+        3784.6
+      ],
+      [
+        10.0094,
+        3782.8
+      ],
+      [
+        10.118,
+        3782.4
+      ]
+    ],
+    "fluid_name": "Crude Oil",
+    "fluid_sg": 0.93,
+    "fluid_viscosity_cst": 325.0,
+    "fluid_roughness_ft": 0.00015,
+    "n2_temperature_f": 50.0,
+    "max_injection_psig": 1000.0,
+    "max_injection_scfm": 5000.0,
+    "n2_budget_scf": null,
+    "drive_mop_fraction": 0.9,
+    "drive_ceiling_fraction": 0.9,
+    "exit_pressure_run_psig": 50.0,
+    "exit_pressure_end_psig": 50.0,
+    "exit_pressure_behavior": "constant_run",
+    "throttle_down_miles": 0.0,
+    "min_speed_mph": 2.75,
+    "max_speed_mph": 3.0,
+    "target_speed_mph": 3.0,
+    "maop_psig": 1000.0,
+    "max_drive_psig": 1000.0,
+    "mop_joints": [
+      {
+        "mp": 0.0,
+        "mop_psig": 1000.0,
+        "elevation_ft": 4084.8,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 0.032,
+        "mop_psig": 1000.0,
+        "elevation_ft": 4084.8,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 0.1215,
+        "mop_psig": 1000.0,
+        "elevation_ft": 4091.7,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 0.1653,
+        "mop_psig": 1000.0,
+        "elevation_ft": 4096.9,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 0.2515,
+        "mop_psig": 1000.0,
+        "elevation_ft": 4091.8,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 0.3376,
+        "mop_psig": 1000.0,
+        "elevation_ft": 4085.5,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 0.4238,
+        "mop_psig": 1000.0,
+        "elevation_ft": 4096.8,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 0.5099,
+        "mop_psig": 1000.0,
+        "elevation_ft": 4092.1,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 0.6092,
+        "mop_psig": 1000.0,
+        "elevation_ft": 4094.3,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 0.7085,
+        "mop_psig": 1000.0,
+        "elevation_ft": 4085.6,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 0.8078,
+        "mop_psig": 1000.0,
+        "elevation_ft": 4079.2,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 0.9071,
+        "mop_psig": 1000.0,
+        "elevation_ft": 4068.2,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 0.9272,
+        "mop_psig": 1000.0,
+        "elevation_ft": 4067.8,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 1.0548,
+        "mop_psig": 1000.0,
+        "elevation_ft": 4063.3,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 1.1613,
+        "mop_psig": 1000.0,
+        "elevation_ft": 4071.9,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 1.2677,
+        "mop_psig": 1000.0,
+        "elevation_ft": 4066.0,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 1.3742,
+        "mop_psig": 1000.0,
+        "elevation_ft": 4064.6,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 1.4844,
+        "mop_psig": 1000.0,
+        "elevation_ft": 4065.0,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 1.5947,
+        "mop_psig": 1000.0,
+        "elevation_ft": 4065.5,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 1.6995,
+        "mop_psig": 1000.0,
+        "elevation_ft": 4065.6,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 1.8043,
+        "mop_psig": 1000.0,
+        "elevation_ft": 4069.3,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 1.9576,
+        "mop_psig": 1000.0,
+        "elevation_ft": 4083.5,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 2.0423,
+        "mop_psig": 1000.0,
+        "elevation_ft": 4091.2,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 2.127,
+        "mop_psig": 1000.0,
+        "elevation_ft": 4099.9,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 2.2117,
+        "mop_psig": 1000.0,
+        "elevation_ft": 4128.6,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 2.2964,
+        "mop_psig": 1000.0,
+        "elevation_ft": 4134.7,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 2.3811,
+        "mop_psig": 1000.0,
+        "elevation_ft": 4126.5,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 2.4658,
+        "mop_psig": 1000.0,
+        "elevation_ft": 4118.8,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 2.5505,
+        "mop_psig": 1000.0,
+        "elevation_ft": 4124.2,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 2.6357,
+        "mop_psig": 1000.0,
+        "elevation_ft": 4153.9,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 2.7209,
+        "mop_psig": 1000.0,
+        "elevation_ft": 4166.4,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 2.8061,
+        "mop_psig": 1000.0,
+        "elevation_ft": 4160.1,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 2.8913,
+        "mop_psig": 1000.0,
+        "elevation_ft": 4106.7,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 2.9766,
+        "mop_psig": 1000.0,
+        "elevation_ft": 4107.0,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 3.0618,
+        "mop_psig": 1000.0,
+        "elevation_ft": 4065.8,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 3.147,
+        "mop_psig": 1000.0,
+        "elevation_ft": 4028.9,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 3.2322,
+        "mop_psig": 1000.0,
+        "elevation_ft": 4032.2,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 3.3174,
+        "mop_psig": 1000.0,
+        "elevation_ft": 4059.4,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 3.4027,
+        "mop_psig": 1000.0,
+        "elevation_ft": 4053.3,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 3.4879,
+        "mop_psig": 1000.0,
+        "elevation_ft": 4001.1,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 3.5731,
+        "mop_psig": 1000.0,
+        "elevation_ft": 3992.7,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 3.6583,
+        "mop_psig": 1000.0,
+        "elevation_ft": 4033.6,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 3.7436,
+        "mop_psig": 1000.0,
+        "elevation_ft": 4065.2,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 3.8321,
+        "mop_psig": 1000.0,
+        "elevation_ft": 4079.4,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 3.9276,
+        "mop_psig": 1000.0,
+        "elevation_ft": 4062.9,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 4.023,
+        "mop_psig": 1000.0,
+        "elevation_ft": 4072.5,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 4.1191,
+        "mop_psig": 1000.0,
+        "elevation_ft": 4076.1,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 4.2152,
+        "mop_psig": 1000.0,
+        "elevation_ft": 4064.6,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 4.3017,
+        "mop_psig": 1000.0,
+        "elevation_ft": 4027.5,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 4.4423,
+        "mop_psig": 1000.0,
+        "elevation_ft": 4006.7,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 4.5584,
+        "mop_psig": 1000.0,
+        "elevation_ft": 4003.3,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 4.6745,
+        "mop_psig": 1000.0,
+        "elevation_ft": 3980.3,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 4.7599,
+        "mop_psig": 1000.0,
+        "elevation_ft": 3969.4,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 4.8453,
+        "mop_psig": 1000.0,
+        "elevation_ft": 3959.3,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 4.9306,
+        "mop_psig": 1000.0,
+        "elevation_ft": 3946.5,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 5.016,
+        "mop_psig": 1000.0,
+        "elevation_ft": 3937.3,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 5.1643,
+        "mop_psig": 1000.0,
+        "elevation_ft": 3927.3,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 5.3,
+        "mop_psig": 1000.0,
+        "elevation_ft": 3921.1,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 5.3916,
+        "mop_psig": 1000.0,
+        "elevation_ft": 3908.7,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 5.4832,
+        "mop_psig": 1000.0,
+        "elevation_ft": 3900.8,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 5.5748,
+        "mop_psig": 1000.0,
+        "elevation_ft": 3892.6,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 5.5923,
+        "mop_psig": 1000.0,
+        "elevation_ft": 3890.9,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 5.6086,
+        "mop_psig": 1000.0,
+        "elevation_ft": 3889.9,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 5.6927,
+        "mop_psig": 1000.0,
+        "elevation_ft": 3886.4,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 5.7769,
+        "mop_psig": 1000.0,
+        "elevation_ft": 3881.4,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 5.861,
+        "mop_psig": 1000.0,
+        "elevation_ft": 3877.9,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 5.9452,
+        "mop_psig": 1000.0,
+        "elevation_ft": 3875.2,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 6.0309,
+        "mop_psig": 1000.0,
+        "elevation_ft": 3871.4,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 6.1167,
+        "mop_psig": 1000.0,
+        "elevation_ft": 3868.5,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 6.2024,
+        "mop_psig": 1000.0,
+        "elevation_ft": 3864.2,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 6.2882,
+        "mop_psig": 1000.0,
+        "elevation_ft": 3859.8,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 6.3739,
+        "mop_psig": 1000.0,
+        "elevation_ft": 3857.7,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 6.4596,
+        "mop_psig": 1000.0,
+        "elevation_ft": 3855.9,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 6.4844,
+        "mop_psig": 1000.0,
+        "elevation_ft": 3855.2,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 6.565,
+        "mop_psig": 1000.0,
+        "elevation_ft": 3855.8,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 6.6456,
+        "mop_psig": 1000.0,
+        "elevation_ft": 3863.0,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 6.7262,
+        "mop_psig": 1000.0,
+        "elevation_ft": 3872.6,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 6.8106,
+        "mop_psig": 1000.0,
+        "elevation_ft": 3865.7,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 6.8949,
+        "mop_psig": 1000.0,
+        "elevation_ft": 3856.0,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 6.9793,
+        "mop_psig": 1000.0,
+        "elevation_ft": 3846.0,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 7.0637,
+        "mop_psig": 1000.0,
+        "elevation_ft": 3841.2,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 7.1481,
+        "mop_psig": 1000.0,
+        "elevation_ft": 3842.6,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 7.2325,
+        "mop_psig": 1000.0,
+        "elevation_ft": 3843.4,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 7.314,
+        "mop_psig": 1000.0,
+        "elevation_ft": 3828.8,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 7.3955,
+        "mop_psig": 1000.0,
+        "elevation_ft": 3826.9,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 7.477,
+        "mop_psig": 1000.0,
+        "elevation_ft": 3829.7,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 7.5586,
+        "mop_psig": 1000.0,
+        "elevation_ft": 3839.3,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 7.6401,
+        "mop_psig": 1000.0,
+        "elevation_ft": 3841.7,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 7.7216,
+        "mop_psig": 1000.0,
+        "elevation_ft": 3841.4,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 7.7652,
+        "mop_psig": 1000.0,
+        "elevation_ft": 3839.5,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 7.8584,
+        "mop_psig": 1000.0,
+        "elevation_ft": 3836.8,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 7.9556,
+        "mop_psig": 1000.0,
+        "elevation_ft": 3826.6,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 8.0528,
+        "mop_psig": 1000.0,
+        "elevation_ft": 3812.7,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 8.1372,
+        "mop_psig": 1000.0,
+        "elevation_ft": 3806.7,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 8.2216,
+        "mop_psig": 1000.0,
+        "elevation_ft": 3802.3,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 8.3061,
+        "mop_psig": 1000.0,
+        "elevation_ft": 3799.7,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 8.3905,
+        "mop_psig": 1000.0,
+        "elevation_ft": 3798.4,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 8.4749,
+        "mop_psig": 1000.0,
+        "elevation_ft": 3797.2,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 8.5593,
+        "mop_psig": 1000.0,
+        "elevation_ft": 3797.4,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 8.6438,
+        "mop_psig": 1000.0,
+        "elevation_ft": 3795.3,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 8.7282,
+        "mop_psig": 1000.0,
+        "elevation_ft": 3795.9,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 8.8127,
+        "mop_psig": 1000.0,
+        "elevation_ft": 3794.8,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 8.8971,
+        "mop_psig": 1000.0,
+        "elevation_ft": 3794.6,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 8.9816,
+        "mop_psig": 1000.0,
+        "elevation_ft": 3793.3,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 9.066,
+        "mop_psig": 1000.0,
+        "elevation_ft": 3794.1,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 9.1505,
+        "mop_psig": 1000.0,
+        "elevation_ft": 3795.8,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 9.2349,
+        "mop_psig": 1000.0,
+        "elevation_ft": 3792.5,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 9.3254,
+        "mop_psig": 1000.0,
+        "elevation_ft": 3786.2,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 9.4158,
+        "mop_psig": 1000.0,
+        "elevation_ft": 3783.0,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 9.5062,
+        "mop_psig": 1000.0,
+        "elevation_ft": 3786.9,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 9.5967,
+        "mop_psig": 1000.0,
+        "elevation_ft": 3793.5,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 9.6792,
+        "mop_psig": 1000.0,
+        "elevation_ft": 3802.5,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 9.7618,
+        "mop_psig": 1000.0,
+        "elevation_ft": 3802.0,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 9.8443,
+        "mop_psig": 1000.0,
+        "elevation_ft": 3796.7,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 9.9269,
+        "mop_psig": 1000.0,
+        "elevation_ft": 3784.6,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 10.0094,
+        "mop_psig": 1000.0,
+        "elevation_ft": 3782.8,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      },
+      {
+        "mp": 10.118,
+        "mop_psig": 1000.0,
+        "elevation_ft": 3782.4,
+        "od_in": 10.75,
+        "wt_in": 0.25
+      }
+    ],
+    "mop_warning_fraction": 0.95,
+    "check_valves": [],
+    "pump_stations": [],
+    "booster_stations": [],
+    "deployed_booster_mps": null,
+    "n_spreads": 1,
+    "mob_time_hr": 0.0,
+    "spread_discharge_psig": 1000.0,
+    "spread_suction_min_psig": 150.0,
+    "spread_max_flow_scfm": 5000.0,
+    "bpcv": null,
+    "data_source": "KMZ+USGS",
+    "data_file": "CANADA BORDER TO SANTA RITA 10IN A 1984.kmz",
+    "dt_hr": 0.016666666666666666,
+    "adaptive_dt": true
+  }
+}
