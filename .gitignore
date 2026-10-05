@@ -1,0 +1,17 @@
+# Python bytecode
+__pycache__/
+*.pyc
+
+# Simulation result caches (regenerate on demand)
+*.pkl
+
+# Generated animation/GIF exports from the root-level export scripts
+/profile_animation.gif
+/profile_noRYNW.gif
+/profile_frame_test.png
+/profile_noRYNW.png
+/injection_smoothness_lean_vs_pack.png
+/_refgif_frames/
+
+# Claude Code session/worktree metadata
+.claude/
