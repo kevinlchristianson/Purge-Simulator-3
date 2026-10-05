@@ -1,0 +1,13 @@
+{
+  "patton_mp": 2.2142048631846376,
+  "crossing_mp": 2.991828814512254,
+  "total_mi": 5.359923817607228,
+  "crossing_latlon": [
+    35.69503938032722,
+    -101.37621653332357
+  ],
+  "ph30_tail_trimmed_mi": 0.05439130105051104,
+  "pr01_head_trimmed_mi": 0.20976200066333073,
+  "start_label": "Rock Creek",
+  "end_label": "Borger Frac NGL"
+}
