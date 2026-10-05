@@ -115,9 +115,14 @@ run_headless.py          — headless entry point (the one actually used for eve
 1. **No N2 venting as a relied-upon mechanism.** `_bleed_gas_to_mop` exists only as a
    last-resort gas-side safety net. Any vent > 0 in a result is a red flag to fix by control,
    not to accept.
-2. **The liquid HGL must never fall below the ground profile.** A full liquid column cannot
-   be slack. This has been verified to hold with margin on every validated job — if a change
-   breaks it, that change is wrong, not the rule.
+2. **Zero slack line is the default target, not a hard invariant.** The engine never silently
+   tolerates it: any timestep where achievable drive can't clear `min_liquid_psig` sets
+   `slack_line_risk` (flagged per-step in the results chart, the CSV log, and the full xlsx's
+   "Slack Line Risk" column) — the run keeps going, it doesn't abort or get hidden. Every
+   validated job so far holds this with margin (zero slack steps) at the default 25 psig floor.
+   Accepting nonzero slack for a specific job is a real client-facing engineering call, made by
+   explicitly lowering `min_liquid_psig` with Kevin's sign-off — never by suppressing or
+   reinterpreting the flag itself.
 3. **The BPCV only drops the HGL, never lifts it.** It is a backpressure valve, not a pump —
    it sets exit backpressure and can clamp excess pressure, but cannot add head.
 4. **Booster suction floor is 200 psi hard / 100 psi willing** — never model a booster
