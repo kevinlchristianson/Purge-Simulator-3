@@ -217,6 +217,11 @@ def test_http_requires_token_and_local_host(server):
     assert server.token in html and "__APP_TOKEN__" not in html
 
 
+def test_http_guide_tab_serves_user_guide(server):
+    code, g = _call(server, "/api/guide")
+    assert code == 200 and g["markdown"].startswith("# Purge Simulator")
+
+
 def test_http_load_edit_run_export_chat(server):
     assert _call(server, "/api/scenario/load", {"id": SHORT})[0] == 200
     code, err = _call(server, "/api/scenario/update", {"changes": {"spread_suction_min_psig": 10}})

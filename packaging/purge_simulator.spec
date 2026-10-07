@@ -19,6 +19,7 @@ a = Analysis(
     datas=[
         (os.path.join(ROOT, "purge_sim", "app", "static"), os.path.join("purge_sim", "app", "static")),
         (os.path.join(ROOT, "scenarios"), "scenarios"),
+        (os.path.join(ROOT, "docs", "USER_GUIDE.md"), "docs"),
     ],
     hiddenimports=[
         "purge_sim.engine.formatted_report",

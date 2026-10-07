@@ -101,6 +101,9 @@ class App:
         if route == ("POST", "/api/export"):
             out = ws.export(j().get("kind", ""))
             return 200, {"path": out, "url": f"/api/download?path={quote(out)}&token={self.token}"}
+        if route == ("GET", "/api/guide"):
+            with open(paths.guide_path(), "r", encoding="utf-8") as f:
+                return 200, {"markdown": f.read()}
         if route == ("GET", "/api/settings"):
             return 200, settings.public_view()
         if route == ("POST", "/api/settings"):

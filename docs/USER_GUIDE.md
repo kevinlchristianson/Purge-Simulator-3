@@ -6,6 +6,7 @@ burning API credit, and what to check before a number goes to a client.
 
 Everything here is based on how the app actually works today (main branch, October 2026).
 Where a rule comes from a specific behavior in the code, the guide says so.
+This guide is also the **Guide** tab in the app, so it's always one click away.
 
 ---
 
@@ -269,6 +270,9 @@ Also check:
 - **Booster plan:** which sites were used and why.
 - **Pipeline profile tab:** scrub through the run and watch the N2 pressure, liquid pressure
   and MOP lines, especially over peaks and near pump stations.
+- **Map tab:** the route on a basemap with the pig's progress. A scenario needs route
+  coordinates for this; the bundled client jobs don't have them yet, so add the job's KMZ
+  once from the Map tab and save.
 
 ---
 
