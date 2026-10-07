@@ -122,6 +122,17 @@ table.t td.n { text-align: right; font-variant-numeric: tabular-nums; }
 .q.missing label { color: var(--bad); font-weight: 600; }
 .q.missing input, .q.missing select { border-color: var(--bad); }
 .src { font-size: 10px; text-transform: uppercase; letter-spacing: .03em; padding: 0 4px; border-radius: 3px; border: 1px solid var(--border); color: var(--muted); margin-left: 4px; }
+.guide { max-width: 860px; line-height: 1.55; }
+.guide h2 { font-size: 20px; text-transform: none; letter-spacing: 0; color: var(--text); margin: 4px 0 8px; }
+.guide h3 { font-size: 16px; margin: 22px 0 6px; }
+.guide h4 { font-size: 14px; margin: 16px 0 4px; }
+.guide hr { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
+.guide ul, .guide ol { padding-left: 22px; } .guide li { margin: 3px 0; }
+.guide li.check { list-style: none; margin-left: -20px; }
+.guide blockquote { margin: 10px 0; padding: 6px 12px; border-left: 3px solid var(--warn); background: var(--panel-2); border-radius: 0 6px 6px 0; }
+.guide blockquote p { margin: 4px 0; }
+.guide code { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12.5px; background: var(--panel-2); padding: 1px 4px; border-radius: 4px; }
+.guide table.t { margin: 8px 0 12px; } .guide table.t td, .guide table.t th { padding: 5px 8px; vertical-align: top; }
 .src.assumed { border-color: var(--warn); color: var(--warn); }
 .suggest { display: flex; flex-wrap: wrap; gap: 6px; }
 .suggest button { font-size: 12px; text-align: left; }
@@ -171,6 +182,7 @@ input[type=range] { width: 100%; }
   </aside>
   <section>
     <div class="tabs" id="tabs">
+      <button data-tab="guide">Guide</button>
       <button data-tab="overview" class="on">Overview</button>
       <button data-tab="setup">Job setup</button>
       <button data-tab="inputs">Inputs</button>
@@ -179,6 +191,7 @@ input[type=range] { width: 100%; }
       <button data-tab="map">Map</button>
       <button data-tab="exports">Reports</button>
     </div>
+    <div id="tab-guide" hidden></div>
     <div id="tab-overview"></div>
     <div id="tab-setup" hidden></div>
     <div id="tab-inputs" hidden></div>
@@ -273,7 +286,7 @@ const S = {revision: -1, scenario: null, results: null, scenarios: [], state: nu
 document.querySelectorAll("#tabs button").forEach(b => b.onclick = () => {
   S.tab = b.dataset.tab;
   document.querySelectorAll("#tabs button").forEach(x => x.classList.toggle("on", x === b));
-  for (const id of ["overview", "setup", "inputs", "charts", "profile", "map", "exports"]) $("#tab-" + id).hidden = id !== S.tab;
+  for (const id of ["guide", "overview", "setup", "inputs", "charts", "profile", "map", "exports"]) $("#tab-" + id).hidden = id !== S.tab;
   try { localStorage.setItem("purge.tab", S.tab); } catch (e) {}
   renderTab();
 });
@@ -329,9 +342,53 @@ async function poll(force = false) {
 }
 setInterval(poll, 800);
 
+// ---------------------------------------------------------------- guide (docs/USER_GUIDE.md)
+async function renderGuide() {
+  const el = $("#tab-guide");
+  if (el.dataset.loaded) return;
+  try { const g = await api("/api/guide"); el.innerHTML = `<div class="card guide">${guideHtml(g.markdown)}</div>`; el.dataset.loaded = "1"; }
+  catch (e) { el.innerHTML = `<div class="flag bad">${esc(e.message)}</div>`; }
+}
+// Markdown for the guide: headings, paragraphs, lists, checklists, quotes, tables, rules.
+function guideHtml(text) {
+  const inline = s => esc(s).replace(/`([^`]+)`/g, "<code>$1</code>").replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>")
+    .replace(/(^|[^\w*])\*([^*\n]+)\*(?=[^\w*]|$)/g, "$1<i>$2</i>");
+  let out = "", para = [], list = null, items = [], quote = [], table = [];
+  const flushPara = () => { if (para.length) out += `<p>${inline(para.join(" "))}</p>`; para = []; };
+  const flushList = () => {
+    if (list) out += `<${list}>` + items.map(t => { const c = t.match(/^\[( |x)\]\s+(.*)/i);
+      return c ? `<li class="check"><input type="checkbox" ${c[1] !== " " ? "checked" : ""}> ${inline(c[2])}</li>` : `<li>${inline(t)}</li>`; }).join("") + `</${list}>`;
+    list = null; items = [];
+  };
+  const flushQuote = () => { if (quote.length) out += `<blockquote>${guideHtml(quote.join("\n"))}</blockquote>`; quote = []; };
+  const flushTable = () => {
+    if (!table.length) return;
+    const rows = table.filter(r => !/^\s*\|?\s*:?-{2,}/.test(r)).map(r => r.replace(/^\s*\||\|\s*$/g, "").split("|").map(c => inline(c.trim())));
+    out += `<table class="t">` + rows.map((r, i) => "<tr>" + r.map(c => i ? `<td>${c}</td>` : `<th>${c}</th>`).join("") + "</tr>").join("") + "</table>";
+    table = [];
+  };
+  const flush = () => { flushPara(); flushList(); flushQuote(); flushTable(); };
+  for (const ln of text.split("\n")) {
+    if (/^>/.test(ln)) { flushPara(); flushList(); flushTable(); quote.push(ln.replace(/^>\s?/, "")); continue; }
+    flushQuote();
+    if (/^\s*\|.*\|\s*$/.test(ln)) { flushPara(); flushList(); table.push(ln); continue; }
+    flushTable();
+    if (!ln.trim()) { flushPara(); continue; }
+    const h = ln.match(/^(#{1,4})\s+(.*)/);
+    if (h) { flush(); const n = Math.min(h[1].length + 1, 4); out += `<h${n}>${inline(h[2])}</h${n}>`; continue; }
+    if (/^-{3,}\s*$/.test(ln)) { flush(); out += "<hr>"; continue; }
+    const li = ln.match(/^(?:([-*])|\d+\.)\s+(.*)/);
+    if (li) { flushPara(); const kind = li[1] ? "ul" : "ol"; if (list && list !== kind) flushList(); list = kind; items.push(li[2]); continue; }
+    if (list && /^\s+\S/.test(ln)) { items[items.length - 1] += " " + ln.trim(); continue; }
+    flushList(); para.push(ln.trim());
+  }
+  flush();
+  return out;
+}
+
 // ---------------------------------------------------------------- overview
 function renderTab() {
-  ({overview: renderOverview, setup: renderSetup, inputs: renderInputs, charts: renderCharts, profile: renderProfile, map: renderMap, exports: renderExports})[S.tab]();
+  ({guide: renderGuide, overview: renderOverview, setup: renderSetup, inputs: renderInputs, charts: renderCharts, profile: renderProfile, map: renderMap, exports: renderExports})[S.tab]();
 }
 function renderOverview() {
   const el = $("#tab-overview");
