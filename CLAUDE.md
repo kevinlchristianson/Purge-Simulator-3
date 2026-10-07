@@ -87,8 +87,14 @@ purge_sim/
                          Job setup tab and the assistant's set_job_setup both use it
     server.py          — JSON API + page; 127.0.0.1 only, Host check, per-launch token
     importers.py       — new scenario from ILI / KMZ / TXT / Excel via data/ parsers
+    gis.py             — Map tab geometry: milepost per route vertex (route_latlon scaled to the
+                         profile's milepost span), stations/CVs/boosters/BPCV placed on it, and
+                         route_from_file() to add a KMZ route to a scenario without one (direction
+                         picked from the file's elevations when it has any). Profile is untouched
     settings.py, paths.py — API key/model; bundled vs user dirs (works frozen by PyInstaller)
     static/index.html  — the whole UI, vanilla JS + inline SVG charts, no CDN
+    static/vendor/leaflet/ — Leaflet 1.9.4 (BSD-2), vendored for the Map tab so it works offline;
+                         only basemap tiles (USGS topo/imagery, OSM) need internet
   data/
     ili_parser.py      — Rosen ILI Excel parser (auto-detects pump stations, check valves,
                          BPCV, per-joint MOP from the "Additional description" column)
@@ -97,6 +103,10 @@ purge_sim/
                          Mileposts = 'Dist. from Origin'; MOP = the sheet's MOP column (not
                          MOP Limit); a station at either end of the file is dropped as the
                          launch/receipt site, with a note
+    landmarks.py       — map-only features from ILI/PxP rows: block valves, launchers/receivers,
+                         aerial markers, above-ground markers, crossings -> inputs.landmarks.
+                         PxP uses its feature codes + valve column only; ILI uses free text.
+                         The engine never reads them
     formats.py         — detect_format(path): 'ili' / 'pxp' / 'profile' from the first rows
                          of each sheet; imports default to kind='auto'
     xlsx_reader.py     — stdlib xlsx cell reader; avoids openpyxl parsing chart sheets
@@ -186,8 +196,11 @@ packaging/              — PyInstaller spec + Windows build script for the stan
    engine item, but it raises N2 (keeping the column truly full over peaks isn't free) —
    this is a real tension with the lean/coast minimization strategy, not just a bug to fix.
 2. **Live "Pipeline Profile" UI tab.** The standalone app (`app.py`) has one: a scrub
-   slider over `hgl.compute_hgl()` per step (gas/liquid pressure, elevation, MOP, stations).
-   The Tkinter `results_panel.py` still has none.
+   slider over `hgl.compute_hgl()` per step (gas/liquid pressure, elevation, MOP, stations),
+   plus a Map tab that plays the same steps over the route on a basemap (purged vs liquid,
+   elevation, or pressure as % of MOP). The Tkinter `results_panel.py` still has neither.
+   No bundled client scenario carries route coordinates yet; each needs its KMZ added once
+   (Map tab, "Add route from KMZ") and saved.
 3. **The real self-supporting gap is not the UI.** Every new client job still requires a
    Claude Code session to classify the input data (which stations are real pumps vs. BPCV
    vs. nothing, speed-capped vs. drive-capped vs. friction-dominated, which strategy to use)
