@@ -1,0 +1,616 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Purge Simulator</title>
+<style>
+:root {
+  --bg: #f6f7f9; --panel: #ffffff; --panel-2: #f0f2f5; --border: #dde1e7;
+  --text: #1c2330; --muted: #5d6878; --accent: #1f6feb; --accent-text: #ffffff;
+  --good: #1a7f37; --warn: #9a6700; --bad: #cf222e;
+  --s1: #1f6feb; --s2: #d4580b; --s3: #1a7f37; --s4: #8250df; --ground: #8c7a5b; --mop: #cf222e;
+  --gas: #1f6feb; --liquid: #1a7f37;
+  --shadow: 0 1px 2px rgba(0,0,0,.06);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f1318; --panel: #161b22; --panel-2: #1c232c; --border: #2d3540;
+    --text: #e6edf3; --muted: #9aa6b4; --accent: #4493f8; --accent-text: #0b0f14;
+    --good: #3fb950; --warn: #d29922; --bad: #f85149;
+    --s1: #4493f8; --s2: #f0883e; --s3: #3fb950; --s4: #a371f7; --ground: #b3a17e; --mop: #f85149;
+    --gas: #4493f8; --liquid: #3fb950; --shadow: none;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f1318; --panel: #161b22; --panel-2: #1c232c; --border: #2d3540;
+  --text: #e6edf3; --muted: #9aa6b4; --accent: #4493f8; --accent-text: #0b0f14;
+  --good: #3fb950; --warn: #d29922; --bad: #f85149;
+  --s1: #4493f8; --s2: #f0883e; --s3: #3fb950; --s4: #a371f7; --ground: #b3a17e; --mop: #f85149;
+  --gas: #4493f8; --liquid: #3fb950; --shadow: none;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body { background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+button, input, select, textarea { font: inherit; color: inherit; }
+button { background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px; padding: 5px 11px; cursor: pointer; }
+button:hover:not(:disabled) { border-color: var(--accent); }
+button:disabled { opacity: .5; cursor: default; }
+button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); font-weight: 600; }
+input, select, textarea { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 4px 7px; min-width: 0; }
+textarea { width: 100%; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; }
+input:focus, textarea:focus, select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 14px 0 6px; }
+.muted { color: var(--muted); }
+.small { font-size: 12px; }
+
+header { display: flex; align-items: center; gap: 10px; padding: 8px 14px; background: var(--panel); border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+header .brand { font-weight: 700; }
+header .scen { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 40vw; }
+header .spacer { flex: 1; }
+.progress { width: 140px; height: 6px; background: var(--panel-2); border-radius: 3px; overflow: hidden; }
+.progress > div { height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+
+main { display: grid; grid-template-columns: 290px minmax(0, 1fr) 380px; height: calc(100vh - 51px); }
+aside, section, .chat { overflow: auto; }
+aside { border-right: 1px solid var(--border); background: var(--panel); padding: 8px 12px 20px; }
+section { padding: 10px 16px 30px; }
+.chat { border-left: 1px solid var(--border); background: var(--panel); display: flex; flex-direction: column; overflow: hidden; }
+
+.tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--border); margin-bottom: 10px; flex-wrap: wrap; }
+.tabs button { border: none; border-bottom: 2px solid transparent; border-radius: 0; background: none; padding: 7px 12px; color: var(--muted); }
+.tabs button.on { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
+
+.lib-job { margin-top: 10px; font-weight: 600; font-size: 12px; color: var(--muted); }
+.lib-item { padding: 5px 8px; border-radius: 6px; cursor: pointer; border: 1px solid transparent; }
+.lib-item:hover { background: var(--panel-2); }
+.lib-item.on { border-color: var(--accent); background: var(--panel-2); }
+.lib-item .meta { font-size: 11px; color: var(--muted); }
+
+.field { display: grid; grid-template-columns: 1fr 110px; gap: 6px; align-items: center; padding: 2px 0; }
+.field label { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; }
+.field input, .field select { width: 100%; }
+.field.err input { border-color: var(--bad); }
+.group { border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px 10px; margin-bottom: 10px; background: var(--panel); }
+.group > summary { cursor: pointer; font-weight: 600; padding: 4px 0; }
+.grid2 { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 0 18px; }
+
+.kpis { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+.kpi { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 9px 11px; box-shadow: var(--shadow); }
+.kpi .v { font-size: 20px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.kpi .l { font-size: 12px; color: var(--muted); }
+.flag { padding: 7px 10px; border-radius: 6px; margin: 6px 0; border: 1px solid; }
+.flag.bad { border-color: var(--bad); color: var(--bad); }
+.flag.good { border-color: var(--good); color: var(--good); }
+.flag.warn { border-color: var(--warn); color: var(--warn); }
+.card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; margin-bottom: 12px; box-shadow: var(--shadow); }
+.chart { width: 100%; height: 260px; display: block; }
+.chart text { fill: var(--muted); font-size: 11px; }
+.legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: var(--muted); }
+.legend i { display: inline-block; width: 12px; height: 3px; vertical-align: middle; margin-right: 5px; border-radius: 2px; }
+pre { white-space: pre-wrap; font-size: 12px; background: var(--panel-2); padding: 8px; border-radius: 6px; overflow: auto; }
+table.t { border-collapse: collapse; font-size: 12px; width: 100%; }
+table.t th, table.t td { border-bottom: 1px solid var(--border); padding: 3px 6px; text-align: left; }
+table.t td.n { text-align: right; font-variant-numeric: tabular-nums; }
+.empty { padding: 40px 20px; text-align: center; color: var(--muted); }
+
+.chat-head { padding: 9px 12px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 8px; }
+.chat-head b { flex: 1; }
+.msgs { flex: 1; overflow: auto; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; }
+.msg { padding: 8px 10px; border-radius: 8px; max-width: 100%; overflow-wrap: anywhere; }
+.msg.user { background: var(--accent); color: var(--accent-text); align-self: flex-end; max-width: 88%; }
+.msg.assistant { background: var(--panel-2); }
+.msg.tool { font-size: 12px; color: var(--muted); padding: 2px 4px; }
+.msg.tool::before { content: "⚙ "; }
+.msg.error { border: 1px solid var(--bad); color: var(--bad); font-size: 13px; }
+.msg p { margin: 0 0 6px; } .msg p:last-child { margin-bottom: 0; }
+.msg ul { margin: 2px 0 6px; padding-left: 18px; }
+.msg code { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; }
+.msg table { border-collapse: collapse; font-size: 12px; margin: 4px 0; }
+.msg th, .msg td { border: 1px solid var(--border); padding: 2px 6px; }
+.chat-input { border-top: 1px solid var(--border); padding: 8px; display: flex; gap: 6px; }
+.chat-input textarea { font-family: inherit; font-size: 14px; resize: none; height: 58px; }
+.typing { font-size: 12px; color: var(--muted); padding: 0 12px 6px; min-height: 18px; }
+.suggest { display: flex; flex-wrap: wrap; gap: 6px; }
+.suggest button { font-size: 12px; text-align: left; }
+
+dialog { border: 1px solid var(--border); border-radius: 10px; background: var(--panel); color: var(--text); max-width: 520px; width: calc(100vw - 32px); }
+dialog::backdrop { background: rgba(0,0,0,.35); }
+dialog .row { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; }
+dialog .actions { display: flex; justify-content: flex-end; gap: 8px; }
+.toast { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); background: var(--text); color: var(--bg); padding: 8px 14px; border-radius: 8px; font-size: 13px; opacity: 0; transition: opacity .2s; pointer-events: none; max-width: 90vw; }
+.toast.on { opacity: .95; }
+input[type=range] { width: 100%; }
+
+@media (max-width: 1100px) {
+  main { grid-template-columns: 1fr; height: auto; }
+  aside, .chat { border: none; border-bottom: 1px solid var(--border); }
+  .chat { height: 70vh; }
+  header .scen { max-width: 100%; }
+}
+</style>
+</head>
+<body>
+<header>
+  <span class="brand">Purge Simulator</span>
+  <span class="scen" id="scenName">No scenario open</span>
+  <span class="spacer"></span>
+  <span class="small muted" id="jobMsg"></span>
+  <div class="progress" id="prog" hidden><div></div></div>
+  <button class="primary" id="btnRun" disabled>Run</button>
+  <button id="btnSave" disabled>Save as…</button>
+  <button id="btnImport">Import data…</button>
+  <button id="btnSettings">Settings</button>
+  <button id="btnQuit" title="Stop the app">Quit</button>
+</header>
+<main>
+  <aside>
+    <h2>Scenario library</h2>
+    <input id="libFilter" placeholder="Filter…" style="width:100%">
+    <div id="lib"></div>
+  </aside>
+  <section>
+    <div class="tabs" id="tabs">
+      <button data-tab="overview" class="on">Overview</button>
+      <button data-tab="inputs">Inputs</button>
+      <button data-tab="charts">Charts</button>
+      <button data-tab="profile">Pipeline profile</button>
+      <button data-tab="exports">Reports</button>
+    </div>
+    <div id="tab-overview"></div>
+    <div id="tab-inputs" hidden></div>
+    <div id="tab-charts" hidden></div>
+    <div id="tab-profile" hidden></div>
+    <div id="tab-exports" hidden></div>
+  </section>
+  <div class="chat">
+    <div class="chat-head"><b>Assistant</b><button id="btnChatReset" class="small">New chat</button></div>
+    <div class="msgs" id="msgs"></div>
+    <div class="typing" id="typing"></div>
+    <div class="chat-input">
+      <textarea id="chatIn" placeholder="Ask about this scenario or results…"></textarea>
+      <button class="primary" id="btnSend">Send</button>
+    </div>
+  </div>
+</main>
+
+<dialog id="dlgSettings">
+  <h3 style="margin-top:0">Assistant settings</h3>
+  <p class="small muted">The assistant uses the Claude API with your own key. The key is stored only on this computer, in your user settings file, and is never shown again here.</p>
+  <div class="row"><label for="setKey">Claude API key</label><input id="setKey" type="password" autocomplete="off" placeholder="sk-ant-…"><span class="small muted" id="setKeyState"></span></div>
+  <div class="row"><label for="setModel">Model</label><input id="setModel" placeholder="claude-opus-5-5"></div>
+  <div class="actions"><button id="setClear">Remove saved key</button><span style="flex:1"></span><button id="setCancel">Cancel</button><button class="primary" id="setOk">Save</button></div>
+</dialog>
+
+<dialog id="dlgSave">
+  <h3 style="margin-top:0">Save scenario</h3>
+  <p class="small muted" id="saveWhere"></p>
+  <div class="row"><label for="saveName">Name</label><input id="saveName"></div>
+  <div class="row"><label for="saveNotes">Notes (why these inputs)</label><textarea id="saveNotes" rows="5" style="font-family:inherit;font-size:13px"></textarea></div>
+  <div class="actions"><button id="saveCancel">Cancel</button><button class="primary" id="saveOk">Save</button></div>
+</dialog>
+
+<dialog id="dlgImport">
+  <h3 style="margin-top:0">New scenario from data</h3>
+  <div class="row"><label for="impKind">Data type</label>
+    <select id="impKind"><option value="ili">Rosen ILI Excel (elevation, MOP, stations)</option><option value="profile">Elevation profile (KMZ, KML, TXT/CSV, Excel)</option></select></div>
+  <div class="row"><label for="impFile">File</label><input id="impFile" type="file"></div>
+  <div class="row"><label for="impName">Scenario name</label><input id="impName"></div>
+  <p class="small muted">Pipe geometry, fluid, drive limits and station roles start at defaults. Ask the assistant to help classify the data.</p>
+  <div class="actions"><button id="impCancel">Cancel</button><button class="primary" id="impOk">Import</button></div>
+</dialog>
+
+<div class="toast" id="toast"></div>
+
+<script>
+"use strict";
+const TOKEN = "__APP_TOKEN__";
+const $ = (s, el = document) => el.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const fmt = (v, d = 0) => v == null || Number.isNaN(v) ? "—" : Number(v).toLocaleString(undefined, {maximumFractionDigits: d, minimumFractionDigits: d});
+
+async function api(path, opts = {}) {
+  const init = {method: opts.method || (opts.body !== undefined ? "POST" : "GET"), headers: {"X-App-Token": TOKEN}};
+  if (opts.raw !== undefined) init.body = opts.raw;
+  else if (opts.body !== undefined) { init.body = JSON.stringify(opts.body); init.headers["Content-Type"] = "application/json"; }
+  const r = await fetch(path, init);
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.error || r.statusText);
+  return data;
+}
+let toastTimer;
+function toast(msg) { const t = $("#toast"); t.textContent = msg; t.classList.add("on"); clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove("on"), 3500); }
+
+// ---------------------------------------------------------------- state
+const S = {revision: -1, scenario: null, results: null, scenarios: [], state: null, chatCount: -1, chatBusy: false, tab: "overview", profileStep: 0};
+
+// ---------------------------------------------------------------- tabs
+document.querySelectorAll("#tabs button").forEach(b => b.onclick = () => {
+  S.tab = b.dataset.tab;
+  document.querySelectorAll("#tabs button").forEach(x => x.classList.toggle("on", x === b));
+  for (const id of ["overview", "inputs", "charts", "profile", "exports"]) $("#tab-" + id).hidden = id !== S.tab;
+  try { localStorage.setItem("purge.tab", S.tab); } catch (e) {}
+  renderTab();
+});
+
+// ---------------------------------------------------------------- library
+async function loadLibrary() {
+  const d = await api("/api/scenarios");
+  S.scenarios = d.scenarios; S.userDir = d.user_dir;
+  renderLibrary();
+}
+function renderLibrary() {
+  const f = $("#libFilter").value.toLowerCase();
+  const groups = {};
+  for (const s of S.scenarios) {
+    if (f && !(s.name + " " + s.job + " " + s.notes).toLowerCase().includes(f)) continue;
+    const g = s.origin === "user" ? "My scenarios" : (s.job || "Other");
+    (groups[g] = groups[g] || []).push(s);
+  }
+  const cur = S.state && S.state.scenario_id;
+  $("#lib").innerHTML = Object.entries(groups).map(([g, items]) =>
+    `<div class="lib-job">${esc(g)}</div>` + items.map(s =>
+      `<div class="lib-item ${s.id === cur ? "on" : ""}" data-id="${esc(s.id)}" title="${esc(s.notes)}">
+         <div>${esc(s.name)}</div><div class="meta">${fmt(s.span_mi, 1)} mi · ${esc(s.fluid || "")}</div></div>`).join("")
+  ).join("") || `<p class="muted small">No scenarios found.</p>`;
+  document.querySelectorAll(".lib-item").forEach(el => el.onclick = async () => {
+    if (S.state && S.state.dirty && !confirm("The open scenario has unsaved changes. Open another one anyway?")) return;
+    try { await api("/api/scenario/load", {body: {id: el.dataset.id}}); await poll(true); }
+    catch (e) { toast(e.message); }
+  });
+}
+$("#libFilter").oninput = renderLibrary;
+
+// ---------------------------------------------------------------- polling
+async function poll(force = false) {
+  let st;
+  try { st = await api("/api/state"); } catch (e) { $("#jobMsg").textContent = "Disconnected"; return; }
+  const prevRev = S.revision; S.state = st;
+  const running = st.job.state === "running";
+  $("#prog").hidden = !running; $("#prog > div").style.width = (st.job.progress * 100).toFixed(1) + "%";
+  $("#jobMsg").textContent = running ? st.job.message + "…" : (st.job.state === "error" ? "Run failed: " + st.job.error : "");
+  $("#btnRun").disabled = !st.scenario_name || running;
+  $("#btnSave").disabled = !st.scenario_name;
+  $("#scenName").textContent = st.scenario_name ? st.scenario_name + (st.dirty ? " • unsaved changes" : "") : "No scenario open";
+  if (force || st.revision !== prevRev) {
+    S.revision = st.revision;
+    S.scenario = st.scenario_name ? await api("/api/scenario").catch(() => null) : null;
+    S.results = st.has_results ? await api("/api/results").catch(() => null) : null;
+    if (prevRev !== -1 && st.has_results && S.results) S.profileStep = Math.min(S.profileStep, S.results.summary.steps - 1);
+    renderLibrary(); renderTab();
+    if (st.scenario_id && st.scenario_id.startsWith("user:") && !S.scenarios.some(s => s.id === st.scenario_id)) loadLibrary();
+  }
+  if (st.assistant_entries !== S.chatCount || st.assistant_busy !== S.chatBusy) await loadChat();
+}
+setInterval(poll, 800);
+
+// ---------------------------------------------------------------- overview
+function renderTab() {
+  ({overview: renderOverview, inputs: renderInputs, charts: renderCharts, profile: renderProfile, exports: renderExports})[S.tab]();
+}
+function renderOverview() {
+  const el = $("#tab-overview");
+  if (!S.scenario) {
+    el.innerHTML = `<div class="empty"><p><b>Open a scenario from the library</b>, or import ILI or profile data to start a new job.</p>
+      <p>Then run it, or ask the assistant on the right.</p></div>`;
+    return;
+  }
+  const sc = S.scenario, x = sc.scalars, ep = sc.elevation_profile, mj = sc.mop_joints;
+  let html = `<div class="card"><b>${esc(sc.meta.name)}</b>
+    <div class="small muted">MP ${fmt(x.purge_start_mp, 2)} → ${fmt(x.purge_end_mp, 2)} (${fmt(x.purge_end_mp - x.purge_start_mp, 1)} mi) · ${esc(x.fluid_name)} SG ${x.fluid_sg} · target ${x.target_speed_mph} mph ·
+    max drive ${x.max_drive_psig ?? "—"} psig · ${sc.pump_stations.length} pump stations · ${sc.check_valves.length} check valves · ${sc.booster_stations.length} booster sites${sc.bpcv ? " · BPCV" : ""}
+    · ${fmt(ep.points)} profile pts · ${fmt(mj.joints)} MOP joints${mj.joints ? ` (min ${fmt(mj.mop_min_psig)} psig @ MP ${fmt(mj.mop_min_mp, 2)})` : ""}</div>
+    ${sc.meta.notes ? `<details style="margin-top:6px"><summary class="small">Notes</summary><div class="small" style="white-space:pre-wrap">${esc(sc.meta.notes)}</div></details>` : ""}</div>`;
+  const r = S.results;
+  if (!r) {
+    html += `<div class="empty">No results yet. Press <b>Run</b>.</div>`;
+  } else {
+    const s = r.summary;
+    if (S.state.results_stale) html += `<div class="flag warn">Inputs changed since this run. Run again to update the results.</div>`;
+    html += `<div class="kpis">
+      ${kpi(s.completed ? "Completed" : "Aborted", "Status")}
+      ${kpi(fmt(s.n2_total_fresh_scf), "N2 total (SCF)")}
+      ${kpi(fmt(s.n2_vented_scf), "N2 vented (SCF)")}
+      ${kpi(fmt(s.duration_hr, 1), "Duration (hr)")}
+      ${kpi(fmt(s.pig_speed_mph && s.pig_speed_mph.avg, 2), "Avg speed (mph)")}
+      ${kpi(fmt(s.pig_speed_mph && s.pig_speed_mph.min, 2), "Min speed (mph)")}
+      ${kpi(fmt(s.pig_face_psig && s.pig_face_psig.max), "Max face (psig)")}
+      ${kpi(fmt(s.mop_violation_steps), "MOP violation steps")}
+      ${kpi(fmt(s.slack_line_risk_steps), "Slack-line risk steps")}
+    </div>`;
+    const flags = s.flags || [];
+    html += flags.length ? flags.map(f => `<div class="flag bad">${esc(f)}</div>`).join("")
+                         : `<div class="flag good">No venting, no slack-line risk, no MOP violations.</div>`;
+    if (s.booster_plan) html += `<div class="card"><b>Booster plan</b><div class="small">${s.booster_plan.sites_mp.map(m => "MP " + fmt(m, 2) + (s.booster_plan.reasons[String(m)] ? ": " + esc(s.booster_plan.reasons[String(m)]) : "")).join("<br>") || "None deployed"}</div>
+      ${s.booster_plan.notes.length ? `<div class="small muted">${s.booster_plan.notes.map(esc).join("<br>")}</div>` : ""}</div>`;
+    if (s.roadmap_report) html += `<details class="card"><summary><b>Pressure roadmap</b></summary><pre>${esc(s.roadmap_report)}</pre></details>`;
+  }
+  el.innerHTML = html;
+}
+const kpi = (v, l) => `<div class="kpi"><div class="v">${esc(v)}</div><div class="l">${esc(l)}</div></div>`;
+
+// ---------------------------------------------------------------- inputs
+const GROUPS = [
+  ["Route", ["purge_start_mp", "purge_end_mp"]],
+  ["Fluid", ["fluid_name", "fluid_sg", "fluid_viscosity_cst", "fluid_roughness_ft"]],
+  ["N2 & injection", ["n2_temperature_f", "max_injection_psig", "max_injection_scfm", "n2_budget_scf", "drive_mop_fraction"]],
+  ["Pressure limits", ["maop_psig", "max_drive_psig", "drive_ceiling_fraction", "mop_warning_fraction"]],
+  ["Exit", ["exit_pressure_run_psig", "exit_pressure_end_psig", "exit_pressure_behavior", "throttle_down_miles"]],
+  ["Pig speed", ["min_speed_mph", "target_speed_mph", "max_speed_mph"]],
+  ["Booster spreads", ["n_spreads", "mob_time_hr", "spread_discharge_psig", "spread_suction_min_psig", "spread_max_flow_scfm"]],
+  ["Simulation", ["dt_hr", "adaptive_dt"]],
+];
+const LISTS = [["pipe_segments", "Pipe segments"], ["check_valves", "Check valves"], ["pump_stations", "Pump stations"],
+               ["booster_stations", "Booster stations"], ["deployed_booster_mps", "Pinned booster deployment (null = optimizer)"], ["bpcv", "BPCV (null = none)"]];
+const EXIT_OPTS = ["taper_last_n_miles", "step_last_n_miles", "linear_ramp", "constant_run", "constant_end"];
+function renderInputs() {
+  const el = $("#tab-inputs");
+  if (!S.scenario) { el.innerHTML = `<div class="empty">Open a scenario first.</div>`; return; }
+  const x = S.scenario.scalars;
+  let html = `<div class="grid2">`;
+  for (const [g, keys] of GROUPS) {
+    html += `<details class="group" open><summary>${g}</summary>` + keys.map(k => {
+      const v = x[k];
+      let ctl;
+      if (k === "exit_pressure_behavior") ctl = `<select data-k="${k}">${EXIT_OPTS.map(o => `<option ${o === v ? "selected" : ""}>${o}</option>`).join("")}</select>`;
+      else if (typeof v === "boolean") ctl = `<select data-k="${k}" data-bool="1"><option ${v ? "selected" : ""}>true</option><option ${!v ? "selected" : ""}>false</option></select>`;
+      else ctl = `<input data-k="${k}" value="${v == null ? "" : esc(v)}" placeholder="${v == null ? "none" : ""}" ${typeof v === "string" ? 'data-str="1"' : ""}>`;
+      return `<div class="field"><label title="${k}">${k.replace(/_/g, " ")}</label>${ctl}</div>`;
+    }).join("") + `</details>`;
+  }
+  html += `</div><h2>Infrastructure</h2><p class="small muted">Edit as JSON and apply. Elevation profile and MOP joints come from data import.</p>`;
+  for (const [k, label] of LISTS) {
+    const v = S.scenario[k];
+    const rows = Array.isArray(v) ? Math.min(12, Math.max(3, v.length + 1)) : 3;
+    html += `<details class="group"><summary>${label} <span class="muted small">${Array.isArray(v) ? `(${v.length})` : (v ? "" : "(none)")}</span></summary>
+      <textarea rows="${rows}" data-list="${k}">${esc(JSON.stringify(v, null, 1))}</textarea>
+      <div style="margin-top:6px"><button data-apply="${k}">Apply</button></div></details>`;
+  }
+  el.innerHTML = html;
+  el.querySelectorAll("[data-k]").forEach(inp => inp.onchange = async () => {
+    const k = inp.dataset.k; let v = inp.value.trim();
+    if (inp.dataset.bool) v = v === "true";
+    else if (!inp.dataset.str && k !== "exit_pressure_behavior") v = v === "" ? null : Number(v);
+    inp.parentElement.classList.remove("err");
+    try { await api("/api/scenario/update", {body: {changes: {[k]: v}}}); await poll(); }
+    catch (e) { inp.parentElement.classList.add("err"); toast(e.message); }
+  });
+  el.querySelectorAll("[data-apply]").forEach(b => b.onclick = async () => {
+    const k = b.dataset.apply, ta = el.querySelector(`[data-list="${k}"]`);
+    let v; try { v = JSON.parse(ta.value); } catch (e) { toast("Not valid JSON: " + e.message); return; }
+    try { await api("/api/scenario/update", {body: {changes: {[k]: v}}}); toast("Applied"); await poll(); }
+    catch (e) { toast(e.message); }
+  });
+}
+
+// ---------------------------------------------------------------- charts (SVG)
+function niceTicks(lo, hi, n = 5) {
+  if (!(hi > lo)) { hi = lo + 1; }
+  const step0 = (hi - lo) / n, mag = Math.pow(10, Math.floor(Math.log10(step0)));
+  const step = [1, 2, 2.5, 5, 10].map(m => m * mag).find(s => s >= step0) || step0;
+  const out = []; for (let v = Math.ceil(lo / step) * step; v <= hi + step * 1e-9; v += step) out.push(+v.toFixed(10));
+  return out;
+}
+function lineChart(opts) {
+  // opts: {x: [], series: [{name, y: [], color, axis: "left"|"right", dash}], xLabel, yLabel, y2Label, markers: [{x, label}], area: {y, color}}
+  const W = 900, H = 260, m = {l: 58, r: opts.series.some(s => s.axis === "right") ? 58 : 16, t: 12, b: 34};
+  const xs = opts.x.filter(v => v != null);
+  if (!xs.length) return `<div class="empty">No data</div>`;
+  const xlo = Math.min(...xs), xhi = Math.max(...xs);
+  const range = axis => {
+    const vals = []; for (const s of opts.series) if ((s.axis || "left") === axis) for (const v of s.y) if (v != null) vals.push(v);
+    if (axis === "left" && opts.area) for (const v of opts.area.y) if (v != null) vals.push(v);
+    if (!vals.length) return null;
+    let lo = Math.min(...vals), hi = Math.max(...vals); if (hi === lo) { hi += 1; lo -= 1; }
+    const pad = (hi - lo) * 0.06; return [opts.zeroBase && lo >= 0 ? 0 : lo - pad, hi + pad];
+  };
+  const L = range("left"), R = range("right");
+  const sx = v => m.l + (v - xlo) / ((xhi - xlo) || 1) * (W - m.l - m.r);
+  const sy = (v, r) => H - m.b - (v - r[0]) / (r[1] - r[0]) * (H - m.t - m.b);
+  let g = "";
+  for (const t of niceTicks(xlo, xhi, 8)) g += `<line x1="${sx(t)}" x2="${sx(t)}" y1="${m.t}" y2="${H - m.b}" stroke="var(--border)"/><text x="${sx(t)}" y="${H - m.b + 15}" text-anchor="middle">${fmt(t, Math.abs(t) < 10 && t % 1 ? 1 : 0)}</text>`;
+  if (L) for (const t of niceTicks(L[0], L[1], 5)) g += `<line x1="${m.l}" x2="${W - m.r}" y1="${sy(t, L)}" y2="${sy(t, L)}" stroke="var(--border)"/><text x="${m.l - 6}" y="${sy(t, L) + 4}" text-anchor="end">${fmt(t, Math.abs(t) < 10 && t % 1 ? 1 : 0)}</text>`;
+  if (R) for (const t of niceTicks(R[0], R[1], 5)) g += `<text x="${W - m.r + 6}" y="${sy(t, R) + 4}">${fmt(t, Math.abs(t) < 10 && t % 1 ? 1 : 0)}</text>`;
+  g += `<text x="${(m.l + W - m.r) / 2}" y="${H - 4}" text-anchor="middle">${esc(opts.xLabel || "")}</text>`;
+  if (opts.yLabel) g += `<text transform="translate(13 ${(H - m.b + m.t) / 2}) rotate(-90)" text-anchor="middle">${esc(opts.yLabel)}</text>`;
+  if (opts.y2Label) g += `<text transform="translate(${W - 8} ${(H - m.b + m.t) / 2}) rotate(90)" text-anchor="middle">${esc(opts.y2Label)}</text>`;
+  if (opts.area && L) {
+    let d = ""; opts.x.forEach((xv, i) => { const yv = opts.area.y[i]; if (xv != null && yv != null) d += (d ? "L" : "M") + sx(xv).toFixed(1) + " " + sy(yv, L).toFixed(1); });
+    g += `<path d="${d} L${sx(xhi)} ${H - m.b} L${sx(xlo)} ${H - m.b} Z" fill="${opts.area.color}" fill-opacity=".18" stroke="${opts.area.color}" stroke-width="1"/>`;
+  }
+  for (const s of opts.series) {
+    const r = (s.axis || "left") === "right" ? R : L; if (!r) continue;
+    let d = "", pen = false;
+    opts.x.forEach((xv, i) => { const yv = s.y[i]; if (xv == null || yv == null) { pen = false; return; } d += (pen ? "L" : "M") + sx(xv).toFixed(1) + " " + sy(yv, r).toFixed(1); pen = true; });
+    g += `<path d="${d}" fill="none" stroke="${s.color}" stroke-width="${s.width || 1.6}" ${s.dash ? `stroke-dasharray="${s.dash}"` : ""} stroke-linejoin="round"/>`;
+  }
+  for (const mk of opts.markers || []) g += `<line x1="${sx(mk.x)}" x2="${sx(mk.x)}" y1="${m.t}" y2="${H - m.b}" stroke="${mk.color || "var(--muted)"}" stroke-dasharray="3 3"/><text x="${sx(mk.x) + 3}" y="${m.t + 10}" style="fill:${mk.color || "var(--muted)"}">${esc(mk.label || "")}</text>`;
+  const legend = opts.series.concat(opts.area ? [{name: opts.area.name, color: opts.area.color}] : []).filter(s => s.name)
+    .map(s => `<span><i style="background:${s.color}"></i>${esc(s.name)}</span>`).join("");
+  return `<div class="legend">${legend}</div><svg class="chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="${esc(opts.title || "")}">${g}</svg>`;
+}
+
+function renderCharts() {
+  const el = $("#tab-charts");
+  if (!S.results) { el.innerHTML = `<div class="empty">Run the scenario to see charts.</div>`; return; }
+  const s = S.results.series;
+  el.innerHTML =
+    `<div class="card"><b>Pig speed along the route</b>${lineChart({x: s.pig_mp, xLabel: "Pig milepost", yLabel: "mph",
+       series: [{name: "Pig speed", y: s.pig_speed_mph, color: "var(--s1)"}]})}</div>
+     <div class="card"><b>Pressures along the route</b>${lineChart({x: s.pig_mp, xLabel: "Pig milepost", yLabel: "psig",
+       series: [{name: "Pig face", y: s.pig_face_psig, color: "var(--s1)"}, {name: "Injection", y: s.injection_psig, color: "var(--s2)"},
+                {name: "Exit", y: s.exit_psig, color: "var(--s3)", dash: "4 3"}]})}</div>
+     <div class="card"><b>N2 over time</b>${lineChart({x: s.t_hr, xLabel: "Hours", yLabel: "SCF in line", y2Label: "Injection SCFM", zeroBase: true,
+       series: [{name: "N2 inventory (SCF)", y: s.total_scf, color: "var(--s4)"}, {name: "Injection rate (SCFM)", y: s.injection_scfm, color: "var(--s2)", axis: "right"}]})}</div>
+     <div class="card"><b>Pig position over time</b>${lineChart({x: s.t_hr, xLabel: "Hours", yLabel: "Milepost",
+       series: [{name: "Pig MP", y: s.pig_mp, color: "var(--s1)"}]})}</div>`;
+}
+
+// ---------------------------------------------------------------- profile (live HGL scrubber)
+let profileTimer;
+function renderProfile() {
+  const el = $("#tab-profile");
+  if (!S.results) { el.innerHTML = `<div class="empty">Run the scenario to scrub through the pipeline profile.</div>`; return; }
+  const n = S.results.summary.steps;
+  el.innerHTML = `<div class="card"><div style="display:flex;gap:10px;align-items:center">
+      <button id="pfPlay">Play</button><input type="range" id="pfStep" min="0" max="${n - 1}" value="${S.profileStep}"></div>
+      <div class="small muted" id="pfInfo"></div><div id="pfChart"></div><div id="pfStations" class="small"></div></div>`;
+  $("#pfStep").oninput = () => { S.profileStep = +$("#pfStep").value; clearTimeout(profileTimer); profileTimer = setTimeout(drawProfile, 60); };
+  let playing = null;
+  $("#pfPlay").onclick = () => {
+    if (playing) { clearInterval(playing); playing = null; $("#pfPlay").textContent = "Play"; return; }
+    $("#pfPlay").textContent = "Pause";
+    const stride = Math.max(1, Math.round(n / 120));
+    playing = setInterval(async () => {
+      if (S.tab !== "profile" || !$("#pfStep")) { clearInterval(playing); return; }
+      S.profileStep = Math.min(n - 1, S.profileStep + stride); $("#pfStep").value = S.profileStep; await drawProfile();
+      if (S.profileStep >= n - 1) { clearInterval(playing); playing = null; $("#pfPlay").textContent = "Play"; }
+    }, 250);
+  };
+  drawProfile();
+}
+async function drawProfile() {
+  let p; try { p = await api("/api/results/profile?step=" + S.profileStep); } catch (e) { return; }
+  if (!$("#pfChart")) return;
+  $("#pfInfo").innerHTML = `t = ${fmt(p.t_hr, 2)} hr · pig at MP ${fmt(p.pig_mp, 2)} · ${fmt(p.pig_speed_mph, 2)} mph · face ${fmt(p.pig_face_psig)} psig · exit ${fmt(p.exit_psig)} psig at MP ${fmt(p.exit_mp, 2)} (${esc(p.exit_description)})${p.slack_line_risk ? ' · <span style="color:var(--bad)">slack-line risk</span>' : ""}`;
+  const gas = p.pressure_psig.map((v, i) => p.is_gas[i] ? v : null), liq = p.pressure_psig.map((v, i) => p.is_gas[i] ? null : v);
+  // MOP on the same x grid for display
+  const mop = p.mop_mp.length ? p.mp.map(x => interp(p.mop_mp, p.mop_psig, x)) : null;
+  const series = [{name: "N2 pressure (behind pig)", y: gas, color: "var(--gas)", width: 2}, {name: "Liquid pressure (ahead)", y: liq, color: "var(--liquid)", width: 2}];
+  if (mop) series.push({name: "MOP", y: mop, color: "var(--mop)", dash: "5 3", width: 1.2});
+  series.push({name: "Elevation (ft)", y: p.elevation_ft, color: "var(--ground)", axis: "right", width: 1.2});
+  $("#pfChart").innerHTML = lineChart({x: p.mp, xLabel: "Milepost", yLabel: "psig", y2Label: "Elevation ft", series,
+    markers: [{x: p.pig_mp, label: "pig", color: "var(--text)"}].concat(p.stations.map(s => ({x: s.mp, label: s.name})))});
+  $("#pfStations").innerHTML = p.stations.length ? `<table class="t"><tr><th>Station</th><th>MP</th><th>Status</th><th>Discharge psig</th></tr>` +
+    p.stations.map(s => `<tr><td>${esc(s.name)}</td><td class="n">${fmt(s.mp, 2)}</td><td>${esc(s.status)}</td><td class="n">${fmt(s.discharge_psig)}</td></tr>`).join("") + `</table>` : "";
+}
+function interp(xs, ys, x) {
+  if (x <= xs[0]) return ys[0]; if (x >= xs[xs.length - 1]) return ys[ys.length - 1];
+  let lo = 0, hi = xs.length - 1; while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (xs[mid] <= x) lo = mid; else hi = mid; }
+  const t = (x - xs[lo]) / ((xs[hi] - xs[lo]) || 1); return ys[lo] + t * (ys[hi] - ys[lo]);
+}
+
+// ---------------------------------------------------------------- exports
+function renderExports() {
+  const el = $("#tab-exports");
+  if (!S.results) { el.innerHTML = `<div class="empty">Run the scenario to export reports.</div>`; return; }
+  el.innerHTML = `<div class="card"><p class="small muted">Each export goes to a new dated folder under PurgeSimOutputs in your home folder, so earlier variants are never overwritten.</p>
+    ${[["formatted", "Client report (FILL REPORT + charts, xlsx)"], ["full", "Full technical report (7 sheets, xlsx)"], ["log", "Run log (txt)"], ["gif", "Profile animation (GIF, slower)"]]
+      .map(([k, l]) => `<div style="margin:8px 0"><button data-exp="${k}">${l}</button> <span class="small muted" id="exp-${k}"></span></div>`).join("")}</div>`;
+  el.querySelectorAll("[data-exp]").forEach(b => b.onclick = async () => {
+    const k = b.dataset.exp, note = $("#exp-" + k); b.disabled = true; note.textContent = "Generating…";
+    try { const r = await api("/api/export", {body: {kind: k}}); note.innerHTML = `Saved to ${esc(r.path)} · <a href="${r.url}">download</a>`; }
+    catch (e) { note.textContent = e.message; }
+    b.disabled = false;
+  });
+}
+
+// ---------------------------------------------------------------- toolbar
+$("#btnRun").onclick = async () => { try { await api("/api/run", {body: {}}); poll(); } catch (e) { toast(e.message); } };
+$("#btnQuit").onclick = async () => {
+  if (!confirm("Stop Purge Simulator? Unsaved scenario changes will be lost.")) return;
+  await api("/api/shutdown", {body: {}}).catch(() => {});
+  document.body.innerHTML = `<div class="empty"><h3>Purge Simulator has stopped.</h3><p>You can close this tab.</p></div>`;
+};
+$("#btnSave").onclick = () => {
+  $("#saveName").value = (S.scenario && S.scenario.meta.name) || "";
+  $("#saveNotes").value = (S.scenario && S.scenario.meta.notes) || "";
+  $("#saveWhere").textContent = "Saved to " + (S.userDir || "your scenarios folder") + ". Bundled client-job scenarios are never modified.";
+  $("#dlgSave").showModal();
+};
+$("#saveCancel").onclick = () => $("#dlgSave").close();
+$("#saveOk").onclick = async () => {
+  const body = {name: $("#saveName").value, notes: $("#saveNotes").value};
+  try { await api("/api/scenario/save", {body}); }
+  catch (e) {
+    if (!/already exists/.test(e.message) || !confirm(e.message.replace("; pick a new name", "") + ". Replace it?")) { toast(e.message); return; }
+    try { await api("/api/scenario/save", {body: {...body, overwrite: true}}); } catch (e2) { toast(e2.message); return; }
+  }
+  $("#dlgSave").close(); toast("Saved"); await loadLibrary(); poll(true);
+};
+$("#btnImport").onclick = () => $("#dlgImport").showModal();
+$("#impCancel").onclick = () => $("#dlgImport").close();
+$("#impFile").onchange = () => { const f = $("#impFile").files[0]; if (f && !$("#impName").value) $("#impName").value = f.name.replace(/\.[^.]+$/, ""); };
+$("#impOk").onclick = async () => {
+  const f = $("#impFile").files[0]; if (!f) { toast("Pick a file"); return; }
+  const q = new URLSearchParams({kind: $("#impKind").value, filename: f.name, name: $("#impName").value || f.name});
+  $("#impOk").disabled = true;
+  try { await api("/api/scenario/import?" + q, {method: "POST", raw: await f.arrayBuffer()}); $("#dlgImport").close(); toast("Imported. Review the inputs, then save."); poll(true); }
+  catch (e) { toast(e.message); }
+  $("#impOk").disabled = false;
+};
+
+// settings
+async function openSettings() {
+  const s = await api("/api/settings");
+  $("#setKey").value = ""; $("#setModel").value = s.model;
+  $("#setKeyState").textContent = s.api_key_set ? `A key is set (${s.api_key_source === "environment" ? "from ANTHROPIC_API_KEY" : "saved here"}, ending ${s.api_key_hint}). Leave blank to keep it.` : "No key set yet.";
+  $("#setClear").hidden = s.api_key_source !== "settings";
+  $("#dlgSettings").showModal();
+}
+$("#btnSettings").onclick = openSettings;
+$("#setCancel").onclick = () => $("#dlgSettings").close();
+$("#setOk").onclick = async () => {
+  try { await api("/api/settings", {body: {api_key: $("#setKey").value || null, model: $("#setModel").value}}); $("#dlgSettings").close(); toast("Settings saved"); refreshKey(); }
+  catch (e) { toast(e.message); }
+};
+$("#setClear").onclick = async () => { await api("/api/settings", {body: {clear_key: true}}); $("#dlgSettings").close(); toast("Saved key removed"); refreshKey(); };
+
+// ---------------------------------------------------------------- assistant
+function md(text) {
+  const lines = esc(text).split("\n"); let out = "", list = false, table = [];
+  const inline = s => s.replace(/`([^`]+)`/g, "<code>$1</code>").replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>").replace(/(^|\W)\*([^*\n]+)\*(?=\W|$)/g, "$1<i>$2</i>");
+  const flushTable = () => {
+    if (!table.length) return;
+    const rows = table.filter(r => !/^\s*\|?\s*:?-{2,}/.test(r)).map(r => r.replace(/^\s*\||\|\s*$/g, "").split("|").map(c => inline(c.trim())));
+    out += "<table>" + rows.map((r, i) => "<tr>" + r.map(c => i ? `<td>${c}</td>` : `<th>${c}</th>`).join("") + "</tr>").join("") + "</table>";
+    table = [];
+  };
+  for (const ln of lines) {
+    if (/^\s*\|.*\|\s*$/.test(ln)) { if (list) { out += "</ul>"; list = false; } table.push(ln); continue; }
+    flushTable();
+    const li = ln.match(/^\s*(?:[-*]|\d+\.)\s+(.*)/);
+    if (li) { if (!list) { out += "<ul>"; list = true; } out += `<li>${inline(li[1])}</li>`; continue; }
+    if (list) { out += "</ul>"; list = false; }
+    const h = ln.match(/^#{1,4}\s+(.*)/);
+    if (h) out += `<p><b>${inline(h[1])}</b></p>`;
+    else if (ln.trim()) out += `<p>${inline(ln)}</p>`;
+  }
+  flushTable(); if (list) out += "</ul>";
+  return out;
+}
+const SUGGEST = [
+  "Summarize this scenario and what kind of job it is.",
+  "Run it and tell me what limits the purge.",
+  "Compare max drive pressures of 450, 500 and 550 psig.",
+  "Where is the tightest MOP margin, and how close does the run get?",
+];
+async function loadChat() {
+  const c = await api("/api/chat");
+  S.chatCount = c.transcript.length; S.chatBusy = c.busy;
+  const box = $("#msgs"), atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
+  box.innerHTML = c.transcript.length ? c.transcript.map(m => `<div class="msg ${m.role}">${m.role === "assistant" ? md(m.text) : esc(m.text)}</div>`).join("")
+    : `<div class="small muted">Ask about the open scenario, have it run variants, or get help setting up a new job from imported data. The assistant changes the same inputs you see, never saves without being asked, and won't break the hard engineering rules.</div>
+       <div class="suggest">${SUGGEST.map(s => `<button data-s="${esc(s)}">${esc(s)}</button>`).join("")}</div>`;
+  box.querySelectorAll("[data-s]").forEach(b => b.onclick = () => { $("#chatIn").value = b.dataset.s; send(); });
+  if (atBottom || c.busy) box.scrollTop = box.scrollHeight;
+  $("#typing").textContent = c.busy ? "Working…" : (S.keySet === false ? "Add your Claude API key in Settings to use the assistant." : "");
+  $("#btnSend").disabled = c.busy;
+}
+async function send() {
+  const t = $("#chatIn").value.trim(); if (!t) return;
+  try { await api("/api/chat", {body: {message: t}}); $("#chatIn").value = ""; await loadChat(); $("#msgs").scrollTop = 1e9; }
+  catch (e) { toast(e.message); }
+}
+$("#btnSend").onclick = send;
+$("#chatIn").onkeydown = e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } };
+$("#btnChatReset").onclick = async () => { try { await api("/api/chat/reset", {body: {}}); loadChat(); } catch (e) { toast(e.message); } };
+
+// ---------------------------------------------------------------- boot
+try { const t = localStorage.getItem("purge.tab"); if (t) document.querySelector(`#tabs [data-tab="${t}"]`)?.click(); } catch (e) {}
+loadLibrary().then(() => poll(true));
+const refreshKey = () => api("/api/settings").then(s => { S.keySet = s.api_key_set; loadChat(); }).catch(() => {});
+refreshKey();
+</script>
+</body>
+</html>

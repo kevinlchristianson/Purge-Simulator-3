@@ -1,0 +1,13 @@
+# Engine + reports
+numpy
+scipy
+pandas
+matplotlib
+openpyxl
+pillow
+# Optional: MP4 export of the profile animation (GIF works without it)
+imageio
+# In-app assistant (Claude API)
+anthropic>=1.11
+# Tests
+pytest
