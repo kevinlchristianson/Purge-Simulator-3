@@ -32,7 +32,8 @@ from ..data.scenario import ScenarioInputs
 from ..data.ili_parser import parse_ili, ILIData
 from ..data.pxp_parser import parse_pxp
 from ..data.formats import detect_format
-from ..data.elevation import DEFAULT_SPACING_FT, ElevationError, fetch_route_elevation
+from ..data.elevation import (DEFAULT_SPACING_FT, FT_PER_M, ElevationError, fetch_route_elevation,
+                              spot_check_altitudes)
 from ..data.profile_parser import ProfileData, parse_profile
 
 
@@ -331,6 +332,11 @@ class ConfigPanel(ttk.Frame):
                     if prof is None:
                         self._data_status_var.set("Not loaded: the file has no elevation data")
                         return
+                elif path.lower().endswith((".kmz", ".kml")) and prof.lat is not None:
+                    prof = self._check_kml_altitudes(prof)
+                    if prof is None:
+                        self._data_status_var.set("Not loaded")
+                        return
                 self._profile_data = prof
                 self._data_status_var.set(
                     f"Profile loaded: {len(self._profile_data.mileposts):,} pts, "
@@ -365,6 +371,23 @@ class ConfigPanel(ttk.Frame):
             messagebox.showwarning("Elevation Lookup", "\n\n".join(res.flags))
         return ProfileData(mileposts=res.mileposts, elevations_ft=res.elevations_ft, lat=res.lat, lon=res.lon,
                            source=prof.source + "+USGS")
+
+    def _check_kml_altitudes(self, prof):
+        """KML altitudes are meters by spec, but some pipeline KMZs carry feet there. Check a few
+        against USGS 3DEP; read them as feet, or offer the full lookup, when they disagree."""
+        chk = spot_check_altitudes(prof.lat, prof.lon, prof.elevations_ft)
+        if chk["verdict"] == "feet":
+            messagebox.showinfo("KMZ Altitudes", "This KMZ's altitudes are in feet, not meters as KML "
+                                f"specifies (they match USGS 3DEP within {chk['median_diff_if_feet_ft']:g} ft "
+                                "read as feet). They were read as feet.")
+            prof.elevations_ft = prof.elevations_ft / FT_PER_M
+        elif chk["verdict"] == "mismatch":
+            messagebox.showwarning("KMZ Altitudes", "This KMZ's altitudes disagree with USGS 3DEP by a median "
+                                   f"{chk['median_diff_ft']:,.0f} ft.")
+            return self._lookup_elevation(prof)
+        elif chk["verdict"] == "unverified":
+            self._data_status_var.set("KMZ altitudes not checked against USGS: " + chk.get("reason", ""))
+        return prof
 
     def _populate_from_ili(self, data: ILIData):
         """Fill in infrastructure fields from ILI data."""
