@@ -51,10 +51,10 @@ mob_time_hr govern how many spreads exist and how long moves take.
 sites boosters.
 - Strategies: the default lean floor-defending controller, or pack-and-coast \
 (n2_budget_scf set: inject while holding drive near drive_mop_fraction x MOP, then coast \
-on the stored column). The lean controller runs the N2 pump smoothly (smooth_injection, \
-default true): the SP rate ramps at most injection_ramp_scfm_per_hr (default the full range \
-over 2 h, 4x faster below min speed) and the start-up is supply-limited; the pump never \
-cycles on and off between steps.
+on the stored column). The lean controller runs the N2 pump as a rate (smooth_injection, \
+default true): the SCFM that moves the pig at target speed with gas at the aim pressure, \
+ramp-limited to injection_ramp_scfm_per_hr (default the full range over 2 h, 4x faster below \
+min speed); the pump never cycles on and off between steps.
 - Typical job classes: speed-capped (max_speed_mph binds), drive-capped (max_drive_psig / \
 MOP binds), friction-dominated (small diameter, long), pump-and-BPCV jobs.
 

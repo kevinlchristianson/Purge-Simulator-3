@@ -66,20 +66,24 @@ COAST_HORIZON_MI = 15.0
 # resume early enough to clear the next climb without stalling the pig.
 COAST_RAMP_BAND_PSI = 50.0
 
-# Smooth SP injection (lean strategy). A real N2 spread is run at a rate that is trimmed
-# slowly, not slammed between zero and full flow. Each step the lean controller's demand is
-# turned into a rate, then:
-#   - a pressure shortfall at the injection segment is closed over SMOOTH_INJECTION_TAU_HR
-#     instead of inside one timestep (closing it in one step is what made SP bang-bang
-#     between 0 and max SCFM every few minutes, and the pig speed swing with it);
-#   - the rate may change by at most injection_ramp_scfm_per_hr (default: full range in
-#     SMOOTH_RAMP_FULL_RANGE_HR hours). Below min speed the ramp is
-#     SMOOTH_RECOVERY_RAMP_MULT times faster (slack-line recovery); at the MOP cap the
-#     rate may cut at once (a high-pressure trip, not a trim).
-SMOOTH_INJECTION_TAU_HR = 1.0
+# Smooth SP injection (lean strategy, SP the only gas source behind the pig). A nitrogen
+# pumper is run at a RATE the operator trims, not slammed between zero and full flow, and the
+# column pressure is whatever the liquid resistance demands at the speed that rate gives.
+# So the controller sets a rate, not a pressure:
+#   Q_set = SCFM that moves the pig at TARGET speed with gas at the AIM pressure
+#           (= the pump rate that would hold the aim pressure steady at target speed).
+# That alone is a self-regulating loop: below target speed the pig vacates less than Q_set
+# fills, so the column builds; above it, more, so the column draws down; at the aim and at
+# target the pressure holds. The aim is the floor-defending target the lean strategy already
+# computes (local drive for target speed, the next station handoff, the roadmap's upcoming
+# climbs, capped by MOP). The coast taper then scales Q_set toward zero when the stored
+# column already covers the worst floor ahead, and below min speed Q_set goes to max rate.
+# Finally the rate may change by at most injection_ramp_scfm_per_hr (default the full range
+# over SMOOTH_RAMP_FULL_RANGE_HR; SMOOTH_RECOVERY_RAMP_MULT x faster below min speed; a cut
+# at the MOP cap is immediate, a trip not a trim).
 SMOOTH_RAMP_FULL_RANGE_HR = 2.0
 SMOOTH_RECOVERY_RAMP_MULT = 4.0
-# Margin (psi) above the drive that holds target speed, the smooth controller's face aim.
+# Margin (psi) above the drive that holds target speed, the controller's local face aim.
 SMOOTH_TARGET_MARGIN_PSI = 10.0
 # Adaptive step: the pig may advance at most this fraction of the gas column per step, so a
 # short column near the launch isn't halved in pressure by one 0.1-mile step (the start-up
@@ -155,10 +159,10 @@ class SimConfig:
     # --- Injection limits ---
     max_injection_psig: float = 200.0
     max_injection_scfm: float = 5000.0
-    # Smooth SP injection (see SMOOTH_INJECTION_TAU_HR). True = the rate is ramp-limited and
-    # pressure shortfalls are closed over a time constant; False = the earlier per-step
-    # controller (on/off at the timestep). Lean strategy only: pack-and-coast keeps its own
-    # deliberate pack-then-cut schedule.
+    # Smooth SP injection (see SMOOTH_RAMP_FULL_RANGE_HR). True = SP is run as a rate
+    # controller (rate for target speed at the aim pressure, ramp-limited); False = the
+    # earlier per-step pressure fix (on/off at the timestep). Lean strategy only:
+    # pack-and-coast keeps its own deliberate pack-then-cut schedule.
     smooth_injection: bool = True
     # Max change in SP injection rate (SCFM per hour). None = max_injection_scfm /
     # SMOOTH_RAMP_FULL_RANGE_HR.
@@ -983,13 +987,6 @@ def simulate(cfg: SimConfig, progress_cb: Optional[Callable[[float], None]] = No
         # escalate drive toward the ceiling. Below `below_min` we are patient: target the
         # minimum face pressure (+ small margin), never rated discharge / MOP.
         below_min = pig_result.slack_line_risk or is_stalled
-        # Smooth: fraction of a pressure shortfall closed this step (1 = all of it, the old
-        # behavior). Trimmed over the time constant while the pig holds min speed; below min
-        # speed the shortfall is closed as fast as the (recovery) ramp allows.
-        _close_frac = 1.0
-        if _smooth and not below_min:
-            _close_frac = min(1.0, dt_hr / SMOOTH_INJECTION_TAU_HR)
-            scf_deficit *= _close_frac
 
         # Minimum pig face needed to sustain the pig's current motion (= the floor: exit
         # pressure + friction + static head at the solved speed). On a climb where the pig
@@ -1016,11 +1013,11 @@ def simulate(cfg: SimConfig, progress_cb: Optional[Callable[[float], None]] = No
             fill_pressure_psig = min_suction_floor
             pig_face_target_psig = _min_face_psig + 20.0
         elif _smooth and not is_stalled:
-            # SMOOTH, no boosters: aim the face at the drive that holds target speed (+ a
-            # small margin), whichever side of target the pig is on. The earlier split
-            # (hold current pressure below target / throttle to the min face above it)
-            # flipped the demand every time the speed crossed target, which is what made
-            # SP bang between zero and full flow and the pig speed saw-tooth with it.
+            # SMOOTH, no boosters: the aim is the drive that holds target speed (+ a small
+            # margin), whichever side of target the pig is on. The split below (hold current
+            # pressure under target / throttle to the min face over it) flipped the demand
+            # every time the speed crossed target: SP banged between zero and full flow and
+            # the pig speed saw-toothed with it.
             fill_pressure_psig = pig_result.drive_for_target_psig + SMOOTH_TARGET_MARGIN_PSI
             pig_face_target_psig = fill_pressure_psig
         elif pig_result.meter_valve_active and not is_stalled:
@@ -1168,15 +1165,23 @@ def simulate(cfg: SimConfig, progress_cb: Optional[Callable[[float], None]] = No
         # the pig face directly. (Gated on a booster actually being behind the pig, not on the
         # scenario having zero boosters — pre-NW the pig has none behind it even though the run
         # uses boosters, and previously the build never fired there, leaving the column slack.)
-        if (_smooth or not pig_result.meter_valve_active) and not _booster_behind:
+        _rate_control = _smooth and not _booster_behind
+        if _rate_control:
+            # --- SMOOTH RATE CONTROLLER (SP the only source; see SMOOTH_* above) ---
+            # The pump rate that moves the pig at target speed with gas at the aim pressure.
+            # Not a one-step pressure fix: the column builds or draws down toward the aim at
+            # the pace the pig's own displacement sets, and holds there at target speed.
+            _q_set = scfm_from_pig_velocity(
+                mph_to_fts(cfg.target_speed_mph), area_ft2,
+                psig_to_psia(max(pig_face_target_psig, 0.0)), cfg.n2_temperature_f,
+            )
+            if below_min:
+                # Slack-line recovery / launch: bring the pump to max (ramp-limited below).
+                _q_set = cfg.max_injection_scfm
+            scf_inject = _q_set * dt_hr * 60.0
+        elif not pig_result.meter_valve_active and not _booster_behind:
             target_scf = inj_seg.scf_at_pressure(fill_pressure_psig)
-            if _smooth:
-                # Fill the vacated volume now; close the rest of the gap over the time constant.
-                _gap = target_scf - inj_seg.scf
-                scf_inject = max(scf_inject, scf_to_fill_new_vol
-                                 + max(0.0, _gap - scf_to_fill_new_vol) * _close_frac)
-            else:
-                scf_inject = max(scf_inject, target_scf - inj_seg.scf)
+            scf_inject = max(scf_inject, target_scf - inj_seg.scf)
 
         # Stalled with no booster behind: inject at max rate — the only way to build pig-face
         # pressure and recover when there is no booster to relay it forward.
@@ -1215,7 +1220,8 @@ def simulate(cfg: SimConfig, progress_cb: Optional[Callable[[float], None]] = No
         max_scf_step = cfg.max_injection_scfm * dt_hr * 60.0
         scf_inject = min(max(0.0, scf_inject), max_scf_step)
 
-        # Smooth: ramp-limit the SP rate from the previous step's rate.
+        # Smooth: the SP rate may move at most the ramp from the previous step's rate — the
+        # operator trims the pumper, never slams it (also applied to lean runs with boosters).
         if _smooth:
             _ramp = _ramp_scfm_per_hr
             if below_min or pig_result.pig_speed_mph < cfg.min_speed_mph:
