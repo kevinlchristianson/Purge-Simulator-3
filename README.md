@@ -43,6 +43,9 @@ Nothing leaves the machine except assistant messages, which go to the Claude API
 - **Your files.** Saved scenarios go to `~/PurgeSimScenarios` (shared with the Tkinter
   app); reports go to a new dated folder under `~/PurgeSimOutputs` on every export.
 
+For how to use it well (the order to set up a job, what costs API credit, and what to
+check before a number goes to a client), see the [user guide](docs/USER_GUIDE.md).
+
 ### Packaging it as a standalone program
 
 ```
