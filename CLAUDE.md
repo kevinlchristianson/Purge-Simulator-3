@@ -67,13 +67,24 @@ purge_sim/
     formatted_report.py — client-facing xlsx: FILL REPORT table + 2 embedded charts
     purge_report.py     — comprehensive 7-sheet technical xlsx (full run-data record)
     log_export.py       — human-readable + CSV run log export
+    precheck.py         — pre-run job check, no simulation: speed- vs drive-capped (and the speed
+                         the cap allows), friction share, laminar, descents steeper than friction,
+                         flat pack limit under MOP (at rest / moving), min pack-and-coast N2,
+                         vapor check; exit_pressure_at_stop() for a liquid exit past the pig stop
     config_builder.py   — build_sim_config(ScenarioInputs) -> SimConfig; the one place a scenario
                          becomes an engine config (headless runner, tests and the app all use it)
   app/                  — standalone app (python app.py), standard-library HTTP server
     workspace.py       — open scenario, edits (validated; hard rule 4 enforced on edits), runs,
                          result views, exports. The UI and the assistant act only through it.
     assistant.py       — Claude API tool loop over the Workspace (list/load/read/edit/run/sweep/
-                         save). Key from ANTHROPIC_API_KEY or ~/.purge_sim/settings.json.
+                         job setup/pre-run check/save). Key from ANTHROPIC_API_KEY or
+                         ~/.purge_sim/settings.json.
+    intake.py          — job intake: the questions every new job answers (route direction,
+                         pig stop vs liquid exit, pipe size/WT/grade, product, MOP basis,
+                         drive/N2 limits, speeds, strategy) -> ScenarioInputs, with every
+                         unstated default reported as an assumption and written into a
+                         "Job setup" notes block. Answers persist in meta.intake. The app's
+                         Job setup tab and the assistant's set_job_setup both use it
     server.py          — JSON API + page; 127.0.0.1 only, Host check, per-launch token
     importers.py       — new scenario from ILI / KMZ / TXT / Excel via data/ parsers
     settings.py, paths.py — API key/model; bundled vs user dirs (works frozen by PyInstaller)
@@ -85,6 +96,8 @@ purge_sim/
                          text parsers for non-ILI data sources. A file with no elevations
                          (most pipeline KMZs) comes back NaN with elevation_status='none',
                          never a flat 0 ft profile
+    pipe_catalog.py    — NPS -> OD, STD/XS wall, API 5L SMYS, flange-class ratings, Barlow check
+    fluids.py          — product library (SG, viscosity, vapor pressure + 100 psi margin)
     elevation.py       — built-in elevation lookup for those files: USGS 3DEP point queries
                          (US only, no key), 250 ft default spacing + route vertices + peak
                          refinement, gap fill/flags, sqlite cache in ~/.purge_sim/. Used by the
@@ -174,7 +187,18 @@ packaging/              — PyInstaller spec + Windows build script for the stan
    discussion in recent sessions (repo cleanup → doc accuracy → capture that judgment in
    the software itself → only then consider a web frontend). The app's assistant is a first
    step: it can import data, classify and set up a scenario, run and compare variants
-   in-app, but the judgment still lives in its prompt and the engineer, not in the engine.
+   in-app. Part of the judgment now lives in code: the job intake (`app/intake.py`) and
+   the pre-run check (`engine/precheck.py`) cover pipe/product/MOP lookups, route
+   direction, the liquid exit past the pig stop, job-type classification and pack-and-coast
+   sizing. Still with the engineer: which detected stations really pump vs BPCV, and the
+   final strategy call.
+4. **Liquid exit past the pig stop is not in the engine.** The simulator puts the exit at
+   `purge_end_mp`. Scenarios whose product leaves further on (Laurel: pig stop MP 4.5,
+   tank farm MP 33.3; GL-08: Border BV vs Billings) carried `liquid_exit_mp` in the JSON,
+   which the loader drops, and hold only the delivery pressure at the pig stop. The intake
+   now converts this to an equivalent exit pressure at the pig stop
+   (`precheck.exit_pressure_at_stop`: ~400 psig for Laurel vs the 50 psig in its scenario).
+   The bundled Laurel/GL-08 scenarios have not been changed; revisit them.
 
 ---
 

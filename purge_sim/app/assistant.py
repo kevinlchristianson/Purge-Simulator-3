@@ -79,6 +79,28 @@ run_sweep over editing the open scenario repeatedly.
 - New data imports leave pipe geometry, fluid, drive limits and pump-vs-BPCV roles at \
 defaults. Help classify them: which detected stations really pump, whether there's a \
 BPCV, and which job class this is, and state the assumptions explicitly.
+
+## Setting up a job (the job setup questions)
+A new job is set up through the job setup questions (get_job_setup / set_job_setup), \
+the same form the user sees on the Job setup tab, not by editing inputs one by one. When \
+a scenario was just imported (job_setup.fresh_import or job_setup.missing in \
+get_scenario), or the user describes a job ("purging this diesel line from MP 0 to MP 35 \
+to tankage, 6 inch, drive capped at 500, MOP 900 at all points"):
+1. Map everything the user said onto question ids and call set_job_setup once with all \
+of it. Use the user's words only: leave a question out rather than guess, so its \
+documented default applies and is reported as an assumption. "MOP 900 at all points" is \
+mop_basis flat + mop_psig 900; "drive capped at 500" is max_drive_psig 500; "to tankage \
+at the endpoint" is exit_type tankage with the pig stop as the exit; a pig that stops \
+short of where the product leaves is fluid_exit_mp.
+2. Never invent an answer to a required question (pipe size, product, MOP). If one is \
+missing, ask for it.
+3. Reply with the setup in two or three lines, then the assumptions it reported as one \
+short list for the user to confirm or correct, then the pre-run check's findings that \
+matter (job type, whether target speed holds under the drive cap, pack-and-coast \
+option). Then run, unless an answer is missing or an assumption clearly needs the user.
+4. Corrections later ("wall is 0.188", "it's X52") go through set_job_setup too, so the \
+notes and assumptions stay in step. Use update_inputs only for things the questions \
+don't cover (multi-size pipe segments, stations, boosters, BPCV).
 - Elevation comes from data, never from you. Don't type in, estimate or "fill" elevations. \
 A KMZ without altitudes is looked up in USGS 3DEP on import; get_scenario shows the \
 profile's elevation_source (provider, spacing, interpolated points, flags). If a profile \
@@ -167,6 +189,53 @@ TOOLS: List[dict] = [
             "required": ["reason"], "additionalProperties": False},
     },
     {
+        "name": "get_job_setup",
+        "description": (
+            "The job setup questions for the open scenario: for each question its id, section, label, kind "
+            "(number/select/bool), unit, options, whether it's required, the user's answer, the default that applies "
+            "when it's blank and where that default comes from (data, derived, standard, assumed), and its status "
+            "(answered/default/missing/blank). Also the list of required questions still missing and the product "
+            "library (SG, viscosity, vapor pressure)."),
+        "input_schema": {"type": "object", "properties": {}, "additionalProperties": False},
+    },
+    {
+        "name": "set_job_setup",
+        "description": (
+            "Answer job setup questions and rebuild the open scenario's inputs from all answers so far. `answers` "
+            "maps question ids to values, e.g. {\"fluid\": \"diesel\", \"nps\": \"6\", \"purge_end_mp\": 35, "
+            "\"mop_basis\": \"flat\", \"mop_psig\": 900, \"max_drive_psig\": 500, \"exit_type\": \"tankage\"}; "
+            "null clears an answer back to its default. Looks up pipe OD and standard wall, product properties, "
+            "flange ratings and the Barlow check; builds flat MOP joints; flips the route if reverse_route; sets "
+            "the exit pressure at the pig stop when the liquid leaves further on; sizes pack-and-coast. Returns "
+            "what changed, every assumption made (defaults to confirm), warnings, questions still missing and the "
+            "pre-run check. Writes a Job setup block into the scenario notes. Unsaved until saved."),
+        "input_schema": {"type": "object", "properties": {
+            "answers": {"type": "object"},
+            "reason": {"type": "string", "description": "One line on why, shown to the user."}},
+            "required": ["answers", "reason"], "additionalProperties": False},
+    },
+    {
+        "name": "precheck_job",
+        "description": (
+            "Pre-run check of the open scenario, no simulation: job type (speed-capped, drive-capped, "
+            "friction-dominated, laminar, gravity-assisted, pump/BPCV controlled), required drive at launch and "
+            "its peak vs the drive cap (and the speed the cap allows there), friction psi/mi, Reynolds number, "
+            "highest flat pack pressure under MOP (at rest and moving), descents steeper than friction, line "
+            "volume, the minimum N2 for pack-and-coast at target speed and, for volatile products, the vapor "
+            "check. Takes well under a second."),
+        "input_schema": {"type": "object", "properties": {}, "additionalProperties": False},
+    },
+    {
+        "name": "pipe_lookup",
+        "description": (
+            "Line pipe facts: OD for a nominal size, STD and XS wall, and (with wt_in) the Barlow pressure for "
+            "each API 5L grade, or for one grade. With mop_psig, the minimum grade that justifies it."),
+        "input_schema": {"type": "object", "properties": {
+            "nps": {"type": "string"}, "wt_in": {"type": "number"}, "grade": {"type": "string"},
+            "mop_psig": {"type": "number"}, "design_factor": {"type": "number"}},
+            "required": ["nps"], "additionalProperties": False},
+    },
+    {
         "name": "save_scenario_as",
         "description": "Save the open scenario to the user's scenarios folder under a new name, with notes recording the rationale. Never overwrites an existing file. Only do this when the user asks.",
         "input_schema": {"type": "object", "properties": {
@@ -204,6 +273,30 @@ def _sweep(ws: Workspace, field: str, values: List[Any]) -> dict:
         })
     return {"scenario": sc.meta.name, "field": field, "rows": rows,
             "note": "Sweep runs are not kept; the open scenario and its results are unchanged."}
+
+
+def _pipe_lookup(args: Dict[str, Any]) -> dict:
+    from ..data import pipe_catalog as pipes
+    try:
+        nps = pipes.nps_key(args["nps"])
+    except KeyError:
+        raise InputError(f"{args.get('nps')!r} is not a standard pipe size")
+    od = pipes.od_in(nps)
+    out = {"nps": nps, "od_in": od, "std_wt_in": pipes.standard_wt_in(nps, "STD"),
+           "xs_wt_in": pipes.standard_wt_in(nps, "XS")}
+    wt = args.get("wt_in") or out["std_wt_in"]
+    if wt:
+        df = float(args.get("design_factor") or pipes.DEFAULT_DESIGN_FACTOR)
+        grades = [args["grade"].upper()] if args.get("grade") else list(pipes.GRADE_SMYS_PSI)
+        try:
+            out["barlow_psig"] = {g: round(pipes.barlow_psig(od, wt, g, df)) for g in grades}
+        except KeyError:
+            raise InputError(f"unknown grade {args.get('grade')!r}; one of {list(pipes.GRADE_SMYS_PSI)}")
+        out.update(wt_in=wt, design_factor=df)
+        if args.get("mop_psig"):
+            out["min_grade_for_mop"] = pipes.min_grade_for(od, wt, float(args["mop_psig"]), df)
+    out["flange_class_psig"] = pipes.FLANGE_CLASS_PSIG
+    return out
 
 
 def execute_tool(ws: Workspace, name: str, args: Dict[str, Any]) -> Any:
@@ -250,6 +343,24 @@ def execute_tool(ws: Workspace, name: str, args: Dict[str, Any]) -> Any:
         out = ws.fetch_elevation(float(args.get("spacing_ft") or DEFAULT_SPACING_FT), bool(args.get("reverse")))
         return {**out, "note": "The open scenario's elevation profile is replaced (unsaved). Run again to "
                                "see the effect."}
+    if name == "get_job_setup":
+        v = ws.intake_view()
+        keep = ("id", "section", "label", "kind", "unit", "required", "answer", "default", "default_source",
+                "status", "relevant", "help")
+        qs = []
+        for q in v["questions"]:
+            item = {k: q[k] for k in keep if q.get(k) not in (None, "", False) or k in ("answer", "default")}
+            if q.get("options"):
+                item["options"] = [o["value"] for o in q["options"]]
+            qs.append(item)
+        return {"questions": qs, "missing": v["missing"], "fresh_import": v["fresh_import"],
+                "fluids": v["fluids"]}
+    if name == "set_job_setup":
+        return ws.apply_intake(args.get("answers") or {})
+    if name == "precheck_job":
+        return ws.precheck()
+    if name == "pipe_lookup":
+        return _pipe_lookup(args)
     if name == "save_scenario_as":
         return ws.save_as(args["name"], args.get("notes"), overwrite=False)
     raise InputError(f"unknown tool {name!r}")
@@ -266,13 +377,20 @@ def _tool_label(name: str, args: Dict[str, Any]) -> str:
         return f"Swept {args.get('field')} over {args.get('values')}"
     if name == "save_scenario_as":
         return f"Saved as {args.get('name')}"
+    if name == "set_job_setup":
+        keys = ", ".join(f"{k} = {json.dumps(v)[:40]}" for k, v in (args.get("answers") or {}).items())
+        reason = args.get("reason")
+        return f"Set up the job: {keys}" + (f" ({reason})" if reason else "")
+    if name == "pipe_lookup":
+        return f"Looked up NPS {args.get('nps')} pipe"
     if name == "fetch_elevation":
         reason = args.get("reason")
         return (f"Looked up elevation in USGS 3DEP at {args.get('spacing_ft') or DEFAULT_SPACING_FT:g} ft"
                 + (", reversed" if args.get("reverse") else "") + (f" ({reason})" if reason else ""))
     return {"list_scenarios": "Listed scenarios", "get_scenario": "Read the scenario",
             "get_elevation_profile": "Read the elevation profile", "run_simulation": "Ran the simulation",
-            "get_results": f"Read results ({args.get('view')})"}.get(name, name)
+            "get_results": f"Read results ({args.get('view')})", "get_job_setup": "Read the job setup",
+            "precheck_job": "Ran the pre-run check"}.get(name, name)
 
 
 class Assistant:

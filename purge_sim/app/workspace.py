@@ -245,6 +245,16 @@ def mop_stats(joints: List[dict]) -> dict:
             "mop_max_psig": _f(m.max(), 1), "mop_median_psig": _f(np.median(m), 1)}
 
 
+def _setup_status(sc: Scenario) -> dict:
+    from . import intake
+    try:
+        v = intake.view(sc)
+    except Exception as e:   # a summary must never fail because of the setup view
+        return {"error": f"{type(e).__name__}: {e}"}
+    return {"answered": sum(q["status"] == "answered" for q in v["questions"]), "missing": v["missing"],
+            "fresh_import": v["fresh_import"]}
+
+
 def inputs_summary(sc: Scenario) -> dict:
     inp = sc.inputs
     scalars = {k: v for k, v in dataclasses.asdict(inp).items()
@@ -253,6 +263,7 @@ def inputs_summary(sc: Scenario) -> dict:
     return {
         "meta": {"name": sc.meta.name, "notes": sc.meta.notes, "source_files": sc.meta.source_files,
                  "modified_at": sc.meta.modified_at},
+        "job_setup": _setup_status(sc),
         "scalars": scalars,
         "pipe_segments": inp.pipe_segments,
         "check_valves": inp.check_valves,
@@ -557,6 +568,52 @@ class Workspace:
                 "previous_length_mi": _f(old_len, 3) if old_len is not None else None,
                 "filled_points": res.filled_points, "source": res.source, "warnings": warnings,
                 "purge_start_mp": sc.inputs.purge_start_mp, "purge_end_mp": sc.inputs.purge_end_mp}
+
+    # ---- job intake ------------------------------------------------------------
+
+    def intake_view(self) -> dict:
+        from . import intake
+        with self.lock:
+            return intake.view(self.require())
+
+    def apply_intake(self, answers: Dict[str, Any]) -> dict:
+        """Apply job intake answers (intake.py) to the open scenario: builds the inputs they
+        describe, records the answers and assumptions on the scenario and refreshes the
+        Job setup block in its notes. Returns what changed, assumptions, warnings, the
+        questions still missing and the pre-run check."""
+        from . import intake
+        with self.lock:
+            sc = self.require()
+            if self.job["state"] == "running":
+                raise InputError("wait for the running job to finish first")
+            try:
+                new_inputs, meta_intake, report = intake.apply(sc, answers)
+            except intake.IntakeError as e:
+                raise InputError(str(e)) from e
+            old = dataclasses.asdict(sc.inputs)
+            new = dataclasses.asdict(new_inputs)
+            _check_rules(sc.inputs, new_inputs, {k for k in new if new[k] != old[k]})
+            diff = [{"field": k, "old": _brief(old[k]), "new": _brief(new[k])}
+                    for k in new if new[k] != old[k]]
+            sc.inputs = new_inputs
+            sc.meta.intake = meta_intake
+            sc.meta.notes = intake.merge_notes(sc.meta.notes, intake.notes_block(new_inputs, report))
+            self.dirty = True
+            self.results_stale = self.results is not None
+            self.revision += 1
+            return {"changed": diff, **report}
+
+    def precheck(self) -> dict:
+        from ..data import fluids
+        from ..engine.precheck import precheck
+        with self.lock:
+            sc = self.require()
+            key = ((sc.meta.intake or {}).get("answers") or {}).get("fluid") or fluids.match(sc.inputs.fluid_name)
+            vmin = fluids.FLUIDS[key].min_liquid_psig if key in fluids.FLUIDS else None
+            try:
+                return precheck(sc.inputs, vmin)
+            except ValueError as e:
+                raise InputError(str(e)) from e
 
     # ---- simulation ------------------------------------------------------------
 
