@@ -11,9 +11,39 @@ engine.
 ## Running it
 
 ```
-python main.py                        # GUI
+pip install -r requirements.txt
+python app.py                           # standalone app in your browser, with the Claude assistant
+python main.py                          # original Tkinter desktop GUI
 python run_headless.py <scenario.json>  # no GUI; generates an xlsx report + animation GIF
 ```
+
+### The standalone app (`app.py`)
+
+`python app.py` starts a local server on this machine and opens the app in your default
+browser: the scenario library, every input, Run, results and charts, a live pipeline
+profile you can scrub through, the xlsx/log/GIF reports, and an **assistant** panel.
+Nothing leaves the machine except assistant messages, which go to the Claude API.
+
+- **API key.** Open Settings in the app and paste a Claude API key, or set
+  `ANTHROPIC_API_KEY` before launching. The key is kept in `~/.purge_sim/settings.json`
+  (never in the repo or the packaged app). The model defaults to `claude-opus-5-5` and can
+  be changed in Settings.
+- **What the assistant can do.** Read and explain the open scenario, change inputs (the
+  same validation as the form, and it can't break the hard engineering rules), run the
+  simulation, sweep one input across several values, read results and the profile at any
+  moment, and save a new scenario when asked. It never overwrites a scenario.
+- **Your files.** Saved scenarios go to `~/PurgeSimScenarios` (shared with the Tkinter
+  app); reports go to a new dated folder under `~/PurgeSimOutputs` on every export.
+
+### Packaging it as a standalone program
+
+```
+pip install -r requirements.txt pyinstaller
+pyinstaller packaging/purge_simulator.spec --noconfirm   # or packaging\build_windows.bat
+```
+
+This produces `dist/PurgeSimulator/` with `PurgeSimulator.exe` (on Windows): no Python
+install needed on the machine that runs it. Build on the OS you're shipping for.
 
 Scenario JSONs (`scenarios/<ClientJob>/*.json`) are the full input state for a run — see
 one for the shape, or build one from an ILI file, KMZ, or client Excel/CSV via the GUI's

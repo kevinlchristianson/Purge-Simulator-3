@@ -1,0 +1,16 @@
+# Engine + reports
+numpy
+scipy
+pandas
+matplotlib
+openpyxl
+pillow
+# Optional: MP4 export of the profile animation (GIF works without it)
+imageio
+# In-app assistant (Claude API)
+anthropic>=1.11
+# The Claude client uses brotli(cffi) to unpack compressed replies when it is installed;
+# copies before 1.2 (seen on a Windows install) break that and show up as "Couldn't reach the API".
+brotlicffi>=1.2
+# Tests
+pytest

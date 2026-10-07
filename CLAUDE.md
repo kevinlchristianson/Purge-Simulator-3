@@ -20,6 +20,9 @@ different constraints (speed-capped, drive-capped, friction-dominated, pump-and-
 jobs). See the memory index for the full list of jobs and what each one taught the engine.
 
 Entry points:
+- `python app.py` — the standalone app: a local server + browser UI with the in-app Claude
+  assistant (`purge_sim/app/`). Packages to a no-Python-needed program with
+  `packaging/purge_simulator.spec` (PyInstaller).
 - `python main.py` — launches the Tkinter desktop app
 - `python run_headless.py <scenario.json>` — runs a scenario with no GUI; this is how
   every real client job has actually been run so far. Auto-generates an xlsx report and
@@ -64,6 +67,17 @@ purge_sim/
     formatted_report.py — client-facing xlsx: FILL REPORT table + 2 embedded charts
     purge_report.py     — comprehensive 7-sheet technical xlsx (full run-data record)
     log_export.py       — human-readable + CSV run log export
+    config_builder.py   — build_sim_config(ScenarioInputs) -> SimConfig; the one place a scenario
+                         becomes an engine config (headless runner, tests and the app all use it)
+  app/                  — standalone app (python app.py), standard-library HTTP server
+    workspace.py       — open scenario, edits (validated; hard rule 4 enforced on edits), runs,
+                         result views, exports. The UI and the assistant act only through it.
+    assistant.py       — Claude API tool loop over the Workspace (list/load/read/edit/run/sweep/
+                         save). Key from ANTHROPIC_API_KEY or ~/.purge_sim/settings.json.
+    server.py          — JSON API + page; 127.0.0.1 only, Host check, per-launch token
+    importers.py       — new scenario from ILI / KMZ / TXT / Excel via data/ parsers
+    settings.py, paths.py — API key/model; bundled vs user dirs (works frozen by PyInstaller)
+    static/index.html  — the whole UI, vanilla JS + inline SVG charts, no CDN
   data/
     ili_parser.py      — Rosen ILI Excel parser (auto-detects pump stations, check valves,
                          BPCV, per-joint MOP from the "Additional description" column)
@@ -83,8 +97,10 @@ purge_sim/
                          reports, NOT yet wired into a live results_panel tab, see Open Items)
     scenario_manager.py — directory-backed named-scenario collection, thin wrapper on data/scenario.py
 tools/                  — one-off per-client build/sweep/verify scripts (not part of the app)
-main.py                 — GUI entry point
+app.py                  — standalone app entry point (opens the browser UI)
+main.py                 — Tkinter GUI entry point
 run_headless.py          — headless entry point (the one actually used for every real job)
+packaging/              — PyInstaller spec + Windows build script for the standalone app
 ```
 
 ---
@@ -138,17 +154,18 @@ run_headless.py          — headless entry point (the one actually used for eve
    in the chart. Wiring the corrected hydraulics into the solver itself is the main open
    engine item, but it raises N2 (keeping the column truly full over peaks isn't free) —
    this is a real tension with the lean/coast minimization strategy, not just a bug to fix.
-2. **Live "Pipeline Profile" UI tab.** `plot_pipeline_profile()` and `generate_animation()`
-   exist and work, but only as a standalone GIF/MP4 export (`make_profile_gif.py` and
-   friends) or embedded in the xlsx reports — there's no scrub-slider tab in the live
-   Tkinter `results_panel.py` yet.
+2. **Live "Pipeline Profile" UI tab.** The standalone app (`app.py`) has one: a scrub
+   slider over `hgl.compute_hgl()` per step (gas/liquid pressure, elevation, MOP, stations).
+   The Tkinter `results_panel.py` still has none.
 3. **The real self-supporting gap is not the UI.** Every new client job still requires a
    Claude Code session to classify the input data (which stations are real pumps vs. BPCV
    vs. nothing, speed-capped vs. drive-capped vs. friction-dominated, which strategy to use)
    and hand-build the scenario JSON. None of that judgment lives in the software yet. A
    prettier UI or a future web frontend does not fix this on its own — see the roadmap
    discussion in recent sessions (repo cleanup → doc accuracy → capture that judgment in
-   the software itself → only then consider a web frontend).
+   the software itself → only then consider a web frontend). The app's assistant is a first
+   step: it can import data, classify and set up a scenario, run and compare variants
+   in-app, but the judgment still lives in its prompt and the engineer, not in the engine.
 
 ---
 

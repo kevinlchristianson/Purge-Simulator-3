@@ -21,3 +21,7 @@ deliverables/
 
 # Internal engine-tuning experiments on the reference pipeline - not client work
 dev/
+
+# PyInstaller build output (packaging/purge_simulator.spec)
+/build/
+/dist/
