@@ -28,6 +28,7 @@ import numpy as np
 import pandas as pd
 
 from ..engine.mop_check import MOPJoint
+from . import landmarks
 from ..engine.check_valve import CheckValve
 from ..engine.pump_stations import PumpStationConfig
 from ..engine.bpcv import BPCVConfig, BCPVDownstreamJoint, build_bpcv_from_ili
@@ -114,6 +115,8 @@ class ILIData:
     sg_light: Optional[float] = None
     sg_heavy: Optional[float] = None
     route_latlon: List[List[float]] = field(default_factory=list)   # [[lat, lon], ...]
+    # Map-only features: block valves, markers, crossings (data/landmarks.py)
+    landmarks: List[dict] = field(default_factory=list)
     notes: List[str] = field(default_factory=list)                  # parser decisions worth showing
 
     def check_valves(self) -> List[CheckValve]:
@@ -357,6 +360,17 @@ def parse_ili(file_path: str, sheet_index: int = 0) -> ILIData:
         df, mp_col, elev_col, site_col, desc_col
     )
 
+    # --- Map landmarks (block valves, markers, crossings) from the free-text columns ---
+    text_cols = [c for c in (desc_col, site_col, comments_col) if c]
+    landmark_rows = []
+    if text_cols:
+        parts = [df[c].fillna("").astype(str).str.strip() for c in text_cols]
+        text = parts[0]
+        for p in parts[1:]:
+            text = text.where(p == "", text.where(text == "", text + " | ") + p)
+        has = text != ""
+        landmark_rows = [(m, "", t, "") for m, t in zip(df.loc[has, mp_col], text[has])]
+
     return ILIData(
         source_file=str(file_path),
         elevation_profile=elevation_profile,
@@ -366,6 +380,7 @@ def parse_ili(file_path: str, sheet_index: int = 0) -> ILIData:
         standalone_check_valves=standalone_cvs,
         bpcv_record=bpcv_rec,
         raw_df=df,
+        landmarks=landmarks.collect(landmark_rows),
     )
 
 

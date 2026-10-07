@@ -50,6 +50,7 @@ def _from_ili(path: str, fmt: str = "ili") -> Tuple[ScenarioInputs, List[str]]:
         data_file=os.path.basename(path),
         elevation_source={"provider": "file", "file": os.path.basename(path)},
     )
+    inp.landmarks = list(d.landmarks)
     if len(d.route_latlon) >= 2:   # a PxP sheet with x/y columns: keep the route for the map
         inp.route_latlon = thin_route([p[0] for p in d.route_latlon], [p[1] for p in d.route_latlon])
     if d.bpcv_record is not None:

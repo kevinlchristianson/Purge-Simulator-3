@@ -37,6 +37,7 @@ import numpy as np
 import pandas as pd
 
 from ..engine.mop_check import MOPJoint
+from . import landmarks
 from .elevation import valid_coords
 from .xlsx_reader import read_sheets
 from .ili_parser import (BPCVRecord, CheckValveRecord, ILIData, PumpStationRecord,
@@ -213,6 +214,7 @@ def parse_pxp(file_path: str) -> ILIData:
                    sg_light=sg_l if np.isfinite(sg_l) else None,
                    sg_heavy=sg_h if np.isfinite(sg_h) else None,
                    route_latlon=[[float(a), float(b)] for a, b in zip(lat[ok], lon[ok])],
+                   landmarks=landmarks.collect(zip(df["mp"], df["desc"], df["feature"], df["valve"]), coded=True),
                    notes=notes)
     return data
 

@@ -43,7 +43,7 @@ EXIT_BEHAVIORS = ("taper_last_n_miles", "step_last_n_miles", "linear_ramp",
                   "constant_run", "constant_end")
 
 # Large arrays that come from data import, not from hand edits.
-_IMPORT_ONLY_FIELDS = {"elevation_profile", "mop_joints", "elevation_source", "route_latlon"}
+_IMPORT_ONLY_FIELDS = {"elevation_profile", "mop_joints", "elevation_source", "route_latlon", "landmarks"}
 
 _LIST_ITEM_KEYS = {
     "pipe_segments":    {"required": {"start_mp", "end_mp", "od_in", "wt_in"}, "numeric": {"start_mp", "end_mp", "od_in", "wt_in"}},

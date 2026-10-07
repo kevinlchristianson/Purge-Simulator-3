@@ -61,6 +61,10 @@ class ScenarioInputs:
     # Route centerline [[lat, lon], ...] (vertices >= 100 ft apart) from a KMZ/GPS import,
     # kept so the elevation can be looked up again. Empty for ILI and milepost-only data.
     route_latlon: List[list] = field(default_factory=list)
+    # Map-only features from an ILI / PxP import: [{mp, kind, name}], kind one of
+    # data/landmarks.py KINDS (block valves, launchers/receivers, markers, crossings).
+    # The engine never reads them.
+    landmarks: List[dict] = field(default_factory=list)
 
     # Fluid
     fluid_name: str = "Diesel"

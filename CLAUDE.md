@@ -103,6 +103,10 @@ purge_sim/
                          Mileposts = 'Dist. from Origin'; MOP = the sheet's MOP column (not
                          MOP Limit); a station at either end of the file is dropped as the
                          launch/receipt site, with a note
+    landmarks.py       — map-only features from ILI/PxP rows: block valves, launchers/receivers,
+                         aerial markers, above-ground markers, crossings -> inputs.landmarks.
+                         PxP uses its feature codes + valve column only; ILI uses free text.
+                         The engine never reads them
     formats.py         — detect_format(path): 'ili' / 'pxp' / 'profile' from the first rows
                          of each sheet; imports default to kind='auto'
     xlsx_reader.py     — stdlib xlsx cell reader; avoids openpyxl parsing chart sheets

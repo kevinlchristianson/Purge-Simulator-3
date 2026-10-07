@@ -117,7 +117,9 @@ def map_view(inp: ScenarioInputs) -> dict:
         add("booster", b.get("name", "Booster site"), b["mp"])
     if inp.bpcv:
         add("bpcv", inp.bpcv.get("name") or "BPCV", inp.bpcv["mp"])
-    unplaced = [f["name"] for f in feats if f["lat"] is None]
+    for lm in inp.landmarks:
+        add(lm.get("kind", "landmark"), lm.get("name", ""), lm.get("mp"), landmark=True)
+    unplaced = [f["name"] for f in feats if f["lat"] is None and not f.get("landmark")]
     if unplaced:
         out["warnings"].append("Not on the mapped route (milepost outside it): " + ", ".join(unplaced) + ".")
     if abs(scale - 1.0) > SCALE_WARN:
