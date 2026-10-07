@@ -365,7 +365,7 @@ def _reverse_inputs(inp: ScenarioInputs) -> ScenarioInputs:
     new.purge_end_mp = _mirror(inp.purge_start_mp, a, b)
     new.pipe_segments = sorted(({**s, "start_mp": _mirror(s["end_mp"], a, b), "end_mp": _mirror(s["start_mp"], a, b)}
                                 for s in inp.pipe_segments), key=lambda s: s["start_mp"])
-    for name in ("check_valves", "pump_stations", "booster_stations", "mop_joints"):
+    for name in ("check_valves", "pump_stations", "booster_stations", "mop_joints", "landmarks"):
         setattr(new, name, sorted(({**x, "mp": _mirror(x["mp"], a, b)} for x in getattr(inp, name)),
                                   key=lambda x: x["mp"]))
     if inp.bpcv:

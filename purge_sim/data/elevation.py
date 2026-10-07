@@ -212,10 +212,20 @@ class ElevationCache:
 # Route geometry
 # ---------------------------------------------------------------------------
 
+def valid_coords(lat, lon) -> np.ndarray:
+    """Mask of usable coordinates: finite, in range, and not 0,0 (a blank cell some
+    spreadsheets export as zero, which would send the route to the Gulf of Guinea)."""
+    lat = np.asarray(lat, dtype=float)
+    lon = np.asarray(lon, dtype=float)
+    with np.errstate(invalid="ignore"):
+        return (np.isfinite(lat) & np.isfinite(lon) & (np.abs(lat) <= 90) & (np.abs(lon) <= 180)
+                & ~((lat == 0) & (lon == 0)))
+
+
 def _clean_route(lat, lon) -> Tuple[np.ndarray, np.ndarray]:
     lat = np.asarray(lat, dtype=float)
     lon = np.asarray(lon, dtype=float)
-    ok = np.isfinite(lat) & np.isfinite(lon)
+    ok = valid_coords(lat, lon)
     lat, lon = lat[ok], lon[ok]
     if len(lat) < 2:
         raise ElevationError("the route needs at least two coordinates to look up elevation")
@@ -399,6 +409,57 @@ def fetch_route_elevation(lat, lon, spacing_ft: float = DEFAULT_SPACING_FT, prov
     }
     return ElevationResult(mileposts=ms, elevations_ft=elev, lat=plat, lon=plon,
                            filled_points=filled, flags=flags, source=source)
+
+
+FT_PER_M = 3.28084
+SPOT_CHECK_POINTS = 8
+SPOT_CHECK_TOL_FT = 50.0
+
+
+def spot_check_altitudes(lat, lon, elev_ft, provider=None, cache: Optional[ElevationCache] = None,
+                         use_cache: bool = True, n: int = SPOT_CHECK_POINTS) -> dict:
+    """Compare a file's own altitudes (already converted from KML meters to feet) with the DEM
+    at a few points along the route. KML altitudes are meters by spec, but some pipeline KMZs
+    carry feet in that field, which reads 3.28x too high.
+
+    verdict: 'ok' (file agrees), 'feet' (file agrees once read as feet), 'mismatch' (neither:
+    use the DEM), or 'unverified' (the DEM couldn't be reached or has no data there)."""
+    lat = np.asarray(lat, dtype=float)
+    lon = np.asarray(lon, dtype=float)
+    elev_ft = np.asarray(elev_ft, dtype=float)
+    idx = np.where(valid_coords(lat, lon) & np.isfinite(elev_ft))[0]
+    if len(idx) == 0:
+        return {"verdict": "unverified", "reason": "no usable points"}
+    pick = idx[np.unique(np.linspace(0, len(idx) - 1, min(n, len(idx))).round().astype(int))]
+    pts = [(float(lat[i]), float(lon[i])) for i in pick]
+    provider = provider or default_provider()
+    if use_cache and cache is None:
+        cache = ElevationCache()
+    try:
+        got = cache.get_many(provider.name, pts) if cache else {}
+        todo = [i for i in range(len(pts)) if i not in got]
+        if todo:
+            vals = provider.lookup([pts[i] for i in todo])
+            for i, v in zip(todo, vals):
+                got[i] = v
+            if cache:
+                cache.put_many(provider.name, [(pts[i][0], pts[i][1], got[i]) for i in todo])
+    except ElevationError as e:
+        return {"verdict": "unverified", "reason": str(e)}
+    dem = np.array([np.nan if got[i] is None else got[i] for i in range(len(pts))])
+    ok = np.isfinite(dem)
+    if ok.sum() < max(2, len(pts) // 2):
+        return {"verdict": "unverified", "reason": "the DEM has no data at most check points"}
+    as_is = float(np.median(np.abs(elev_ft[pick][ok] - dem[ok])))
+    as_feet = float(np.median(np.abs(elev_ft[pick][ok] / FT_PER_M - dem[ok])))
+    if as_is <= SPOT_CHECK_TOL_FT:
+        verdict = "ok"
+    elif as_feet <= SPOT_CHECK_TOL_FT:
+        verdict = "feet"
+    else:
+        verdict = "mismatch"
+    return {"verdict": verdict, "points": int(ok.sum()), "provider": provider.name,
+            "median_diff_ft": round(as_is, 1), "median_diff_if_feet_ft": round(as_feet, 1)}
 
 
 def describe_source(source: dict) -> str:

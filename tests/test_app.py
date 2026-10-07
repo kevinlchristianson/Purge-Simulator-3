@@ -217,6 +217,11 @@ def test_http_requires_token_and_local_host(server):
     assert server.token in html and "__APP_TOKEN__" not in html
 
 
+def test_http_guide_tab_serves_user_guide(server):
+    code, g = _call(server, "/api/guide")
+    assert code == 200 and g["markdown"].startswith("# Purge Simulator")
+
+
 def test_http_load_edit_run_export_chat(server):
     assert _call(server, "/api/scenario/load", {"id": SHORT})[0] == 200
     code, err = _call(server, "/api/scenario/update", {"changes": {"spread_suction_min_psig": 10}})
@@ -239,6 +244,17 @@ def test_http_load_edit_run_export_chat(server):
             break
         time.sleep(0.1)
     assert chat["transcript"][-1] == {**chat["transcript"][-1], "role": "assistant", "text": "hi"}
+
+
+def test_http_scenario_download(server):
+    req = urllib.request.Request(server.url.rstrip("/") + "/api/scenario/download?id=" + SHORT
+                                 + "&token=" + server.token)
+    with urllib.request.urlopen(req, timeout=10) as r:
+        assert 'filename="tipville_east10_3mph.json"' in r.headers["Content-Disposition"]
+        assert "inputs" in json.loads(r.read())
+    for bad in ("bundled:../app.py", "bundled:CHS_TipvilleSantaRita_East10/nope.json", "nope"):
+        assert _call(server, "/api/scenario/download?id=" + bad)[0] == 404
+    assert _call(server, "/api/scenario/download?id=" + SHORT, token=False)[0] == 403
 
 
 def test_assistant_load_refuses_to_discard_unsaved_edits():

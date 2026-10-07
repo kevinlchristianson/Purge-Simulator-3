@@ -195,11 +195,48 @@ def test_import_2d_kmz_looks_up_elevation(tmp_path, dem):
     assert ws.job["state"] == "idle"
 
 
-def test_import_with_elevations_skips_lookup(tmp_path, dem):
+def test_kmz_altitudes_in_meters_are_kept(tmp_path, dem):
     ws = Workspace()
-    ws.new_from_import(write_kmz(tmp_path / "z.kmz", ROUTE, lambda la, lo: 900), "profile", "Z")
-    assert dem.points == 0 and ws.scenario.inputs.elevation_source["provider"] == "file"
-    assert ws.scenario.inputs.data_source == "KMZ"
+    out = ws.new_from_import(write_kmz(tmp_path / "m.kmz", ROUTE, lambda la, lo: terrain(la, lo) / 3.28084),
+                             "profile", "M")
+    inp = ws.scenario.inputs
+    assert inp.elevation_source["provider"] == "file" and inp.data_source == "KMZ"
+    assert inp.elevation_source["altitude_check"]["verdict"] == "ok"
+    assert dem.points <= 8 and out["warnings"] == []   # only the spot check was looked up
+
+
+def test_kmz_altitudes_in_feet_are_read_as_feet(tmp_path, dem):
+    # CHS Santa Rita 16": the KMZ's altitude field carried feet, which read 3.28x too high.
+    ws = Workspace()
+    out = ws.new_from_import(write_kmz(tmp_path / "f.kmz", ROUTE, terrain), "profile", "F")
+    inp = ws.scenario.inputs
+    assert inp.elevation_source["altitude_check"]["verdict"] == "feet"
+    assert max(abs(e - terrain(la, lo)) for (_, e), (la, lo) in zip(inp.elevation_profile, ROUTE)) < 0.5
+    assert any("in feet, not meters" in w for w in out["warnings"])
+    assert "in feet, not meters" in ws.scenario.meta.notes
+
+
+def test_kmz_altitudes_that_disagree_are_replaced(tmp_path, dem):
+    ws = Workspace()
+    out = ws.new_from_import(write_kmz(tmp_path / "g.kmz", ROUTE, lambda la, lo: 100), "profile", "G")
+    inp = ws.scenario.inputs
+    assert inp.data_source == "KMZ+USGS" and inp.elevation_source["provider"] == "fake_dem"
+    assert inp.elevation_source["altitude_check"]["verdict"] == "mismatch"
+    assert min(e for _, e in inp.elevation_profile) > 2800
+    assert any("disagree with USGS 3DEP" in w for w in out["warnings"])
+
+
+def test_kmz_altitudes_unchecked_when_offline(tmp_path, monkeypatch):
+    class Down(FakeDEM):
+        def lookup(self, pts, progress_cb=None):
+            raise E.ElevationError("Couldn't reach the USGS elevation service")
+    monkeypatch.setattr(E, "default_provider", lambda: Down())
+    ws = Workspace()
+    out = ws.new_from_import(write_kmz(tmp_path / "o.kmz", ROUTE, lambda la, lo: 900), "profile", "O")
+    inp = ws.scenario.inputs
+    assert inp.elevation_source["altitude_check"]["verdict"] == "unverified"
+    assert inp.elevation_profile[0][1] == pytest.approx(900 * 3.28084, abs=0.1)
+    assert any("Couldn't check" in w for w in out["warnings"])
 
 
 def test_ask_first_setting_and_http_confirm(tmp_path, dem):
@@ -270,3 +307,93 @@ def test_elevation_fields_are_import_only(tmp_path, dem):
 def test_live_usgs_smoke():
     vals = E.USGS3DEP().lookup([(45.78, -108.50), (45.80, -108.52)])
     assert all(v is not None and 2500 < v < 5000 for v in vals)   # Billings, MT area
+
+
+# ---------------------------------------------------------------- map (gis.py)
+
+def _along(route, n):
+    """n evenly spaced (milepost, lat, lon) points along the route."""
+    lat, lon = [p[0] for p in route], [p[1] for p in route]
+    vmp = E.route_mileposts(lat, lon)
+    mp = np.linspace(0, vmp[-1], n)
+    plat, plon = E.interpolate_route(vmp, lat, lon, mp)
+    return list(zip(mp, plat, plon))
+
+
+def test_map_view_places_route_and_stations(tmp_path, dem):
+    ws = Workspace()
+    ws.new_from_import(write_kmz(tmp_path / "line.kmz", ROUTE), "profile", "Line")
+    ws.update_inputs({"pump_stations": [{"mp": 3.0, "name": "Mid PS", "suction_psig": 30}],
+                      "check_valves": [{"mp": 3.0, "name": "Mid PS CV"}, {"mp": 99.0, "name": "Far CV"}]})
+    v = ws.map_view()
+    assert v["has_route"] and len(v["mp"]) == len(v["lat"]) == len(v["elevation_ft"])
+    assert v["lat"][0] == pytest.approx(ROUTE[0][0]) and v["lat"][-1] == pytest.approx(ROUTE[-1][0])
+    assert v["mp"][-1] == pytest.approx(ws.scenario.inputs.elevation_profile[-1][0], abs=1e-3)
+    assert abs(v["mp_scale"] - 1) < 0.01
+    kinds = {f["kind"]: f for f in v["features"]}
+    assert kinds["pump"]["lat"] is not None
+    assert [f["name"] for f in v["features"] if f["kind"] == "check_valve"] == ["Far CV"]   # CV at the pump folded in
+    assert any("Far CV" in w for w in v["warnings"])                                         # MP 99 is off the route
+
+
+def test_attach_route_keeps_profile_and_picks_direction(tmp_path):
+    ws = Workspace()
+    ws.load("bundled:CHS_TipvilleSantaRita_East10/tipville_east10_3mph.json")
+    assert not ws.map_view()["has_route"]
+    inp = ws.scenario.inputs
+    inp.elevation_profile = [[float(m), terrain(la, lo)] for m, la, lo in _along(ROUTE, 200)]
+    before = [list(p) for p in inp.elevation_profile]
+    # the file is drawn from the far end; its own elevations (metres in KML) show that
+    drawn = [(la, lo) for _, la, lo in _along(ROUTE, 40)][::-1]
+    path = write_kmz(tmp_path / "rev.kmz", drawn, lambda la, lo: terrain(la, lo) / 3.28084)
+    out = ws.attach_route(path)
+    assert out["notes"][0].startswith("Direction picked from the file's elevations: reversed") and ws.dirty
+    assert inp.elevation_profile == before
+    assert inp.route_latlon[0] == pytest.approx(list(ROUTE[0]), abs=1e-6)
+    assert "rev.kmz" in ws.scenario.meta.source_files
+    ws.attach_route(path, "as_is")
+    assert inp.route_latlon[0] == pytest.approx(list(ROUTE[-1]), abs=1e-6)
+    with pytest.raises(InputError, match="direction"):
+        ws.attach_route(path, "sideways")
+
+
+def test_map_http_route_upload_and_static_assets(tmp_path):
+    app = App()
+    httpd = app.serve(port=0)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    try:
+        app.ws.load("bundled:CHS_TipvilleSantaRita_East10/tipville_east10_3mph.json")
+        with open(write_kmz(tmp_path / "line.kmz", ROUTE), "rb") as f:
+            data = f.read()
+        req = urllib.request.Request(f"{app.url}api/route/import?filename=line.kmz&direction=as_is", data=data,
+                                     method="POST", headers={"X-App-Token": app.token})
+        with urllib.request.urlopen(req, timeout=30) as r:
+            assert json.loads(r.read())["route_points"] >= len(ROUTE)
+        req = urllib.request.Request(f"{app.url}api/map", headers={"X-App-Token": app.token})
+        with urllib.request.urlopen(req, timeout=30) as r:
+            assert json.loads(r.read())["has_route"]
+        with urllib.request.urlopen(f"{app.url}static/vendor/leaflet/leaflet.js", timeout=10) as r:
+            assert r.headers["Content-Type"].startswith("text/javascript") and b"Leaflet" in r.read(2000)
+        for bad in ("static/../server.py", "static/%2e%2e/server.py", "static/nope.js"):
+            with pytest.raises(urllib.error.HTTPError) as e:
+                urllib.request.urlopen(app.url + bad, timeout=10)
+            assert e.value.code in (403, 404)
+    finally:
+        app.shutdown()
+        httpd.server_close()
+
+
+def test_zero_and_out_of_range_coordinates_are_dropped(tmp_path, dem):
+    """GL-09's PxP sheet has a few rows with x = y = 0; they drew the route to Africa."""
+    lat = [45.0, 45.05, 0.0, 45.08, 95.0, 45.1]
+    lon = [-108.5, -108.5, 0.0, -108.45, -108.45, -108.45]
+    assert list(E.valid_coords(lat, lon)) == [True, True, False, True, False, True]
+    assert [p[0] for p in E.thin_route(lat, lon)] == [45.0, 45.05, 45.08, 45.1]
+    ws = Workspace()
+    ws.new_from_import(write_kmz(tmp_path / "line.kmz", ROUTE), "profile", "Line")
+    inp = ws.scenario.inputs
+    inp.route_latlon = inp.route_latlon[:2] + [[0.0, 0.0]] + inp.route_latlon[2:]   # saved before the fix
+    inp.purge_start_mp = round(inp.elevation_profile[0][0] - 0.0004, 3)               # rounded a hair outside
+    v = ws.map_view()
+    assert v["route_length_mi"] < 10 and abs(v["mp_scale"] - 1) < 0.01 and not v["warnings"]
+    assert all(f["lat"] is not None for f in v["features"])

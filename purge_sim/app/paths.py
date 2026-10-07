@@ -31,6 +31,11 @@ def static_dir() -> str:
     return os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 
 
+def guide_path() -> str:
+    """The user guide shown on the app's Guide tab (docs/USER_GUIDE.md)."""
+    return os.path.join(resource_root(), "docs", "USER_GUIDE.md")
+
+
 def _home(*parts: str) -> str:
     return os.path.join(os.path.expanduser("~"), *parts)
 

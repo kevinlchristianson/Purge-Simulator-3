@@ -18,7 +18,10 @@ from __future__ import annotations
 import os
 from typing import List, Optional, Tuple
 
-from ..data.elevation import DEFAULT_SPACING_FT, describe_source, fetch_route_elevation, thin_route
+import numpy as np
+
+from ..data.elevation import (DEFAULT_SPACING_FT, FT_PER_M, describe_source, fetch_route_elevation,
+                              spot_check_altitudes, thin_route)
 from ..data.scenario import Scenario, ScenarioInputs, ScenarioMeta
 from . import settings
 
@@ -50,6 +53,9 @@ def _from_ili(path: str, fmt: str = "ili") -> Tuple[ScenarioInputs, List[str]]:
         data_file=os.path.basename(path),
         elevation_source={"provider": "file", "file": os.path.basename(path)},
     )
+    inp.landmarks = list(d.landmarks)
+    if len(d.route_latlon) >= 2:   # a PxP sheet with x/y columns: keep the route for the map
+        inp.route_latlon = thin_route([p[0] for p in d.route_latlon], [p[1] for p in d.route_latlon])
     if d.bpcv_record is not None:
         b = d.bpcv_record
         inp.bpcv = {"mp": float(b.mp), "elevation_ft": float(b.elevation_ft), "name": f"{b.site} BPCV"}
@@ -69,6 +75,36 @@ class ElevationConfirmNeeded(ValueError):
         self.points, self.length_mi = points, length_mi
         super().__init__(f"This file has no elevation data. Look up its {length_mi:.1f} mi route in "
                          "USGS 3DEP? That sends the route's coordinates to the USGS service.")
+
+
+def _check_kml_altitudes(p, elev_ft, source: dict, fetch_elevation: Optional[bool], spacing_ft: float,
+                         progress_cb) -> Tuple[np.ndarray, dict, List[str], bool]:
+    """A KMZ that has altitudes: check a few of them against USGS 3DEP before trusting them.
+    Pipeline KMZs sometimes carry feet in KML's meters field (CHS Santa Rita 16" did), which
+    would read 3.28x too high. Returns (elevations ft, source, notes, replaced by a lookup)."""
+    name = source["file"]
+    if fetch_elevation is False or (fetch_elevation is None and settings.elevation_ask_first()):
+        source["altitude_check"] = {"verdict": "unverified", "reason": "lookups need confirmation"}
+        return elev_ft, source, [f"The altitudes in {name} were used as meters, unchecked against USGS 3DEP. "
+                                 "If the profile looks about 3.3x too high, they were feet."], False
+    chk = spot_check_altitudes(p.lat, p.lon, elev_ft)
+    source["altitude_check"] = chk
+    v = chk["verdict"]
+    if v == "ok":
+        return elev_ft, source, [], False
+    if v == "feet":
+        return elev_ft / FT_PER_M, source, [
+            f"The altitudes in {name} are in feet, not meters as KML specifies (they match USGS 3DEP within "
+            f"{chk['median_diff_if_feet_ft']:g} ft read as feet, and are off by {chk['median_diff_ft']:,.0f} ft "
+            "read as meters). They were read as feet."], False
+    if v == "mismatch":
+        res = fetch_route_elevation(p.lat, p.lon, spacing_ft=spacing_ft, progress_cb=progress_cb)
+        new = dict(res.source, altitude_check=chk, _profile=res.profile())
+        return elev_ft, new, [
+            f"The altitudes in {name} disagree with USGS 3DEP by a median {chk['median_diff_ft']:,.0f} ft, "
+            "so the whole profile was looked up in 3DEP instead."], True
+    return elev_ft, source, [f"Couldn't check the altitudes in {name} against USGS 3DEP "
+                             f"({chk.get('reason', 'no answer')}); they were used as meters, as KML specifies."], False
 
 
 def _from_profile(path: str, fetch_elevation: Optional[bool] = None,
@@ -98,8 +134,18 @@ def _from_profile(path: str, fetch_elevation: Optional[bool] = None,
             notes.append("The file had elevations on only some points; all were replaced by the USGS lookup.")
         data_source += "+USGS"
     else:
-        elev = [[float(m), float(e)] for m, e in p.elevation_profile_array()]
+        elev_ft = np.asarray(p.elevations_ft, dtype=float)
         source = {"provider": "file", "file": os.path.basename(path)}
+        if ext in ("kmz", "kml") and has_route:
+            elev_ft, source, more, looked_up = _check_kml_altitudes(
+                p, elev_ft, source, fetch_elevation, spacing_ft, progress_cb)
+            notes += more
+            if looked_up:
+                data_source += "+USGS"
+        if source.get("provider") == "file":
+            elev = [[float(m), float(e)] for m, e in zip(p.mileposts, elev_ft)]
+        else:
+            elev = source.pop("_profile")
     start, end = float(elev[0][0]), float(elev[-1][0])
     inputs = ScenarioInputs(
         purge_start_mp=round(start, 3),
@@ -133,8 +179,7 @@ def scenario_from_file(path: str, kind: str, name: str, fetch_elevation: Optiona
     meta_notes = [f"Imported from {os.path.basename(path)} as a {FORMAT_LABELS[kind]}."]
     if inputs.elevation_source.get("provider") != "file":
         meta_notes.append(describe_source(inputs.elevation_source))
-    else:
-        meta_notes += notes
+    meta_notes += notes
     meta = ScenarioMeta(name=name or os.path.splitext(os.path.basename(path))[0],
                         source_files=[os.path.basename(path)],
                         notes="\n".join(meta_notes),
