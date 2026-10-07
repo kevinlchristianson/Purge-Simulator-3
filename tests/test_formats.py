@@ -36,6 +36,7 @@ def _pxp_row(dist, elev, mop, desc=None, feature="COORD_PT", valve=None, pump=Fa
     r[C['VlaveType']] = valve
     r[C['MilePost']] = 300 - dist          # station mileposts run backwards on the real sheet
     r[C['PumpLoc']] = elev if pump else "#N/A"
+    r[C['y']], r[C['x']] = 46.0 + (dist - 100) * 0.0145, -108.0   # due north, ~1 mi per mi
     return r
 
 
@@ -161,6 +162,8 @@ def test_import_auto_detects_pxp(tmp_path):
     assert [p["name"] for p in inp.pump_stations] == ["Midway Station"]
     assert len(inp.check_valves) == 2 and inp.mop_joints
     assert "point-by-point" in sc.meta.notes and "TEST 12 INCH CRUDE LINE" in sc.meta.notes
+    # the sheet's x/y columns become the route for the Map tab
+    assert len(inp.route_latlon) > 2 and inp.route_latlon[0] == pytest.approx([46.0, -108.0])
     # the pipe size came from the file, so the job setup doesn't ask for it
     ws = Workspace()
     r = ws.new_from_import(path, "auto", "pxp job")
@@ -177,3 +180,26 @@ def test_import_auto_detects_rosen(tmp_path):
 def test_import_rejects_unknown_kind(tmp_path):
     with pytest.raises(ValueError):
         scenario_from_file(write_rosen(str(tmp_path / "rosen.xlsx")), "pdf", "x")
+
+
+def test_landmarks_for_the_map():
+    from purge_sim.data import landmarks as LM
+    pxp = [(1.0, "AM", "AM 189.00", ""), (1.001, "AGR", "AGR |  STEEL POST NUMBER:184", ""),
+           (2.0, "BALL", "G12-184.0 ELLIOT BV", "BALL"), (2.005, "BALL", "G12-184.0 ELLIOT BV", "BALL"),
+           (2.1, "CHECK", "G12 184.0A - ELLIOT CV", "CHECK"), (3.0, "", "D/S END KRUSE BV", ""),
+           (3.5, "PMP", "LAVINA STATION", ""), (4.0, "RR", "CL RR TRACK", ""),
+           (4.5, "", "TIMBER CREEK HDD", ""), (5.0, "BALL", "BUFFALO RECEIVER", "BALL"), (6.0, "TWL", "TIE IN WELD", "")]
+    got = [(o["mp"], o["kind"], o["name"]) for o in LM.collect(pxp, coded=True)]
+    assert got == [(1.0, "aerial_marker", "AM 189.00"), (1.001, "ground_marker", "STEEL POST NUMBER:184"),
+                   (2.0, "block_valve", "G12-184.0 ELLIOT BV"), (4.0, "crossing", "Railroad crossing"),
+                   (4.5, "crossing", "TIMBER CREEK HDD"), (5.0, "launcher_receiver", "BUFFALO RECEIVER")]
+    # a Rosen tally has only free text
+    ili = [(1.0, "", "Mainline block valve MLV-3", ""), (2.0, "", "Station check valve", ""),
+           (3.0, "", "AGM 12", ""), (4.0, "", "Hwy 3 crossing", ""), (5.0, "", "Pig launcher", "")]
+    assert [o["kind"] for o in LM.collect(ili)] == ["block_valve", "ground_marker", "crossing", "launcher_receiver"]
+
+
+def test_pxp_import_keeps_landmarks(tmp_path):
+    sc, _ = scenario_from_file(write_pxp(str(tmp_path / "pxp.xlsx")), "auto", "pxp job")
+    assert sc.inputs.landmarks and all(set(l) == {"mp", "kind", "name"} for l in sc.inputs.landmarks)
+    assert not any("CHECK VALVE" in l["name"].upper() and l["kind"] == "block_valve" for l in sc.inputs.landmarks)

@@ -212,10 +212,20 @@ class ElevationCache:
 # Route geometry
 # ---------------------------------------------------------------------------
 
+def valid_coords(lat, lon) -> np.ndarray:
+    """Mask of usable coordinates: finite, in range, and not 0,0 (a blank cell some
+    spreadsheets export as zero, which would send the route to the Gulf of Guinea)."""
+    lat = np.asarray(lat, dtype=float)
+    lon = np.asarray(lon, dtype=float)
+    with np.errstate(invalid="ignore"):
+        return (np.isfinite(lat) & np.isfinite(lon) & (np.abs(lat) <= 90) & (np.abs(lon) <= 180)
+                & ~((lat == 0) & (lon == 0)))
+
+
 def _clean_route(lat, lon) -> Tuple[np.ndarray, np.ndarray]:
     lat = np.asarray(lat, dtype=float)
     lon = np.asarray(lon, dtype=float)
-    ok = np.isfinite(lat) & np.isfinite(lon)
+    ok = valid_coords(lat, lon)
     lat, lon = lat[ok], lon[ok]
     if len(lat) < 2:
         raise ElevationError("the route needs at least two coordinates to look up elevation")

@@ -4,6 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Purge Simulator</title>
+<link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css">
+<script src="/static/vendor/leaflet/leaflet.js"></script>
 <style>
 :root {
   --bg: #f6f7f9; --panel: #ffffff; --panel-2: #f0f2f5; --border: #dde1e7;
@@ -131,6 +133,14 @@ dialog .actions { display: flex; justify-content: flex-end; gap: 8px; }
 .toast { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); background: var(--text); color: var(--bg); padding: 8px 14px; border-radius: 8px; font-size: 13px; opacity: 0; transition: opacity .2s; pointer-events: none; max-width: 90vw; }
 .toast.on { opacity: .95; }
 input[type=range] { width: 100%; }
+.map-tools { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; font-size: 13px; }
+.map-tools label { color: var(--muted); }
+#mapBox { height: 460px; border-radius: 6px; border: 1px solid var(--border); background: var(--panel-2); }
+#mapBox .leaflet-tooltip { font-size: 12px; }
+.mk-label { font: 600 11px/1 system-ui, sans-serif; padding: 3px 5px; border-radius: 4px; color: #fff; white-space: nowrap; box-shadow: 0 1px 2px rgba(0,0,0,.35); }
+.mk-pig { width: 16px; height: 16px; border-radius: 50%; background: #fff; border: 4px solid #111; box-shadow: 0 0 0 2px #fff, 0 1px 4px rgba(0,0,0,.5); }
+.ramp { display: inline-flex; vertical-align: middle; margin: 0 4px; }
+.ramp i { width: 18px !important; height: 8px !important; border-radius: 0 !important; margin: 0 !important; }
 
 @media (max-width: 1100px) {
   main { grid-template-columns: 1fr; height: auto; }
@@ -166,6 +176,7 @@ input[type=range] { width: 100%; }
       <button data-tab="inputs">Inputs</button>
       <button data-tab="charts">Charts</button>
       <button data-tab="profile">Pipeline profile</button>
+      <button data-tab="map">Map</button>
       <button data-tab="exports">Reports</button>
     </div>
     <div id="tab-overview"></div>
@@ -173,6 +184,7 @@ input[type=range] { width: 100%; }
     <div id="tab-inputs" hidden></div>
     <div id="tab-charts" hidden></div>
     <div id="tab-profile" hidden></div>
+    <div id="tab-map" hidden></div>
     <div id="tab-exports" hidden></div>
   </section>
   <div class="chat">
@@ -214,6 +226,15 @@ input[type=range] { width: 100%; }
   <div class="actions"><button id="elevCancel">Cancel</button><button class="primary" id="elevOk">Look up</button></div>
 </dialog>
 
+<dialog id="dlgRoute">
+  <h3 style="margin-top:0">Add the route for the map</h3>
+  <p class="small muted">Places this scenario on the map from the pipeline's KMZ, KML or a GPS file (TXT/CSV/Excel with latitude and longitude). Only the route's coordinates are kept: the elevation profile, mileposts and stations don't change. Mileposts are spread along the route from the launch to the far end.</p>
+  <div class="row"><label for="routeFile">File</label><input id="routeFile" type="file" accept=".kmz,.kml,.txt,.csv,.gpx,.xlsx,.xls,.xlsm"></div>
+  <div class="row"><label for="routeDir">Which end is milepost 0</label>
+    <select id="routeDir"><option value="auto">Work it out (from the file's elevations, if it has any)</option><option value="as_is">The start of the line as drawn in the file</option><option value="reverse">The end of the line as drawn in the file</option></select></div>
+  <div class="actions"><button id="routeCancel">Cancel</button><button class="primary" id="routeOk">Add route</button></div>
+</dialog>
+
 <dialog id="dlgImport">
   <h3 style="margin-top:0">New scenario from data</h3>
   <div class="row"><label for="impKind">Data type</label>
@@ -252,7 +273,7 @@ const S = {revision: -1, scenario: null, results: null, scenarios: [], state: nu
 document.querySelectorAll("#tabs button").forEach(b => b.onclick = () => {
   S.tab = b.dataset.tab;
   document.querySelectorAll("#tabs button").forEach(x => x.classList.toggle("on", x === b));
-  for (const id of ["overview", "setup", "inputs", "charts", "profile", "exports"]) $("#tab-" + id).hidden = id !== S.tab;
+  for (const id of ["overview", "setup", "inputs", "charts", "profile", "map", "exports"]) $("#tab-" + id).hidden = id !== S.tab;
   try { localStorage.setItem("purge.tab", S.tab); } catch (e) {}
   renderTab();
 });
@@ -310,7 +331,7 @@ setInterval(poll, 800);
 
 // ---------------------------------------------------------------- overview
 function renderTab() {
-  ({overview: renderOverview, setup: renderSetup, inputs: renderInputs, charts: renderCharts, profile: renderProfile, exports: renderExports})[S.tab]();
+  ({overview: renderOverview, setup: renderSetup, inputs: renderInputs, charts: renderCharts, profile: renderProfile, map: renderMap, exports: renderExports})[S.tab]();
 }
 function renderOverview() {
   const el = $("#tab-overview");
@@ -358,7 +379,8 @@ function elevLine(sc) {
   if (src.provider === "file") line = `Elevation from ${esc(src.file || "the imported file")}`;
   else if (src.provider) line = `Elevation: ${esc(src.dataset || src.provider)}, ${fmt(src.points)} pts at ${fmt(src.spacing_ft)} ft, fetched ${esc(src.fetched)}${src.filled_points ? ` · ${fmt(src.filled_points)} interpolated` : ""}`;
   else line = "Elevation source not recorded";
-  const btn = sc.route_points > 1 ? ` <button class="small" id="btnElev">Look up elevation again…</button>` : "";
+  // a tally or PxP sheet's elevations are the surveyed ones; a route added for the map doesn't replace them
+  const btn = sc.route_points > 1 && !/^(ILI|PxP)/.test(sc.scalars.data_source || "") ? ` <button class="small" id="btnElev">Look up elevation again…</button>` : "";
   return `<div class="small muted" style="margin-top:4px">${line}${btn}</div>` + flags.map(f => `<div class="flag warn">${esc(f)}</div>`).join("");
 }
 document.addEventListener("click", e => { if (e.target && e.target.id === "btnElev") $("#dlgElev").showModal(); });
@@ -584,22 +606,280 @@ async function drawProfile() {
   let p; try { p = await api("/api/results/profile?step=" + S.profileStep); } catch (e) { return; }
   if (!$("#pfChart")) return;
   $("#pfInfo").innerHTML = `t = ${fmt(p.t_hr, 2)} hr · pig at MP ${fmt(p.pig_mp, 2)} · ${fmt(p.pig_speed_mph, 2)} mph · face ${fmt(p.pig_face_psig)} psig · exit ${fmt(p.exit_psig)} psig at MP ${fmt(p.exit_mp, 2)} (${esc(p.exit_description)})${p.slack_line_risk ? ' · <span style="color:var(--bad)">slack-line risk</span>' : ""}`;
+  $("#pfChart").innerHTML = hglChart(p);
+  $("#pfStations").innerHTML = p.stations.length ? `<table class="t"><tr><th>Station</th><th>MP</th><th>Status</th><th>Discharge psig</th></tr>` +
+    p.stations.map(s => `<tr><td>${esc(s.name)}</td><td class="n">${fmt(s.mp, 2)}</td><td>${esc(s.status)}</td><td class="n">${fmt(s.discharge_psig)}</td></tr>`).join("") + `</table>` : "";
+}
+function hglChart(p) {
   const gas = p.pressure_psig.map((v, i) => p.is_gas[i] ? v : null), liq = p.pressure_psig.map((v, i) => p.is_gas[i] ? null : v);
   // MOP on the same x grid for display
   const mop = p.mop_mp.length ? p.mp.map(x => interp(p.mop_mp, p.mop_psig, x)) : null;
   const series = [{name: "N2 pressure (behind pig)", y: gas, color: "var(--gas)", width: 2}, {name: "Liquid pressure (ahead)", y: liq, color: "var(--liquid)", width: 2}];
   if (mop) series.push({name: "MOP", y: mop, color: "var(--mop)", dash: "5 3", width: 1.2});
   series.push({name: "Elevation (ft)", y: p.elevation_ft, color: "var(--ground)", axis: "right", width: 1.2});
-  $("#pfChart").innerHTML = lineChart({x: p.mp, xLabel: "Milepost", yLabel: "psig", y2Label: "Elevation ft", series,
+  return lineChart({x: p.mp, xLabel: "Milepost", yLabel: "psig", y2Label: "Elevation ft", series,
     markers: [{x: p.pig_mp, label: "pig", color: "var(--text)"}].concat(p.stations.map(s => ({x: s.mp, label: s.name})))});
-  $("#pfStations").innerHTML = p.stations.length ? `<table class="t"><tr><th>Station</th><th>MP</th><th>Status</th><th>Discharge psig</th></tr>` +
-    p.stations.map(s => `<tr><td>${esc(s.name)}</td><td class="n">${fmt(s.mp, 2)}</td><td>${esc(s.status)}</td><td class="n">${fmt(s.discharge_psig)}</td></tr>`).join("") + `</table>` : "";
 }
 function interp(xs, ys, x) {
   if (x <= xs[0]) return ys[0]; if (x >= xs[xs.length - 1]) return ys[ys.length - 1];
   let lo = 0, hi = xs.length - 1; while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (xs[mid] <= x) lo = mid; else hi = mid; }
   const t = (x - xs[lo]) / ((xs[hi] - xs[lo]) || 1); return ys[lo] + t * (ys[hi] - ys[lo]);
 }
+
+
+// ---------------------------------------------------------------- map (GIS view of route + purge progress)
+// Leaflet is vendored under /static, so the route, stations and progress draw with no internet;
+// only the basemap tiles need a connection.
+const BASEMAPS = {
+  topo: {label: "USGS topo", url: "https://basemap.nationalmap.gov/arcgis/rest/services/USGSTopo/MapServer/tile/{z}/{y}/{x}", max: 16, attr: "USGS The National Map"},
+  imagery: {label: "USGS imagery", url: "https://basemap.nationalmap.gov/arcgis/rest/services/USGSImageryOnly/MapServer/tile/{z}/{y}/{x}", max: 16, attr: "USGS The National Map"},
+  osm: {label: "OpenStreetMap", url: "https://tile.openstreetmap.org/{z}/{x}/{y}.png", max: 19, attr: "&copy; OpenStreetMap contributors"},
+  none: {label: "None (offline)"},
+};
+const ELEV_RAMP = ["#2c7bb6", "#00a6ca", "#00ccbc", "#90eb9d", "#f9d057", "#f29e2e", "#d7191c"];
+const MOP_BINS = [[0.5, "#1a9850"], [0.7, "#91cf60"], [0.85, "#fee08b"], [0.95, "#fc8d59"], [1.0, "#d73027"], [Infinity, "#7f0000"]];
+const MK = {pump: ["#d4580b", "Pump station"], check_valve: ["#6e7781", "Check valve"], booster: ["#8250df", "Booster site"], bpcv: ["#cf222e", "BPCV"],
+            block_valve: ["#0e7c86", "Block valve"], launcher_receiver: ["#1c2330", "Launcher / receiver"], aerial_marker: ["#bf8700", "Aerial marker"],
+            ground_marker: ["#8c959f", "Above-ground marker"], crossing: ["#0969da", "Crossing"]};
+// map-only features from the data file, each with a show/hide box (markers are dense, so ground markers start hidden)
+const LANDMARKS = ["block_valve", "launcher_receiver", "aerial_marker", "ground_marker", "crossing"];
+const MK_SIZE = {check_valve: 4, aerial_marker: 3.5, ground_marker: 3, crossing: 4.5, block_valve: 5.5, launcher_receiver: 5.5};
+const showKind = k => pref("show." + k, k === "ground_marker" ? "0" : "1") === "1";
+const M = {map: null, base: null, layers: null, data: null, key: null, step: null, tileErr: 0, hover: null};
+const pref = (k, d) => { try { return localStorage.getItem("purge.map." + k) || d; } catch (e) { return d; } };
+const setPref = (k, v) => { try { localStorage.setItem("purge.map." + k, v); } catch (e) {} };
+
+async function renderMap() {
+  const el = $("#tab-map");
+  if (!S.scenario) { el.innerHTML = `<div class="empty">Open a scenario to see it on the map.</div>`; M.map = null; return; }
+  let d; try { d = await api("/api/map"); } catch (e) { el.innerHTML = `<div class="flag bad">${esc(e.message)}</div>`; M.map = null; return; }
+  if (S.tab !== "map") return;
+  M.data = d;
+  if (!d.has_route) {
+    if (M.map) { M.map.remove(); M.map = null; }
+    el.innerHTML = `<div class="card"><b>No route coordinates yet</b>
+      <p class="small muted">This scenario has an elevation profile but no map coordinates (scenarios built from an ILI tally, or before the map existed, don't carry them). Add the pipeline's KMZ to place it on the map; the profile, mileposts and stations stay as they are.</p>
+      <button class="primary" id="btnRoute">Add route from KMZ…</button></div>
+      <div class="card"><b>Elevation profile</b><div class="small muted">Loading…</div></div>`;
+    loadElevChartIntoEmptyMap();
+    return;
+  }
+  if (!M.map || !$("#mapBox")) buildMap(el);
+  else { $("#mapWarn").innerHTML = mapWarnings(); }
+  M.map.invalidateSize();
+  const key = S.state.scenario_id + "|" + S.revision;
+  const geomKey = d.lat.length + "|" + d.lat[0] + "|" + d.lon[0] + "|" + d.lat[d.lat.length - 1];
+  if (M.geomKey !== geomKey) { M.map.fitBounds(d.bounds, {padding: [24, 24]}); M.geomKey = geomKey; }
+  M.key = key;
+  $("#mapScrub").hidden = !S.results;
+  if (S.results) { $("#mpStep").max = S.results.summary.steps - 1; $("#mpStep").value = S.profileStep; }
+  await drawMapStep();
+}
+function mapWarnings() { return (M.data.warnings || []).map(w => `<div class="flag warn small">${esc(w)}</div>`).join(""); }
+
+function buildMap(el) {
+  if (M.map) { M.map.remove(); M.map = null; }
+  const color = pref("color", "progress"), base = pref("base", "topo");
+  el.innerHTML = `<div class="card">
+      <div class="map-tools">
+        <label for="mapColor">Color the line by</label>
+        <select id="mapColor"><option value="progress">Purge progress</option><option value="elevation">Ground elevation</option><option value="mop">Pressure as % of MOP</option></select>
+        <label for="mapBase">Basemap</label>
+        <select id="mapBase">${Object.entries(BASEMAPS).map(([k, b]) => `<option value="${k}">${esc(b.label)}</option>`).join("")}</select>
+        <span class="spacer" style="flex:1"></span>
+        <button class="small" id="mapFit">Fit route</button>
+        <button class="small" id="btnRoute">Replace route…</button>
+      </div>
+      <div id="mapBox"></div>
+      <div class="legend" id="mapLegend" style="margin-top:6px"></div>
+      <div class="map-tools small" id="mapShow" style="margin:4px 0 0"></div>
+      <div class="small muted" id="mapHover" style="min-height:18px"></div>
+      <div id="mapTileNote"></div><div id="mapWarn">${mapWarnings()}</div>
+    </div>
+    <div class="card" id="mapScrub"><div style="display:flex;gap:10px;align-items:center">
+      <button id="mpPlay">Play</button><input type="range" id="mpStep" min="0" max="0" value="0"></div>
+      <div class="small muted" id="mpInfo"></div></div>
+    <div class="card"><b id="mapChartTitle">Profile</b><div id="mapChart"></div></div>`;
+  $("#mapColor").value = color; $("#mapBase").value = base;
+  M.map = L.map("mapBox", {preferCanvas: true, zoomSnap: 0.25});
+  L.control.scale({imperial: true, metric: false}).addTo(M.map);
+  M.layers = L.layerGroup().addTo(M.map);
+  setBasemap(base);
+  $("#mapColor").onchange = () => { setPref("color", $("#mapColor").value); drawMapStep(); };
+  $("#mapBase").onchange = () => { setPref("base", $("#mapBase").value); setBasemap($("#mapBase").value); };
+  $("#mapFit").onclick = () => M.map.fitBounds(M.data.bounds, {padding: [24, 24]});
+  $("#mpStep").oninput = () => { S.profileStep = +$("#mpStep").value; clearTimeout(profileTimer); profileTimer = setTimeout(drawMapStep, 60); };
+  let playing = null;
+  $("#mpPlay").onclick = () => {
+    if (playing) { clearInterval(playing); playing = null; $("#mpPlay").textContent = "Play"; return; }
+    const n = S.results.summary.steps, stride = Math.max(1, Math.round(n / 120));
+    if (S.profileStep >= n - 1) S.profileStep = 0;
+    $("#mpPlay").textContent = "Pause";
+    playing = setInterval(async () => {
+      if (S.tab !== "map" || !$("#mpStep")) { clearInterval(playing); return; }
+      S.profileStep = Math.min(n - 1, S.profileStep + stride); $("#mpStep").value = S.profileStep; await drawMapStep();
+      if (S.profileStep >= n - 1) { clearInterval(playing); playing = null; $("#mpPlay").textContent = "Play"; }
+    }, 250);
+  };
+}
+
+function setBasemap(k) {
+  if (M.base) { M.map.removeLayer(M.base); M.base = null; }
+  M.tileErr = 0; $("#mapTileNote").innerHTML = "";
+  const b = BASEMAPS[k];
+  if (!b || !b.url) return;
+  M.base = L.tileLayer(b.url, {maxNativeZoom: b.max, maxZoom: 19, attribution: b.attr});
+  M.base.on("tileerror", () => {
+    if (++M.tileErr === 4) $("#mapTileNote").innerHTML = `<div class="flag warn small">The ${esc(b.label)} basemap isn't loading (no internet, or the service is down). The route, stations and purge progress still draw; pick another basemap or "None".</div>`;
+  });
+  M.base.on("tileload", () => { if (M.tileErr) { M.tileErr = 0; $("#mapTileNote").innerHTML = ""; } });
+  M.base.addTo(M.map);
+}
+
+// split the route at milepost x, returning the interpolated point there
+function routeAt(d, x) {
+  let j = d.mp.findIndex(m => m >= x);
+  if (j < 0) j = d.mp.length - 1; else if (j === 0) j = 1;
+  const a = j - 1, t = (x - d.mp[a]) / ((d.mp[j] - d.mp[a]) || 1);
+  return [d.lat[a] + t * (d.lat[j] - d.lat[a]), d.lon[a] + t * (d.lon[j] - d.lon[a])];
+}
+// consecutive vertices with the same color become one polyline (fast to draw)
+function colorRuns(d, colorOf, from, to, opts) {
+  let run = [], cur = null;
+  const flush = () => { if (run.length > 1) L.polyline(run, {...opts, color: cur}).addTo(M.layers); };
+  for (let i = 0; i < d.mp.length; i++) {
+    if (d.mp[i] < from || d.mp[i] > to) continue;
+    const c = colorOf(i), pt = [d.lat[i], d.lon[i]];
+    if (c !== cur) { flush(); run = run.length ? [run[run.length - 1], pt] : [pt]; cur = c; } else run.push(pt);
+  }
+  flush();
+}
+function rampColor(v, lo, hi, ramp) { if (v == null) return "#888"; const k = Math.min(ramp.length - 1, Math.max(0, Math.floor((v - lo) / ((hi - lo) || 1) * ramp.length))); return ramp[k]; }
+function mopColor(r) { if (r == null) return "#888"; return MOP_BINS.find(([b]) => r <= b)[1]; }
+
+async function drawMapStep() {
+  const d = M.data; if (!M.map || !d || !d.has_route) return;
+  let p = null;
+  if (S.results) { try { p = await api("/api/results/profile?step=" + S.profileStep); } catch (e) { p = null; } }
+  if (!M.map || S.tab !== "map") return;
+  M.p = p;
+  const mode = $("#mapColor").value, css = getComputedStyle(document.documentElement);
+  const gasC = css.getPropertyValue("--gas").trim() || "#1f6feb", liqC = css.getPropertyValue("--liquid").trim() || "#1a7f37";
+  const a = d.purge_start_mp, b = d.purge_end_mp, pig = p ? p.pig_mp : null;
+  M.layers.clearLayers();
+  const thick = {weight: 6, opacity: .95, lineCap: "round", lineJoin: "round"};
+  // the whole route underneath, thin and grey (shows any part outside the purge span)
+  L.polyline(d.lat.map((v, i) => [v, d.lon[i]]), {color: "#6e7781", weight: 3, opacity: .7, dashArray: "4 5"}).addTo(M.layers);
+  let legend = "";
+  if (mode === "elevation") {
+    const e = d.elevation_ft.filter(v => v != null), lo = Math.min(...e), hi = Math.max(...e);
+    colorRuns(d, i => rampColor(d.elevation_ft[i], lo, hi, ELEV_RAMP), a, b, thick);
+    legend = `<span>Ground elevation ${fmt(lo)} ft<span class="ramp">${ELEV_RAMP.map(c => `<i style="background:${c}"></i>`).join("")}</span>${fmt(hi)} ft</span>`;
+  } else if (mode === "mop" && p && p.mop_mp.length) {
+    const ratio = d.mp.map(x => { const pr = interp(p.mp, p.pressure_psig, x), mop = interp(p.mop_mp, p.mop_psig, x); return pr != null && mop > 0 ? pr / mop : null; });
+    colorRuns(d, i => mopColor(ratio[i]), a, b, thick);
+    legend = `<span>Pressure / MOP at this moment:</span>` + MOP_BINS.map(([bnd, c], k) => `<span><i style="background:${c}"></i>${k === MOP_BINS.length - 1 ? "over 100%" : "≤ " + Math.round(bnd * 100) + "%"}</span>`).join("");
+  } else {
+    if (mode === "mop") legend = `<span class="muted">${p ? "This scenario has no MOP data; showing purge progress." : "Run the scenario to color by pressure; showing purge progress."}</span> `;
+    if (pig == null) {
+      colorRuns(d, () => liqC, a, b, thick);
+      legend += `<span><i style="background:${liqC}"></i>Liquid to purge</span>`;
+    } else {
+      const cut = routeAt(d, pig);
+      colorRuns(d, () => gasC, a, pig, thick); colorRuns(d, () => liqC, pig, b, thick);
+      // bridge the vertices either side of the pig to its exact spot
+      const before = d.mp.findLastIndex(m => m <= pig && m >= a), after = d.mp.findIndex(m => m > pig && m <= b);
+      if (before >= 0) L.polyline([[d.lat[before], d.lon[before]], cut], {...thick, color: gasC}).addTo(M.layers);
+      if (after >= 0) L.polyline([cut, [d.lat[after], d.lon[after]]], {...thick, color: liqC}).addTo(M.layers);
+      legend += `<span><i style="background:${gasC}"></i>Purged (N2 behind the pig)</span><span><i style="background:${liqC}"></i>Liquid still ahead</span>`;
+    }
+  }
+  const kinds = new Set(d.features.filter(f => f.lat != null && !f.landmark).map(f => f.kind));
+  const lmCount = {}; for (const f of d.features) if (f.landmark && f.lat != null) lmCount[f.kind] = (lmCount[f.kind] || 0) + 1;
+  $("#mapShow").innerHTML = Object.keys(lmCount).length ? `<label>Show</label>` + LANDMARKS.filter(k => lmCount[k]).map(k =>
+    `<label style="color:var(--text)"><input type="checkbox" data-show="${k}" ${showKind(k) ? "checked" : ""}> <i style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${MK[k][0]}"></i> ${esc(MK[k][1])}s (${lmCount[k]})</label>`).join("") : "";
+  $("#mapShow").querySelectorAll("[data-show]").forEach(c => c.onchange = () => { setPref("show." + c.dataset.show, c.checked ? "1" : "0"); drawMapStep(); });
+  const outside = d.mp[0] < a - 0.05 || d.mp[d.mp.length - 1] > b + 0.05;
+  legend += (outside ? `<span><i style="background:#6e7781"></i>Route outside the purge</span>` : "") + Object.entries(MK).filter(([k]) => kinds.has(k)).map(([, [c, l]]) => `<span><i style="background:${c};height:8px;width:8px;border-radius:50%"></i>${l}</span>`).join("");
+  $("#mapLegend").innerHTML = legend;
+  // invisible wide line on top for hover read-outs
+  const hit = L.polyline(d.lat.map((v, i) => [v, d.lon[i]]), {weight: 18, opacity: 0}).addTo(M.layers);
+  hit.on("mousemove", e => mapHover(e.latlng)); hit.on("mouseout", () => { $("#mapHover").textContent = ""; });
+  // infrastructure
+  const running = {}; if (p) for (const bs of p.boosters) running[bs.mp] = bs.running;
+  // landmarks first, so stations, valves and boosters draw on top of them
+  for (const f of [...d.features].sort((x, y) => (y.landmark ? 1 : 0) - (x.landmark ? 1 : 0))) {
+    if (f.lat == null) continue;
+    if (f.kind === "purge_start" || f.kind === "purge_end") {
+      const lbl = f.kind === "purge_start" ? "Launch" : "Pig stop", bg = f.kind === "purge_start" ? "#1c2330" : "#cf222e";
+      L.marker([f.lat, f.lon], {icon: L.divIcon({className: "", html: `<span class="mk-label" style="background:${bg}">${lbl}</span>`, iconAnchor: [-6, 10]})})
+        .bindTooltip(`${esc(f.name)} · MP ${fmt(f.mp, 2)}`).addTo(M.layers);
+      L.circleMarker([f.lat, f.lon], {radius: 5, color: "#fff", weight: 2, fillColor: bg, fillOpacity: 1}).addTo(M.layers);
+      continue;
+    }
+    if (f.landmark && !showKind(f.kind)) continue;
+    const [c, l] = MK[f.kind] || ["#444", f.kind];
+    const on = f.kind === "booster" && running[f.mp];
+    L.circleMarker([f.lat, f.lon], {radius: MK_SIZE[f.kind] || 7, color: "#fff", weight: f.landmark ? 1.5 : 2, fillColor: c, fillOpacity: 1})
+      .bindTooltip(`<b>${esc(f.name)}</b><br>${l} · MP ${fmt(f.mp, 2)}${on ? "<br>running now" : ""}${p && f.kind === "pump" ? pumpStatus(p, f.mp) : ""}`).addTo(M.layers);
+    if (on) L.circleMarker([f.lat, f.lon], {radius: 12, color: c, weight: 2, fill: false}).addTo(M.layers);
+  }
+  if (pig != null) {
+    L.marker(routeAt(d, pig), {icon: L.divIcon({className: "", html: `<div class="mk-pig"></div>`, iconSize: [16, 16], iconAnchor: [8, 8]}), zIndexOffset: 1000})
+      .bindTooltip(`Pig at MP ${fmt(pig, 2)}`, {direction: "top"}).addTo(M.layers);
+  }
+  // scrubber read-out and profile underneath
+  if (p) {
+    const pct = b > a ? Math.max(0, Math.min(100, (pig - a) / (b - a) * 100)) : 0;
+    $("#mpInfo").innerHTML = `t = ${fmt(p.t_hr, 2)} hr · pig at MP ${fmt(pig, 2)} (${fmt(pct, 0)}% of the purge) · ${fmt(p.pig_speed_mph, 2)} mph · face ${fmt(p.pig_face_psig)} psig · exit ${fmt(p.exit_psig)} psig${p.slack_line_risk ? ' · <span style="color:var(--bad)">slack-line risk</span>' : ""}${S.state.results_stale ? ' · <span style="color:var(--warn)">inputs changed since this run</span>' : ""}`;
+    $("#mapChartTitle").textContent = "Pressure and elevation profile at this moment";
+    $("#mapChart").innerHTML = hglChart(p);
+  } else {
+    $("#mapChartTitle").textContent = "Elevation profile";
+    $("#mapChart").innerHTML = elevChart() + `<div class="small muted">Run the scenario to see the pig move along the route.</div>`;
+  }
+}
+function pumpStatus(p, mp) { const s = p.stations.find(x => Math.abs(x.mp - mp) < 0.01); return s ? `<br>${esc(s.status)}${s.discharge_psig != null ? " · " + fmt(s.discharge_psig) + " psig" : ""}` : ""; }
+function mapHover(ll) {
+  const d = M.data; let best = 0, bd = Infinity;
+  for (let i = 0; i < d.lat.length; i++) { const dy = d.lat[i] - ll.lat, dx = (d.lon[i] - ll.lng) * Math.cos(ll.lat * Math.PI / 180), q = dx * dx + dy * dy; if (q < bd) { bd = q; best = i; } }
+  const x = d.mp[best], p = M.p;
+  let t = `MP ${fmt(x, 2)} · ground ${fmt(d.elevation_ft[best])} ft`;
+  if (p) {
+    const pr = interp(p.mp, p.pressure_psig, x);
+    t += ` · ${x < p.pig_mp ? "N2" : "liquid"} ${fmt(pr)} psig`;
+    if (p.mop_mp.length) { const mop = interp(p.mop_mp, p.mop_psig, x); t += ` · MOP ${fmt(mop)} psig (${fmt(pr / mop * 100, 0)}%)`; }
+  }
+  $("#mapHover").textContent = t;
+}
+function elevChart() {
+  const d = M.data;
+  if (!d || !d.mp || !d.mp.length) return `<div id="mapElev"></div>`;
+  const marks = (d.features || []).filter(f => f.kind !== "check_valve" && !f.landmark).map(f => ({x: f.mp, label: f.kind === "purge_start" ? "launch" : f.kind === "purge_end" ? "pig stop" : f.name}));
+  return lineChart({x: d.mp, xLabel: "Milepost", yLabel: "Elevation ft", series: [{name: "Ground elevation", y: d.elevation_ft, color: "var(--ground)", width: 1.6}], markers: marks});
+}
+async function loadElevChartIntoEmptyMap() {
+  // without a route the map data has no profile; fetch the elevation view instead
+  const v = await api("/api/elevation?max_points=800").catch(() => null);
+  if (!v || !$("#tab-map") || M.data.has_route) return;
+  const box = $("#tab-map .card:last-child");
+  if (box) box.innerHTML = `<b>Elevation profile</b>` + (v.mp.length ? lineChart({x: v.mp, xLabel: "Milepost", yLabel: "Elevation ft", series: [{name: "Ground elevation", y: v.elevation_ft, color: "var(--ground)", width: 1.6}]}) : `<div class="empty">No elevation profile.</div>`);
+}
+document.addEventListener("click", e => {
+  if (e.target && e.target.id === "btnRoute") { $("#routeFile").value = ""; $("#routeDir").value = "auto"; $("#dlgRoute").showModal(); }
+});
+$("#routeCancel").onclick = () => $("#dlgRoute").close();
+$("#routeOk").onclick = async () => {
+  const f = $("#routeFile").files[0]; if (!f) { toast("Pick a file"); return; }
+  $("#routeOk").disabled = true;
+  try {
+    const r = await api("/api/route/import?" + new URLSearchParams({filename: f.name, direction: $("#routeDir").value}), {method: "POST", raw: await f.arrayBuffer()});
+    $("#dlgRoute").close(); M.geomKey = null;
+    toast(`Route added (${fmt(r.route_length_mi, 2)} mi). ` + (r.notes[0] || "") + " Save the scenario to keep it.");
+    await poll(true);
+  } catch (e) { toast(e.message); }
+  $("#routeOk").disabled = false;
+};
 
 // ---------------------------------------------------------------- exports
 function renderExports() {
