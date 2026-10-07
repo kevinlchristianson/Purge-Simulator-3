@@ -175,10 +175,11 @@ input[type=range] { width: 100%; }
 </main>
 
 <dialog id="dlgSettings">
-  <h3 style="margin-top:0">Assistant settings</h3>
+  <h3 style="margin-top:0">Settings</h3>
   <p class="small muted">The assistant uses the Claude API with your own key. The key is stored only on this computer, in your user settings file, and is never shown again here.</p>
   <div class="row"><label for="setKey">Claude API key</label><input id="setKey" type="password" autocomplete="off" placeholder="sk-ant-…"><span class="small muted" id="setKeyState"></span></div>
   <div class="row"><label for="setModel">Model</label><input id="setModel" placeholder="claude-opus-5-5"></div>
+  <div class="row"><label><input id="setElevAsk" type="checkbox"> Ask before sending a route to USGS for an elevation lookup</label></div>
   <div class="actions"><button id="setClear">Remove saved key</button><span style="flex:1"></span><button id="setCancel">Cancel</button><button class="primary" id="setOk">Save</button></div>
 </dialog>
 
@@ -190,13 +191,21 @@ input[type=range] { width: 100%; }
   <div class="actions"><button id="saveCancel">Cancel</button><button class="primary" id="saveOk">Save</button></div>
 </dialog>
 
+<dialog id="dlgElev">
+  <h3 style="margin-top:0">Look up elevation again</h3>
+  <p class="small muted">Samples the stored route in USGS 3DEP and replaces this scenario's elevation profile. Sends the route's coordinates to the USGS service.</p>
+  <div class="row"><label for="elevSpacing">Spacing (ft)</label><input id="elevSpacing" type="number" min="25" max="5280" value="250"></div>
+  <div class="row"><label><input id="elevReverse" type="checkbox"> Reverse the route (mileposts from the other end; station mileposts are not moved)</label></div>
+  <div class="actions"><button id="elevCancel">Cancel</button><button class="primary" id="elevOk">Look up</button></div>
+</dialog>
+
 <dialog id="dlgImport">
   <h3 style="margin-top:0">New scenario from data</h3>
   <div class="row"><label for="impKind">Data type</label>
     <select id="impKind"><option value="ili">Rosen ILI Excel (elevation, MOP, stations)</option><option value="profile">Elevation profile (KMZ, KML, TXT/CSV, Excel)</option></select></div>
   <div class="row"><label for="impFile">File</label><input id="impFile" type="file"></div>
   <div class="row"><label for="impName">Scenario name</label><input id="impName"></div>
-  <p class="small muted">Pipe geometry, fluid, drive limits and station roles start at defaults. Ask the assistant to help classify the data.</p>
+  <p class="small muted">A KMZ without elevations is looked up in USGS 3DEP (US only, needs internet) at 250 ft spacing. Pipe geometry, fluid, drive limits and station roles start at defaults. Ask the assistant to help classify the data.</p>
   <div class="actions"><button id="impCancel">Cancel</button><button class="primary" id="impOk">Import</button></div>
 </dialog>
 
@@ -215,7 +224,7 @@ async function api(path, opts = {}) {
   else if (opts.body !== undefined) { init.body = JSON.stringify(opts.body); init.headers["Content-Type"] = "application/json"; }
   const r = await fetch(path, init);
   const data = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(data.error || r.statusText);
+  if (!r.ok) { const err = new Error(data.error || r.statusText); err.status = r.status; err.data = data; throw err; }
   return data;
 }
 let toastTimer;
@@ -300,6 +309,7 @@ function renderOverview() {
     <div class="small muted">MP ${fmt(x.purge_start_mp, 2)} → ${fmt(x.purge_end_mp, 2)} (${fmt(x.purge_end_mp - x.purge_start_mp, 1)} mi) · ${esc(x.fluid_name)} SG ${x.fluid_sg} · target ${x.target_speed_mph} mph ·
     max drive ${x.max_drive_psig ?? "—"} psig · ${sc.pump_stations.length} pump stations · ${sc.check_valves.length} check valves · ${sc.booster_stations.length} booster sites${sc.bpcv ? " · BPCV" : ""}
     · ${fmt(ep.points)} profile pts · ${fmt(mj.joints)} MOP joints${mj.joints ? ` (min ${fmt(mj.mop_min_psig)} psig @ MP ${fmt(mj.mop_min_mp, 2)})` : ""}</div>
+    ${elevLine(sc)}
     ${sc.meta.notes ? `<details style="margin-top:6px"><summary class="small">Notes</summary><div class="small" style="white-space:pre-wrap">${esc(sc.meta.notes)}</div></details>` : ""}</div>`;
   const r = S.results;
   if (!r) {
@@ -327,6 +337,27 @@ function renderOverview() {
   }
   el.innerHTML = html;
 }
+function elevLine(sc) {
+  const src = sc.elevation_source || {}, flags = src.flags || [];
+  let line;
+  if (src.provider === "file") line = `Elevation from ${esc(src.file || "the imported file")}`;
+  else if (src.provider) line = `Elevation: ${esc(src.dataset || src.provider)}, ${fmt(src.points)} pts at ${fmt(src.spacing_ft)} ft, fetched ${esc(src.fetched)}${src.filled_points ? ` · ${fmt(src.filled_points)} interpolated` : ""}`;
+  else line = "Elevation source not recorded";
+  const btn = sc.route_points > 1 ? ` <button class="small" id="btnElev">Look up elevation again…</button>` : "";
+  return `<div class="small muted" style="margin-top:4px">${line}${btn}</div>` + flags.map(f => `<div class="flag warn">${esc(f)}</div>`).join("");
+}
+document.addEventListener("click", e => { if (e.target && e.target.id === "btnElev") $("#dlgElev").showModal(); });
+$("#elevCancel").onclick = () => $("#dlgElev").close();
+$("#elevOk").onclick = async () => {
+  $("#elevOk").disabled = true;
+  try {
+    const r = await api("/api/elevation/fetch", {body: {spacing_ft: Number($("#elevSpacing").value) || 250, reverse: $("#elevReverse").checked}});
+    $("#dlgElev").close();
+    toast(`Elevation updated: ${fmt(r.points)} points over ${fmt(r.length_mi, 2)} mi` + (r.warnings.length ? ". " + r.warnings[r.warnings.length - 1] : ""));
+    poll(true);
+  } catch (e) { toast(e.message); }
+  $("#elevOk").disabled = false;
+};
 const kpi = (v, l) => `<div class="kpi"><div class="v">${esc(v)}</div><div class="l">${esc(l)}</div></div>`;
 
 // ---------------------------------------------------------------- inputs
@@ -535,15 +566,27 @@ $("#impOk").onclick = async () => {
   const f = $("#impFile").files[0]; if (!f) { toast("Pick a file"); return; }
   const q = new URLSearchParams({kind: $("#impKind").value, filename: f.name, name: $("#impName").value || f.name});
   $("#impOk").disabled = true;
-  try { await api("/api/scenario/import?" + q, {method: "POST", raw: await f.arrayBuffer()}); $("#dlgImport").close(); toast("Imported. Review the inputs, then save."); poll(true); }
-  catch (e) { toast(e.message); }
+  const raw = await f.arrayBuffer();
+  const go = async () => {
+    const r = await api("/api/scenario/import?" + q, {method: "POST", raw});
+    $("#dlgImport").close();
+    toast("Imported. Review the inputs, then save." + (r.warnings && r.warnings.length ? " " + r.warnings[0] : ""));
+    poll(true);
+  };
+  try { await go(); }
+  catch (e) {
+    if (e.status === 409 && e.data && e.data.needs_elevation_confirm && confirm(e.message)) {
+      q.set("fetch_elevation", "1");
+      try { await go(); } catch (e2) { toast(e2.message); }
+    } else toast(e.message);
+  }
   $("#impOk").disabled = false;
 };
 
 // settings
 async function openSettings() {
   const s = await api("/api/settings");
-  $("#setKey").value = ""; $("#setModel").value = s.model;
+  $("#setKey").value = ""; $("#setModel").value = s.model; $("#setElevAsk").checked = !!s.elevation_ask_first;
   $("#setKeyState").textContent = s.api_key_set ? `A key is set (${s.api_key_source === "environment" ? "from ANTHROPIC_API_KEY" : "saved here"}, ending ${s.api_key_hint}). Leave blank to keep it.` : "No key set yet.";
   $("#setClear").hidden = s.api_key_source !== "settings";
   $("#dlgSettings").showModal();
@@ -551,7 +594,7 @@ async function openSettings() {
 $("#btnSettings").onclick = openSettings;
 $("#setCancel").onclick = () => $("#dlgSettings").close();
 $("#setOk").onclick = async () => {
-  try { await api("/api/settings", {body: {api_key: $("#setKey").value || null, model: $("#setModel").value}}); $("#dlgSettings").close(); toast("Settings saved"); refreshKey(); }
+  try { await api("/api/settings", {body: {api_key: $("#setKey").value || null, model: $("#setModel").value, elevation_ask_first: $("#setElevAsk").checked}}); $("#dlgSettings").close(); toast("Settings saved"); refreshKey(); }
   catch (e) { toast(e.message); }
 };
 $("#setClear").onclick = async () => { await api("/api/settings", {body: {clear_key: true}}); $("#dlgSettings").close(); toast("Saved key removed"); refreshKey(); };

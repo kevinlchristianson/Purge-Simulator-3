@@ -2,7 +2,7 @@
 Pipeline profile parsers for non-ILI data sources.
 
 Supports four input paths:
-  1. KMZ with elevation data embedded (Google Earth format)
+  1. KMZ / KML (Google Earth format), with or without altitudes
   2. KMZ → GPSVisualizer TXT export (tab-delimited with lat/lon/altitude columns)
   3. Client Excel / CSV with lat/lon/elevation or milepost/elevation
   4. Simple milepost+elevation text file
@@ -11,6 +11,11 @@ All parsers return a ProfileData with:
   - mileposts (miles, relative to start)
   - elevations (feet)
   - lat/lon arrays (if available)
+  - elevation_status: 'full', 'partial' or 'none'
+
+A file without elevations (most pipeline KMZs are 2D) is NOT given a flat 0 ft
+profile: its missing elevations are NaN and elevation_status says so, so the
+caller can look them up (purge_sim/data/elevation.py) or refuse the import.
 
 Ported and cleaned from Purge_Modeling_Program_v29.py.
 """
@@ -44,6 +49,11 @@ class ProfileData:
     lat: Optional[np.ndarray] = None
     lon: Optional[np.ndarray] = None
     source: str = ""
+    elevation_status: str = "full"   # 'full' | 'partial' (some NaN) | 'none' (all NaN)
+
+    @property
+    def needs_elevation(self) -> bool:
+        return self.elevation_status != "full"
 
     @property
     def start_mp(self) -> float:
@@ -82,7 +92,7 @@ def _parse_kml_coordinates(coord_text: str) -> List[tuple]:
                 continue
             lon  = float(parts[0])
             lat  = float(parts[1])
-            elev = float(parts[2]) if len(parts) > 2 and parts[2] else 0.0
+            elev = float(parts[2]) if len(parts) > 2 and parts[2] else None
             pts.append((lat, lon, elev))
         except (ValueError, IndexError):
             continue
@@ -95,7 +105,7 @@ def _parse_gx_coord(text: str) -> Optional[tuple]:
         parts = (text or '').strip().split()
         if len(parts) < 2:
             return None
-        return (float(parts[1]), float(parts[0]), float(parts[2]) if len(parts) > 2 else 0.0)
+        return (float(parts[1]), float(parts[0]), float(parts[2]) if len(parts) > 2 else None)
     except ValueError:
         return None
 
@@ -140,6 +150,15 @@ def _extract_coords_from_kml_root(root) -> List[tuple]:
     return max(candidates, key=len) if candidates else []
 
 
+def elevation_status(elevs: np.ndarray) -> str:
+    """'none' when nothing usable is there (no values, or all exactly 0: KML's clamp-to-ground
+    placeholder), 'partial' when some points are missing, else 'full'."""
+    finite = np.isfinite(elevs)
+    if not finite.any() or not np.any(elevs[finite] != 0.0):
+        return "none"
+    return "full" if finite.all() else "partial"
+
+
 def _build_profile_from_lat_lon_elev(
     pts: List[tuple],   # (lat, lon, elev_m)
     elev_in_meters: bool = True,
@@ -147,7 +166,10 @@ def _build_profile_from_lat_lon_elev(
     """Build ProfileData from lat/lon/elev points."""
     lats  = np.array([p[0] for p in pts], dtype=float)
     lons  = np.array([p[1] for p in pts], dtype=float)
-    elevs = np.array([p[2] for p in pts], dtype=float)
+    elevs = np.array([np.nan if p[2] is None else p[2] for p in pts], dtype=float)
+    status = elevation_status(elevs)
+    if status == "none":
+        elevs = np.full(len(pts), np.nan)
 
     if elev_in_meters:
         elevs = elevs * 3.28084  # m → ft
@@ -164,6 +186,7 @@ def _build_profile_from_lat_lon_elev(
         elevations_ft=elevs,
         lat=lats,
         lon=lons,
+        elevation_status=status,
     )
 
 
@@ -306,7 +329,7 @@ def parse_txt_csv(file_path: str, elevation_units: str = 'auto') -> ProfileData:
         if units_in_name or elevation_units == 'Meters':
             elevs = elevs * 3.28084
     else:
-        elevs = np.zeros(len(mps_arr))
+        elevs = np.full(len(mps_arr), np.nan)   # lat/lon only: elevation still to be looked up
 
     n = min(len(mps_arr), len(elevs))
     profile = ProfileData(
@@ -315,6 +338,7 @@ def parse_txt_csv(file_path: str, elevation_units: str = 'auto') -> ProfileData:
         lat=df[lat_col].to_numpy(dtype=float)[:n] if has_gps else None,
         lon=df[lon_col].to_numpy(dtype=float)[:n] if has_gps else None,
         source=f"TXT:{os.path.basename(file_path)}",
+        elevation_status=elevation_status(elevs[:n]),
     )
     return profile
 
@@ -389,7 +413,7 @@ def parse_excel_profile(file_path: str, sheet_index: int = 0,
         if '(m)' in col_lower or elevation_units == 'Meters':
             elevs = elevs * 3.28084
     else:
-        elevs = np.zeros(len(mps_arr))
+        elevs = np.full(len(mps_arr), np.nan)   # lat/lon only: elevation still to be looked up
 
     n = min(len(mps_arr), len(elevs))
     return ProfileData(
@@ -398,6 +422,7 @@ def parse_excel_profile(file_path: str, sheet_index: int = 0,
         lat=df[lat_col].to_numpy(dtype=float)[:n] if has_gps else None,
         lon=df[lon_col].to_numpy(dtype=float)[:n] if has_gps else None,
         source=f"Excel:{os.path.basename(file_path)}",
+        elevation_status=elevation_status(elevs[:n]),
     )
 
 

@@ -1,5 +1,6 @@
 """
-App settings: the Claude API key and model for the assistant.
+App settings: the Claude API key and model for the assistant, and whether to ask
+before sending a route's coordinates to USGS for an elevation lookup.
 
 The key is never hardcoded or bundled. It comes from the ANTHROPIC_API_KEY
 environment variable, or from the settings file the user fills in through the
@@ -56,6 +57,11 @@ def model() -> str:
     return os.environ.get("PURGE_SIM_MODEL") or _read().get("model") or DEFAULT_MODEL
 
 
+def elevation_ask_first() -> bool:
+    """Off by default: a KMZ without elevation is looked up in USGS 3DEP as it's imported."""
+    return bool(_read().get("elevation_ask_first", False))
+
+
 def public_view() -> dict:
     """Settings as shown to the UI: never includes the key itself."""
     key = api_key()
@@ -64,12 +70,15 @@ def public_view() -> dict:
         "api_key_source": api_key_source(),
         "api_key_hint": ("…" + key[-4:]) if key else "",
         "model": model(),
+        "elevation_ask_first": elevation_ask_first(),
     }
 
 
 def update(api_key_value: Optional[str] = None, model_value: Optional[str] = None,
-           clear_key: bool = False) -> dict:
+           clear_key: bool = False, elevation_ask_first_value: Optional[bool] = None) -> dict:
     data = _read()
+    if elevation_ask_first_value is not None:
+        data["elevation_ask_first"] = bool(elevation_ask_first_value)
     if clear_key:
         data.pop("anthropic_api_key", None)
     elif api_key_value:
