@@ -431,6 +431,10 @@ class Workspace:
             raise InputError(f"scenario {scenario_id!r} not found")
         return path
 
+    def scenario_path(self, scenario_id: str) -> str:
+        """The library file behind a scenario id; raises InputError if it isn't one."""
+        return self._resolve(scenario_id)
+
     def load(self, scenario_id: str) -> dict:
         if self.job["state"] == "running":
             raise InputError("wait for the running simulation to finish before opening another scenario")

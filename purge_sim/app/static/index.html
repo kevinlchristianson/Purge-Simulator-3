@@ -68,6 +68,11 @@ section { padding: 10px 16px 30px; }
 .lib-item:hover { background: var(--panel-2); }
 .lib-item.on { border-color: var(--accent); background: var(--panel-2); }
 .lib-item .meta { font-size: 11px; color: var(--muted); }
+.lib-item { position: relative; }
+.lib-dl { position: absolute; right: 6px; top: 5px; font-size: 11px; color: var(--muted); text-decoration: none; padding: 1px 5px; border-radius: 4px; visibility: hidden; }
+.lib-item:hover .lib-dl, .lib-item.on .lib-dl { visibility: visible; }
+.lib-item > div:first-of-type { padding-right: 52px; overflow-wrap: anywhere; }
+.lib-dl:hover { color: var(--accent); background: var(--panel); }
 
 .field { display: grid; grid-template-columns: 1fr 110px; gap: 6px; align-items: center; padding: 2px 0; }
 .field label { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; }
@@ -296,8 +301,10 @@ function renderLibrary() {
   $("#lib").innerHTML = Object.entries(groups).map(([g, items]) =>
     `<div class="lib-job">${esc(g)}</div>` + items.map(s =>
       `<div class="lib-item ${s.id === cur ? "on" : ""}" data-id="${esc(s.id)}" title="${esc(s.notes)}">
+         <a class="lib-dl" href="/api/scenario/download?id=${encodeURIComponent(s.id)}&token=${TOKEN}" download title="Download ${esc(s.file.split("/").pop())}">⤓ JSON</a>
          <div>${esc(s.name)}</div><div class="meta">${fmt(s.span_mi, 1)} mi · ${esc(s.fluid || "")}</div></div>`).join("")
   ).join("") || `<p class="muted small">No scenarios found.</p>`;
+  document.querySelectorAll(".lib-dl").forEach(a => a.onclick = e => e.stopPropagation());
   document.querySelectorAll(".lib-item").forEach(el => el.onclick = async () => {
     if (S.state && S.state.dirty && !confirm("The open scenario has unsaved changes. Open another one anyway?")) return;
     try { await api("/api/scenario/load", {body: {id: el.dataset.id}}); await poll(true); }

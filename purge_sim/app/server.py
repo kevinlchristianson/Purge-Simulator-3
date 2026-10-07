@@ -175,6 +175,14 @@ class App:
         p = os.path.realpath(raw or "")
         return p if p.startswith(root + os.sep) and os.path.isfile(p) else None
 
+    def scenario_file(self, scenario_id: str) -> Optional[str]:
+        """A library scenario's JSON file, as saved on disk (bundled or the user's own)."""
+        try:
+            p = self.ws.scenario_path(scenario_id)
+        except InputError:
+            return None
+        return p if p.lower().endswith(".json") else None
+
     # ---- serving ---------------------------------------------------------------------
 
     def serve(self, host: str = "127.0.0.1", port: int = 0) -> ThreadingHTTPServer:
@@ -216,7 +224,9 @@ class App:
                 if not secrets.compare_digest(token, app.token):
                     return self._send(403, {"error": "missing or bad app token"})
                 if url.path == "/api/download" and method == "GET":
-                    return self._download(query.get("path", [""])[0])
+                    return self._download(app.download_path(query.get("path", [""])[0]))
+                if url.path == "/api/scenario/download" and method == "GET":
+                    return self._download(app.scenario_file(query.get("id", [""])[0]))
                 length = int(self.headers.get("Content-Length") or 0)
                 if length > MAX_UPLOAD_BYTES:
                     return self._send(413, {"error": "file too large"})
@@ -247,15 +257,14 @@ class App:
                 ext = os.path.splitext(p)[1].lower()
                 self._send(200, data, STATIC_TYPES.get(ext, "application/octet-stream"))
 
-            def _download(self, raw: str) -> None:
-                p = app.download_path(raw)
+            def _download(self, p: Optional[str]) -> None:
                 if not p:
                     return self._send(404, {"error": "file not found"})
                 with open(p, "rb") as f:
                     data = f.read()
                 self.send_response(200)
                 self.send_header("Content-Type", "application/octet-stream")
-                self.send_header("Content-Disposition", f'attachment; filename="{os.path.basename(p)}"')
+                self.send_header("Content-Disposition", f'attachment; filename="{os.path.basename(p).replace(chr(34), "")}"')
                 self.send_header("Content-Length", str(len(data)))
                 self.end_headers()
                 self.wfile.write(data)
