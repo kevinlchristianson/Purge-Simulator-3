@@ -116,7 +116,7 @@ class App:
 
     def _import(self, q: dict, body: bytes) -> Tuple[int, object]:
         """?fetch_elevation=1 confirms a USGS lookup the user was asked about (409 below)."""
-        kind = q.get("kind", "")
+        kind = q.get("kind", "") or "auto"
         fetch = {"1": True, "0": False}.get(q.get("fetch_elevation", ""))
         filename = os.path.basename(q.get("filename", "upload"))
         if not body:

@@ -503,7 +503,7 @@ class Workspace:
             self.job = {"state": "idle", "progress": 0.0, "message": "", "error": None, "started": None}
             self.revision += 1
 
-    def new_from_import(self, file_path: str, kind: str, name: str,
+    def new_from_import(self, file_path: str, kind: str = "auto", name: str = "",
                         fetch_elevation: Optional[bool] = None,
                         spacing_ft: float = DEFAULT_SPACING_FT) -> dict:
         """Build a new scenario from a data file. A file without elevations gets them from
@@ -521,7 +521,10 @@ class Workspace:
             self.scenario, self.scenario_id, self.dirty = sc, None, True
             self.results, self.results_for, self.results_stale = None, None, False
             self.revision += 1
-        return {**inputs_summary(sc), "warnings": warnings}
+        from ..data.formats import FORMAT_LABELS
+        fmt = (sc.meta.intake or {}).get("format", "")
+        return {**inputs_summary(sc), "warnings": warnings, "format": fmt,
+                "format_label": FORMAT_LABELS.get(fmt, "")}
 
     def fetch_elevation(self, spacing_ft: float = DEFAULT_SPACING_FT, reverse: bool = False) -> dict:
         """Look the open scenario's route up in USGS 3DEP again and replace its elevation profile.

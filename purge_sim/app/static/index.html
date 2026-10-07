@@ -181,7 +181,7 @@ input[type=range] { width: 100%; }
     <div class="typing" id="typing"></div>
     <div class="attach small muted" id="attachInfo" hidden></div>
     <div class="chat-input">
-      <button id="btnAttach" title="Attach a KMZ, profile or ILI file: it is imported as a new scenario when you send">📎</button>
+      <button id="btnAttach" title="Attach a KMZ, profile, ILI or point-by-point file: it is imported as a new scenario when you send">📎</button>
       <input type="file" id="chatFile" hidden accept=".kmz,.kml,.txt,.csv,.gpx,.xlsx,.xls,.xlsm">
       <textarea id="chatIn" placeholder="Ask about this scenario, or attach a KMZ and describe the job…"></textarea>
       <button class="primary" id="btnSend">Send</button>
@@ -217,7 +217,7 @@ input[type=range] { width: 100%; }
 <dialog id="dlgImport">
   <h3 style="margin-top:0">New scenario from data</h3>
   <div class="row"><label for="impKind">Data type</label>
-    <select id="impKind"><option value="ili">Rosen ILI Excel (elevation, MOP, stations)</option><option value="profile">Elevation profile (KMZ, KML, TXT/CSV, Excel)</option></select></div>
+    <select id="impKind"><option value="auto">Detect automatically</option><option value="ili">Rosen ILI Excel (elevation, MOP, stations)</option><option value="pxp">Point-by-point (PxP) pressure sheet (elevation, MOP, stations)</option><option value="profile">Elevation profile (KMZ, KML, TXT/CSV, Excel)</option></select></div>
   <div class="row"><label for="impFile">File</label><input id="impFile" type="file"></div>
   <div class="row"><label for="impName">Scenario name</label><input id="impName"></div>
   <p class="small muted">A KMZ without elevations is looked up in USGS 3DEP (US only, needs internet) at 250 ft spacing. Pipe size, product, MOP and drive limits come next, on the Job setup tab (or describe the job to the assistant).</p>
@@ -650,7 +650,7 @@ $("#impOk").onclick = async () => {
   const go = async () => {
     const r = await api("/api/scenario/import?" + q, {method: "POST", raw});
     $("#dlgImport").close();
-    toast("Imported. Answer the job setup questions, then save." + (r.warnings && r.warnings.length ? " " + r.warnings[0] : ""));
+    toast(`Imported${r.format_label ? " as a " + r.format_label : ""}. Answer the job setup questions, then save.` + (r.warnings && r.warnings.length ? " " + r.warnings[0] : ""));
     S.setupReport = null;
     document.querySelector('#tabs [data-tab="setup"]').click();
     poll(true);
@@ -735,8 +735,8 @@ $("#chatFile").onchange = () => {
 };
 async function importChatFile(f) {
   if (S.state && S.state.dirty && !confirm("The open scenario has unsaved changes. Import the attached file as a new scenario anyway?")) return false;
-  const ext = f.name.split(".").pop().toLowerCase();
-  const kinds = ["xlsx", "xls", "xlsm"].includes(ext) ? ["ili", "profile"] : ["profile"];
+  // the server works out whether it's an ILI tally, a PxP sheet or a profile
+  const kinds = ["auto"];
   const raw = await f.arrayBuffer();
   let lastErr;
   for (const kind of kinds) {

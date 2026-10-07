@@ -177,10 +177,15 @@ def _is_fresh(sc: Scenario) -> bool:
     return bool((sc.meta.intake or {}).get("fresh_import"))
 
 
+def _pipe_from_data(inp: ScenarioInputs) -> bool:
+    """The pipe geometry came from the data file: a Rosen ILI tally or a PxP pressure sheet."""
+    return inp.data_source.startswith(("ILI", "PxP"))
+
+
 def _pipe_is_placeholder(inp: ScenarioInputs) -> bool:
     s = inp.pipe_segments
     return (len(s) == 1 and abs(s[0]["od_in"] - 24.0) < 1e-9 and abs(s[0]["wt_in"] - 0.313) < 1e-9
-            and not inp.data_source.startswith("ILI"))
+            and not _pipe_from_data(inp))
 
 
 def _joints_uniform(inp: ScenarioInputs) -> Optional[float]:
@@ -232,7 +237,7 @@ def _defaults(sc: Scenario, a: Dict[str, Any]) -> Dict[str, Tuple[Any, str]]:
     # pipe
     placeholder = _pipe_is_placeholder(inp)
     cur_nps = pipes.nps_for_od(inp.pipe_segments[0]["od_in"]) if inp.pipe_segments else None
-    d["nps"] = (None, "data") if placeholder or fresh and not inp.data_source.startswith("ILI") \
+    d["nps"] = (None, "data") if placeholder or fresh and not _pipe_from_data(inp) \
         else (cur_nps, "data")
     nps = a.get("nps") or d["nps"][0]
     pipe_from_intake = bool((sc.meta.intake or {}).get("pipe_set"))

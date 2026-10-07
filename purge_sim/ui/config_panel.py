@@ -30,6 +30,8 @@ from ..engine.backward_pass import BackwardPassConfig
 from ..engine.optimizer import OptimizerConfig
 from ..data.scenario import ScenarioInputs
 from ..data.ili_parser import parse_ili, ILIData
+from ..data.pxp_parser import parse_pxp
+from ..data.formats import detect_format
 from ..data.elevation import DEFAULT_SPACING_FT, ElevationError, fetch_route_elevation
 from ..data.profile_parser import ProfileData, parse_profile
 
@@ -308,11 +310,17 @@ class ConfigPanel(ttk.Frame):
             messagebox.showwarning("No File", "Select a file first.")
             return
         try:
-            if src == "ILI":
-                self._ili_data = parse_ili(path)
+            fmt = detect_format(path)
+            if src == "ILI" or fmt == "pxp":
+                # The ILI choice also takes a point-by-point (PxP) pressure sheet; both
+                # parse to the same ILIData. A PxP file picked under another source is
+                # still read as one, since a profile parser would drop its MOP and stations.
+                self._ili_data = parse_pxp(path) if fmt == "pxp" else parse_ili(path)
+                if fmt == "pxp":
+                    self._data_source_var.set("ILI")
                 self._populate_from_ili(self._ili_data)
                 self._data_status_var.set(
-                    f"ILI loaded: {len(self._ili_data.mop_joints):,} joints, "
+                    f"{self._ili_data.format} loaded: {len(self._ili_data.mop_joints):,} joints, "
                     f"{len(self._ili_data.pump_station_records)} stations, "
                     f"BPCV={'yes' if self._ili_data.bpcv_record else 'no'}"
                 )
@@ -361,6 +369,9 @@ class ConfigPanel(ttk.Frame):
     def _populate_from_ili(self, data: ILIData):
         """Fill in infrastructure fields from ILI data."""
         self._end_mp_var.set(round(float(data.elevation_profile[-1, 0]), 2))
+        if data.format == "PxP":
+            # PxP mileposts are distance from the line's origin, so a section starts past 0
+            self._start_mp_var.set(round(float(data.elevation_profile[0, 0]), 2))
 
         # Pipe segments
         self._seg_text.delete("1.0", tk.END)

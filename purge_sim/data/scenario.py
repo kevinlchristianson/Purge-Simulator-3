@@ -127,7 +127,7 @@ class ScenarioInputs:
     mop_joints: List[dict] = field(default_factory=list)
 
     # Data source reference
-    data_source: str = ""   # 'ILI', 'KMZ', 'TXT', 'Excel', 'manual'
+    data_source: str = ""   # 'ILI', 'PxP', 'KMZ', 'TXT', 'Excel', 'manual'
     data_file: str = ""
 
     # Simulation control
