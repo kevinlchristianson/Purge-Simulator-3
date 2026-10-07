@@ -195,11 +195,48 @@ def test_import_2d_kmz_looks_up_elevation(tmp_path, dem):
     assert ws.job["state"] == "idle"
 
 
-def test_import_with_elevations_skips_lookup(tmp_path, dem):
+def test_kmz_altitudes_in_meters_are_kept(tmp_path, dem):
     ws = Workspace()
-    ws.new_from_import(write_kmz(tmp_path / "z.kmz", ROUTE, lambda la, lo: 900), "profile", "Z")
-    assert dem.points == 0 and ws.scenario.inputs.elevation_source["provider"] == "file"
-    assert ws.scenario.inputs.data_source == "KMZ"
+    out = ws.new_from_import(write_kmz(tmp_path / "m.kmz", ROUTE, lambda la, lo: terrain(la, lo) / 3.28084),
+                             "profile", "M")
+    inp = ws.scenario.inputs
+    assert inp.elevation_source["provider"] == "file" and inp.data_source == "KMZ"
+    assert inp.elevation_source["altitude_check"]["verdict"] == "ok"
+    assert dem.points <= 8 and out["warnings"] == []   # only the spot check was looked up
+
+
+def test_kmz_altitudes_in_feet_are_read_as_feet(tmp_path, dem):
+    # CHS Santa Rita 16": the KMZ's altitude field carried feet, which read 3.28x too high.
+    ws = Workspace()
+    out = ws.new_from_import(write_kmz(tmp_path / "f.kmz", ROUTE, terrain), "profile", "F")
+    inp = ws.scenario.inputs
+    assert inp.elevation_source["altitude_check"]["verdict"] == "feet"
+    assert max(abs(e - terrain(la, lo)) for (_, e), (la, lo) in zip(inp.elevation_profile, ROUTE)) < 0.5
+    assert any("in feet, not meters" in w for w in out["warnings"])
+    assert "in feet, not meters" in ws.scenario.meta.notes
+
+
+def test_kmz_altitudes_that_disagree_are_replaced(tmp_path, dem):
+    ws = Workspace()
+    out = ws.new_from_import(write_kmz(tmp_path / "g.kmz", ROUTE, lambda la, lo: 100), "profile", "G")
+    inp = ws.scenario.inputs
+    assert inp.data_source == "KMZ+USGS" and inp.elevation_source["provider"] == "fake_dem"
+    assert inp.elevation_source["altitude_check"]["verdict"] == "mismatch"
+    assert min(e for _, e in inp.elevation_profile) > 2800
+    assert any("disagree with USGS 3DEP" in w for w in out["warnings"])
+
+
+def test_kmz_altitudes_unchecked_when_offline(tmp_path, monkeypatch):
+    class Down(FakeDEM):
+        def lookup(self, pts, progress_cb=None):
+            raise E.ElevationError("Couldn't reach the USGS elevation service")
+    monkeypatch.setattr(E, "default_provider", lambda: Down())
+    ws = Workspace()
+    out = ws.new_from_import(write_kmz(tmp_path / "o.kmz", ROUTE, lambda la, lo: 900), "profile", "O")
+    inp = ws.scenario.inputs
+    assert inp.elevation_source["altitude_check"]["verdict"] == "unverified"
+    assert inp.elevation_profile[0][1] == pytest.approx(900 * 3.28084, abs=0.1)
+    assert any("Couldn't check" in w for w in out["warnings"])
 
 
 def test_ask_first_setting_and_http_confirm(tmp_path, dem):
