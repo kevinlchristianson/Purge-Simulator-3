@@ -1,5 +1,7 @@
 """
-Build a new scenario from a raw data file (ILI Excel, KMZ/KML, TXT/CSV, Excel profile).
+Build a new scenario from a raw data file (Rosen ILI Excel, point-by-point (PxP)
+pressure sheet, KMZ/KML, TXT/CSV, Excel profile). kind='auto' works out which one a
+file is (purge_sim/data/formats.py).
 
 This is the first step of every new job. The parsers already exist in
 purge_sim/data; this turns their output into a ScenarioInputs the app can edit,
@@ -21,9 +23,15 @@ from ..data.scenario import Scenario, ScenarioInputs, ScenarioMeta
 from . import settings
 
 
-def _from_ili(path: str) -> ScenarioInputs:
-    from ..data.ili_parser import parse_ili
-    d = parse_ili(path)
+def _from_ili(path: str, fmt: str = "ili") -> Tuple[ScenarioInputs, List[str]]:
+    """A Rosen ILI tally or a PxP pressure sheet: both parse to ILIData (elevation, per-point
+    MOP, pipe geometry, stations, check valves)."""
+    if fmt == "pxp":
+        from ..data.pxp_parser import parse_pxp
+        d = parse_pxp(path)
+    else:
+        from ..data.ili_parser import parse_ili
+        d = parse_ili(path)
     elev = [[float(m), float(e)] for m, e in d.elevation_profile]
     inp = ScenarioInputs(
         purge_start_mp=round(float(elev[0][0]), 3),
@@ -38,14 +46,20 @@ def _from_ili(path: str) -> ScenarioInputs:
         # 30 psig suction matches the desktop app's ILI import default.
         pump_stations=[{"mp": float(ps.mp), "name": ps.name, "suction_psig": 30.0}
                        for ps in d.pump_station_configs()],
-        data_source="ILI",
+        data_source=d.format,
         data_file=os.path.basename(path),
         elevation_source={"provider": "file", "file": os.path.basename(path)},
     )
     if d.bpcv_record is not None:
         b = d.bpcv_record
         inp.bpcv = {"mp": float(b.mp), "elevation_ft": float(b.elevation_ft), "name": f"{b.site} BPCV"}
-    return inp
+    notes = list(d.notes)
+    if d.system_name:
+        notes.insert(0, f"System: {d.system_name}.")
+    if d.sg_light or d.sg_heavy:
+        sgs = " / ".join(f"{v:g}" for v in (d.sg_light, d.sg_heavy) if v)
+        notes.append(f"The sheet's specified gravity (light / heavy): {sgs}. Product is not set from it.")
+    return inp, notes
 
 
 class ElevationConfirmNeeded(ValueError):
@@ -103,20 +117,28 @@ def _from_profile(path: str, fetch_elevation: Optional[bool] = None,
 
 def scenario_from_file(path: str, kind: str, name: str, fetch_elevation: Optional[bool] = None,
                        spacing_ft: float = DEFAULT_SPACING_FT, progress_cb=None) -> Tuple[Scenario, List[str]]:
-    """Returns the scenario and any warnings about its data (shown to the user)."""
-    kind = (kind or "").lower()
-    warnings: List[str] = []
-    if kind == "ili":
-        inputs = _from_ili(path)
-    elif kind == "profile":
-        inputs, warnings = _from_profile(path, fetch_elevation, spacing_ft, progress_cb)
+    """Returns the scenario and any notes about its data (shown to the user).
+    kind: 'auto' (or blank) detects the format; 'ili', 'pxp' or 'profile' forces one."""
+    from ..data.formats import FORMAT_LABELS, detect_format
+    kind = (kind or "auto").lower()
+    if kind == "auto":
+        kind = detect_format(path)
+    if kind not in FORMAT_LABELS:
+        raise ValueError("kind must be 'auto', 'ili', 'pxp' or 'profile'")
+    notes: List[str] = []
+    if kind in ("ili", "pxp"):
+        inputs, notes = _from_ili(path, kind)
     else:
-        raise ValueError("kind must be 'ili' or 'profile'")
+        inputs, notes = _from_profile(path, fetch_elevation, spacing_ft, progress_cb)
+    meta_notes = [f"Imported from {os.path.basename(path)} as a {FORMAT_LABELS[kind]}."]
+    if inputs.elevation_source.get("provider") != "file":
+        meta_notes.append(describe_source(inputs.elevation_source))
+    else:
+        meta_notes += notes
     meta = ScenarioMeta(name=name or os.path.splitext(os.path.basename(path))[0],
                         source_files=[os.path.basename(path)],
-                        notes=describe_source(inputs.elevation_source)
-                        if inputs.elevation_source.get("provider") != "file" else "",
+                        notes="\n".join(meta_notes),
                         # Everything the file can't tell us is still a default; the job intake
                         # (intake.py) asks for it instead of treating those defaults as answers.
-                        intake={"fresh_import": True})
-    return Scenario(meta=meta, inputs=inputs), warnings
+                        intake={"fresh_import": True, "format": kind})
+    return Scenario(meta=meta, inputs=inputs), notes

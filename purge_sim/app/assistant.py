@@ -79,6 +79,12 @@ run_sweep over editing the open scenario repeatedly.
 - New data imports leave pipe geometry, fluid, drive limits and pump-vs-BPCV roles at \
 defaults. Help classify them: which detected stations really pump, whether there's a \
 BPCV, and which job class this is, and state the assumptions explicitly.
+- Imports detect the file type: a Rosen ILI tally (data_source ILI), a point-by-point \
+pressure sheet (data_source PxP) or an elevation profile; the scenario notes say which. \
+A PxP sheet's per-point MOP is its established MOP column, which can sit below the \
+pipe's own MOP limit; mileposts are its distance from the line's origin, so a purge \
+section can start well past MP 0. Its notes also carry the system name and specified \
+gravity, which hint at the product but don't answer the product question.
 
 ## Setting up a job (the job setup questions)
 A new job is set up through the job setup questions (get_job_setup / set_job_setup), \

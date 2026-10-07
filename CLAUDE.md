@@ -92,6 +92,15 @@ purge_sim/
   data/
     ili_parser.py      — Rosen ILI Excel parser (auto-detects pump stations, check valves,
                          BPCV, per-joint MOP from the "Additional description" column)
+    pxp_parser.py      — point-by-point (PxP) MOP/operating pressure sheet parser (operator
+                         format, e.g. P66 GL-09). Returns the same ILIData as ili_parser.
+                         Mileposts = 'Dist. from Origin'; MOP = the sheet's MOP column (not
+                         MOP Limit); a station at either end of the file is dropped as the
+                         launch/receipt site, with a note
+    formats.py         — detect_format(path): 'ili' / 'pxp' / 'profile' from the first rows
+                         of each sheet; imports default to kind='auto'
+    xlsx_reader.py     — stdlib xlsx cell reader; avoids openpyxl parsing chart sheets
+                         (~20 s on a PxP workbook before reading a cell)
     profile_parser.py  — KMZ / KMZ+GPSVisualizer-TXT / client Excel / plain milepost-elevation
                          text parsers for non-ILI data sources. A file with no elevations
                          (most pipeline KMZs) comes back NaN with elevation_status='none',

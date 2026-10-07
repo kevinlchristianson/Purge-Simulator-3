@@ -107,6 +107,15 @@ class ILIData:
     # Raw DataFrame for advanced queries
     raw_df: Optional[pd.DataFrame] = None
 
+    # Which file format this came from: 'ILI' (Rosen tally) or 'PxP' (point-by-point
+    # pressure sheet, data/pxp_parser.py). The rest is only filled by formats that carry it.
+    format: str = 'ILI'
+    system_name: str = ''
+    sg_light: Optional[float] = None
+    sg_heavy: Optional[float] = None
+    route_latlon: List[List[float]] = field(default_factory=list)   # [[lat, lon], ...]
+    notes: List[str] = field(default_factory=list)                  # parser decisions worth showing
+
     def check_valves(self) -> List[CheckValve]:
         """All check valves: pump station + standalone."""
         out = []
