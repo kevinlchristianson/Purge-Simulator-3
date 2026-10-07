@@ -246,6 +246,17 @@ def test_http_load_edit_run_export_chat(server):
     assert chat["transcript"][-1] == {**chat["transcript"][-1], "role": "assistant", "text": "hi"}
 
 
+def test_http_scenario_download(server):
+    req = urllib.request.Request(server.url.rstrip("/") + "/api/scenario/download?id=" + SHORT
+                                 + "&token=" + server.token)
+    with urllib.request.urlopen(req, timeout=10) as r:
+        assert 'filename="tipville_east10_3mph.json"' in r.headers["Content-Disposition"]
+        assert "inputs" in json.loads(r.read())
+    for bad in ("bundled:../app.py", "bundled:CHS_TipvilleSantaRita_East10/nope.json", "nope"):
+        assert _call(server, "/api/scenario/download?id=" + bad)[0] == 404
+    assert _call(server, "/api/scenario/download?id=" + SHORT, token=False)[0] == 403
+
+
 def test_assistant_load_refuses_to_discard_unsaved_edits():
     ws = Workspace()
     ws.load(SHORT)
