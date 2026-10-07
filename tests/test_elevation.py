@@ -344,3 +344,19 @@ def test_map_http_route_upload_and_static_assets(tmp_path):
     finally:
         app.shutdown()
         httpd.server_close()
+
+
+def test_zero_and_out_of_range_coordinates_are_dropped(tmp_path, dem):
+    """GL-09's PxP sheet has a few rows with x = y = 0; they drew the route to Africa."""
+    lat = [45.0, 45.05, 0.0, 45.08, 95.0, 45.1]
+    lon = [-108.5, -108.5, 0.0, -108.45, -108.45, -108.45]
+    assert list(E.valid_coords(lat, lon)) == [True, True, False, True, False, True]
+    assert [p[0] for p in E.thin_route(lat, lon)] == [45.0, 45.05, 45.08, 45.1]
+    ws = Workspace()
+    ws.new_from_import(write_kmz(tmp_path / "line.kmz", ROUTE), "profile", "Line")
+    inp = ws.scenario.inputs
+    inp.route_latlon = inp.route_latlon[:2] + [[0.0, 0.0]] + inp.route_latlon[2:]   # saved before the fix
+    inp.purge_start_mp = round(inp.elevation_profile[0][0] - 0.0004, 3)               # rounded a hair outside
+    v = ws.map_view()
+    assert v["route_length_mi"] < 10 and abs(v["mp_scale"] - 1) < 0.01 and not v["warnings"]
+    assert all(f["lat"] is not None for f in v["features"])

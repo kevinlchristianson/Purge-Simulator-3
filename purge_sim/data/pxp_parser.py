@@ -37,6 +37,7 @@ import numpy as np
 import pandas as pd
 
 from ..engine.mop_check import MOPJoint
+from .elevation import valid_coords
 from .xlsx_reader import read_sheets
 from .ili_parser import (BPCVRecord, CheckValveRecord, ILIData, PumpStationRecord,
                          _build_pipe_geometry, _semantic_thin_indices)
@@ -202,7 +203,7 @@ def parse_pxp(file_path: str) -> ILIData:
 
     info = _banner(rows)
     lat, lon = df["lat"].to_numpy(float), df["lon"].to_numpy(float)
-    ok = np.isfinite(lat) & np.isfinite(lon)
+    ok = valid_coords(lat, lon)
     sg_l, sg_h = _num(info.get("specified gravity - light")), _num(info.get("specified gravity - heavy"))
     data = ILIData(source_file=str(file_path), elevation_profile=elevation_profile,
                    mop_joints=mop_joints, pipe_geometry=pipe_geometry,

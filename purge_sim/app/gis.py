@@ -20,7 +20,7 @@ from typing import List, Optional, Tuple
 
 import numpy as np
 
-from ..data.elevation import interpolate_route, route_mileposts, thin_route
+from ..data.elevation import interpolate_route, route_mileposts, thin_route, valid_coords
 from ..data.scenario import ScenarioInputs
 
 # Route vertices sent to the browser. Plenty for a pipeline at map scale.
@@ -51,6 +51,7 @@ def vertex_mileposts(inp: ScenarioInputs) -> Tuple[np.ndarray, np.ndarray, np.nd
     """(milepost, lat, lon) per route vertex, plus the route's map length (mi) and the scale
     applied to it to fit the profile's milepost span (1.0 when there is no profile)."""
     a = np.asarray(inp.route_latlon, dtype=float)
+    a = a[valid_coords(a[:, 0], a[:, 1])]   # a route saved before bad rows were dropped on import
     lat, lon = a[:, 0], a[:, 1]
     d = route_mileposts(lat, lon)
     length = float(d[-1])
@@ -70,7 +71,8 @@ def map_view(inp: ScenarioInputs) -> dict:
     and ground elevation per vertex, and the stations, check valves, boosters and BPCV
     placed on it."""
     span = _profile_span(inp)
-    out = {"has_route": len(inp.route_latlon) >= 2,
+    out = {"has_route": len(inp.route_latlon) >= 2 and
+                        int(valid_coords(*np.asarray(inp.route_latlon, dtype=float).T).sum()) >= 2,
            "purge_start_mp": inp.purge_start_mp, "purge_end_mp": inp.purge_end_mp,
            "profile_mp_range": list(span) if span else None,
            "warnings": []}
@@ -87,8 +89,10 @@ def map_view(inp: ScenarioInputs) -> dict:
     elev = np.interp(mp_all, prof[:, 0], prof[:, 1]) if prof is not None else np.full(len(mp_all), np.nan)
 
     def place(mp: float) -> Tuple[Optional[float], Optional[float]]:
-        if not (vmp[0] - 1e-6 <= mp <= vmp[-1] + 1e-6):
+        # mileposts are stored rounded to 0.001 mi, so an end can sit a hair outside the route
+        if not (vmp[0] - 0.01 <= mp <= vmp[-1] + 0.01):
             return None, None
+        mp = min(max(mp, vmp[0]), vmp[-1])
         la, lo = interpolate_route(vmp, lat, lon, mp)
         return _round(la), _round(lo)
 
