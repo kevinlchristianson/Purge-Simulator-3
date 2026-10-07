@@ -52,6 +52,12 @@ class ScenarioInputs:
     # Elevation profile
     elevation_profile: List[list] = field(default_factory=list)
     # e.g. [[0.0, 52.0], [0.5, 48.0], ...]
+    # Where the profile came from: {'provider': 'file'} or the lookup record from
+    # purge_sim/data/elevation.py (provider, dataset, spacing_ft, points, fetched, flags...).
+    elevation_source: dict = field(default_factory=dict)
+    # Route centerline [[lat, lon], ...] (vertices >= 100 ft apart) from a KMZ/GPS import,
+    # kept so the elevation can be looked up again. Empty for ILI and milepost-only data.
+    route_latlon: List[list] = field(default_factory=list)
 
     # Fluid
     fluid_name: str = "Diesel"

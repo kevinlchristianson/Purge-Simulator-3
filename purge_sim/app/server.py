@@ -21,7 +21,9 @@ from typing import Optional, Tuple
 from urllib.parse import parse_qs, quote, urlparse
 
 from . import paths, settings
+from ..data.elevation import DEFAULT_SPACING_FT
 from .assistant import Assistant
+from .importers import ElevationConfirmNeeded
 from .workspace import InputError, Workspace, inputs_summary, results_series, results_summary
 
 MAX_UPLOAD_BYTES = 200 * 1024 * 1024
@@ -69,9 +71,13 @@ class App:
             d = j()
             return 200, ws.save_as(d.get("name", ""), d.get("notes"), bool(d.get("overwrite")))
         if route == ("POST", "/api/scenario/import"):
-            return 200, self._import(q, body)
+            return self._import(q, body)
         if route == ("GET", "/api/elevation"):
             return 200, ws.elevation_view(max_points=int(q.get("max_points", 800)))
+        if route == ("POST", "/api/elevation/fetch"):
+            d = j()
+            return 200, ws.fetch_elevation(float(d.get("spacing_ft") or DEFAULT_SPACING_FT),
+                                           bool(d.get("reverse")))
         if route == ("POST", "/api/run"):
             ws.start_run()
             return 200, {"ok": True}
@@ -87,7 +93,8 @@ class App:
             return 200, settings.public_view()
         if route == ("POST", "/api/settings"):
             d = j()
-            return 200, settings.update(d.get("api_key"), d.get("model"), bool(d.get("clear_key")))
+            return 200, settings.update(d.get("api_key"), d.get("model"), bool(d.get("clear_key")),
+                                        d.get("elevation_ask_first"))
         if route == ("GET", "/api/chat"):
             return 200, asst.view()
         if route == ("POST", "/api/chat"):
@@ -101,8 +108,10 @@ class App:
             return 200, {"ok": True}
         return 404, {"error": f"no route {method} {path}"}
 
-    def _import(self, q: dict, body: bytes) -> dict:
+    def _import(self, q: dict, body: bytes) -> Tuple[int, object]:
+        """?fetch_elevation=1 confirms a USGS lookup the user was asked about (409 below)."""
         kind = q.get("kind", "")
+        fetch = {"1": True, "0": False}.get(q.get("fetch_elevation", ""))
         filename = os.path.basename(q.get("filename", "upload"))
         if not body:
             raise InputError("no file received")
@@ -112,7 +121,12 @@ class App:
         with open(tmp, "wb") as f:
             f.write(body)
         try:
-            return self.ws.new_from_import(tmp, kind, q.get("name") or os.path.splitext(filename)[0])
+            return 200, self.ws.new_from_import(tmp, kind, q.get("name") or os.path.splitext(filename)[0],
+                                                fetch_elevation=fetch,
+                                                spacing_ft=float(q.get("spacing_ft") or DEFAULT_SPACING_FT))
+        except ElevationConfirmNeeded as e:
+            return 409, {"error": str(e), "needs_elevation_confirm": True,
+                         "points": e.points, "length_mi": round(e.length_mi, 2)}
         finally:
             try:
                 os.remove(tmp)

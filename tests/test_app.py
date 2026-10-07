@@ -177,7 +177,7 @@ def test_settings_never_expose_key(monkeypatch):
     assert settings.public_view()["api_key_set"] is False
     v = settings.update("sk-ant-test-1234", "claude-opus-5-5")
     assert v == {"api_key_set": True, "api_key_source": "settings", "api_key_hint": "…1234",
-                 "model": "claude-opus-5-5"}
+                 "model": "claude-opus-5-5", "elevation_ask_first": False}
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-env-9999")
     assert settings.api_key() == "sk-env-9999" and settings.public_view()["api_key_source"] == "environment"
 

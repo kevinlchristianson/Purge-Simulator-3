@@ -30,7 +30,8 @@ from ..engine.backward_pass import BackwardPassConfig
 from ..engine.optimizer import OptimizerConfig
 from ..data.scenario import ScenarioInputs
 from ..data.ili_parser import parse_ili, ILIData
-from ..data.profile_parser import parse_profile
+from ..data.elevation import DEFAULT_SPACING_FT, ElevationError, fetch_route_elevation
+from ..data.profile_parser import ProfileData, parse_profile
 
 
 class _CollapsibleSection(ttk.Frame):
@@ -316,7 +317,13 @@ class ConfigPanel(ttk.Frame):
                     f"BPCV={'yes' if self._ili_data.bpcv_record else 'no'}"
                 )
             else:
-                self._profile_data = parse_profile(path)
+                prof = parse_profile(path)
+                if prof.needs_elevation:
+                    prof = self._lookup_elevation(prof)
+                    if prof is None:
+                        self._data_status_var.set("Not loaded: the file has no elevation data")
+                        return
+                self._profile_data = prof
                 self._data_status_var.set(
                     f"Profile loaded: {len(self._profile_data.mileposts):,} pts, "
                     f"{self._profile_data.total_length_mi:.1f} mi"
@@ -325,6 +332,31 @@ class ConfigPanel(ttk.Frame):
         except Exception as e:
             messagebox.showerror("Load Error", str(e))
             self._data_status_var.set(f"Error: {e}")
+
+    def _lookup_elevation(self, prof):
+        """A KMZ/GPS file without elevations: offer the USGS 3DEP lookup instead of a flat profile."""
+        if prof.lat is None or prof.lon is None:
+            messagebox.showerror("No Elevation", "This file has no elevations and no coordinates to look them up from.")
+            return None
+        if not messagebox.askyesno(
+                "No Elevation Data",
+                f"This file has no elevation data. Look up its {prof.total_length_mi:.1f} mi route in USGS 3DEP "
+                f"(US only, {DEFAULT_SPACING_FT:g} ft spacing)?\n\nThis sends the route's coordinates to the USGS service."):
+            return None
+
+        def progress(frac, msg):
+            self._data_status_var.set(f"{msg} ({frac * 100:.0f}%)")
+            self.update_idletasks()
+
+        try:
+            res = fetch_route_elevation(prof.lat, prof.lon, progress_cb=progress)
+        except ElevationError as e:
+            messagebox.showerror("Elevation Lookup Failed", str(e))
+            return None
+        if res.flags:
+            messagebox.showwarning("Elevation Lookup", "\n\n".join(res.flags))
+        return ProfileData(mileposts=res.mileposts, elevations_ft=res.elevations_ft, lat=res.lat, lon=res.lon,
+                           source=prof.source + "+USGS")
 
     def _populate_from_ili(self, data: ILIData):
         """Fill in infrastructure fields from ILI data."""

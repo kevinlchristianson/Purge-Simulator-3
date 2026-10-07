@@ -82,9 +82,18 @@ purge_sim/
     ili_parser.py      — Rosen ILI Excel parser (auto-detects pump stations, check valves,
                          BPCV, per-joint MOP from the "Additional description" column)
     profile_parser.py  — KMZ / KMZ+GPSVisualizer-TXT / client Excel / plain milepost-elevation
-                         text parsers for non-ILI data sources
+                         text parsers for non-ILI data sources. A file with no elevations
+                         (most pipeline KMZs) comes back NaN with elevation_status='none',
+                         never a flat 0 ft profile
+    elevation.py       — built-in elevation lookup for those files: USGS 3DEP point queries
+                         (US only, no key), 250 ft default spacing + route vertices + peak
+                         refinement, gap fill/flags, sqlite cache in ~/.purge_sim/. Used by the
+                         app's import, its Re-fetch, the assistant's fetch_elevation tool, the
+                         Tkinter KMZ load and tools/kmz_elevations.py. Don't fetch elevation
+                         by other means in a session; use this
     scenario.py        — JSON save/load of full simulation input state (human-readable,
-                         inline arrays, hand-editable; does NOT store results)
+                         inline arrays, hand-editable; does NOT store results). Carries
+                         elevation_source (provenance) and route_latlon (for re-fetching)
   ui/
     main_window.py      — Tkinter root: left config panel (30%) / right results panel (70%),
                          persists between runs

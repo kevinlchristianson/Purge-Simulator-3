@@ -23,6 +23,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 import numpy as np
 
+from ..data.elevation import DEFAULT_SPACING_FT, ElevationError, describe_source, fetch_route_elevation
 from ..data.scenario import Scenario, ScenarioInputs, load_scenario, save_scenario
 from ..engine.config_builder import build_sim_config
 from ..engine.simulator import SimResults, simulate
@@ -42,7 +43,7 @@ EXIT_BEHAVIORS = ("taper_last_n_miles", "step_last_n_miles", "linear_ramp",
                   "constant_run", "constant_end")
 
 # Large arrays that come from data import, not from hand edits.
-_IMPORT_ONLY_FIELDS = {"elevation_profile", "mop_joints"}
+_IMPORT_ONLY_FIELDS = {"elevation_profile", "mop_joints", "elevation_source", "route_latlon"}
 
 _LIST_ITEM_KEYS = {
     "pipe_segments":    {"required": {"start_mp", "end_mp", "od_in", "wt_in"}, "numeric": {"start_mp", "end_mp", "od_in", "wt_in"}},
@@ -260,6 +261,8 @@ def inputs_summary(sc: Scenario) -> dict:
         "deployed_booster_mps": inp.deployed_booster_mps,
         "bpcv": inp.bpcv,
         "elevation_profile": profile_stats(inp.elevation_profile, inp.purge_start_mp, inp.purge_end_mp),
+        "elevation_source": inp.elevation_source,
+        "route_points": len(inp.route_latlon),
         "mop_joints": mop_stats(inp.mop_joints),
     }
 
@@ -472,14 +475,88 @@ class Workspace:
             self.revision += 1
             return {"id": self.scenario_id, "path": path}
 
-    def new_from_import(self, file_path: str, kind: str, name: str) -> dict:
+    def _busy_job(self, message: str) -> None:
+        with self.lock:
+            if self.job["state"] == "running":
+                raise InputError("wait for the running job to finish first")
+            self.job = {"state": "running", "progress": 0.0, "message": message, "error": None,
+                        "started": time.time()}
+            self.revision += 1
+
+    def _job_progress(self, frac: float, message: str) -> None:
+        self.job["progress"] = float(frac)
+        self.job["message"] = message
+
+    def _idle_job(self) -> None:
+        with self.lock:
+            self.job = {"state": "idle", "progress": 0.0, "message": "", "error": None, "started": None}
+            self.revision += 1
+
+    def new_from_import(self, file_path: str, kind: str, name: str,
+                        fetch_elevation: Optional[bool] = None,
+                        spacing_ft: float = DEFAULT_SPACING_FT) -> dict:
+        """Build a new scenario from a data file. A file without elevations gets them from
+        USGS 3DEP here (progress shows as the job), unless settings say to ask first."""
         from .importers import scenario_from_file
-        sc = scenario_from_file(file_path, kind, name)
+        self._busy_job("Importing " + os.path.basename(file_path))
+        try:
+            sc, warnings = scenario_from_file(file_path, kind, name, fetch_elevation, spacing_ft,
+                                              progress_cb=self._job_progress)
+        except ElevationError as e:
+            raise InputError(str(e)) from e
+        finally:
+            self._idle_job()
         with self.lock:
             self.scenario, self.scenario_id, self.dirty = sc, None, True
             self.results, self.results_for, self.results_stale = None, None, False
             self.revision += 1
-        return inputs_summary(sc)
+        return {**inputs_summary(sc), "warnings": warnings}
+
+    def fetch_elevation(self, spacing_ft: float = DEFAULT_SPACING_FT, reverse: bool = False) -> dict:
+        """Look the open scenario's route up in USGS 3DEP again and replace its elevation profile.
+        reverse=True flips the route so mileposts run from the other end."""
+        sc = self.require()
+        route = sc.inputs.route_latlon
+        if len(route) < 2:
+            raise InputError("this scenario has no stored route coordinates (only KMZ and GPS imports "
+                             "carry them); re-import the KMZ to look its elevation up")
+        if reverse:
+            route = route[::-1]
+        lat = [p[0] for p in route]
+        lon = [p[1] for p in route]
+        self._busy_job("Looking up elevation")
+        try:
+            res = fetch_route_elevation(lat, lon, spacing_ft=spacing_ft, progress_cb=self._job_progress)
+        except ElevationError as e:
+            raise InputError(str(e)) from e
+        finally:
+            self._idle_job()
+        warnings = list(res.flags)
+        with self.lock:
+            inp = sc.inputs
+            old_len = float(inp.elevation_profile[-1][0]) if inp.elevation_profile else None
+            inp.elevation_profile = res.profile()
+            inp.elevation_source = res.source
+            if reverse:
+                inp.route_latlon = route
+                inp.purge_start_mp, inp.purge_end_mp = 0.0, round(res.length_mi, 3)
+                if inp.check_valves or inp.pump_stations or inp.booster_stations or inp.bpcv:
+                    warnings.append("Mileposts now run from the other end. Station, check valve, booster and "
+                                    "BPCV mileposts were not changed; re-check them.")
+            else:
+                inp.purge_start_mp = max(0.0, min(inp.purge_start_mp, res.length_mi))
+                inp.purge_end_mp = min(inp.purge_end_mp, round(res.length_mi, 3))
+            if "+USGS" not in inp.data_source and inp.data_source:
+                inp.data_source += "+USGS"
+            line = describe_source(res.source)
+            sc.meta.notes = (sc.meta.notes.rstrip() + "\n" + line).strip() if sc.meta.notes else line
+            self.dirty = True
+            self.results_stale = self.results is not None
+            self.revision += 1
+        return {"points": len(res.mileposts), "length_mi": _f(res.length_mi, 3),
+                "previous_length_mi": _f(old_len, 3) if old_len is not None else None,
+                "filled_points": res.filled_points, "source": res.source, "warnings": warnings,
+                "purge_start_mp": sc.inputs.purge_start_mp, "purge_end_mp": sc.inputs.purge_end_mp}
 
     # ---- simulation ------------------------------------------------------------
 
@@ -580,12 +657,13 @@ class Workspace:
         sc = self.require()
         a = np.asarray(sc.inputs.elevation_profile, dtype=float)
         if a.size == 0:
-            return {"mp": [], "elevation_ft": []}
+            return {"mp": [], "elevation_ft": [], "source": sc.inputs.elevation_source}
         lo = sc.inputs.purge_start_mp if start_mp is None else start_mp
         hi = sc.inputs.purge_end_mp if end_mp is None else end_mp
         a = a[(a[:, 0] >= lo) & (a[:, 0] <= hi)]
         idx = downsample_idx(len(a), max_points)
-        return {"mp": [_f(a[i, 0]) for i in idx], "elevation_ft": [_f(a[i, 1], 1) for i in idx]}
+        return {"mp": [_f(a[i, 0]) for i in idx], "elevation_ft": [_f(a[i, 1], 1) for i in idx],
+                "source": sc.inputs.elevation_source}
 
     def state(self) -> dict:
         with self.lock:

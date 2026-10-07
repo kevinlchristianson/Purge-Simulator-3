@@ -4,8 +4,9 @@ In-app engineering assistant, backed by the Claude API.
 The assistant works on the same Workspace the user sees: it can browse and load
 scenarios, read inputs and results, change inputs (through the same validation
 and hard-rule checks as the UI), run the simulator, sweep a parameter, and save
-a new scenario. It cannot overwrite bundled or existing scenarios, cannot edit
-the imported elevation / MOP arrays, and cannot lower the booster suction floor.
+a new scenario, and look a route's elevation up in USGS 3DEP again. It cannot
+overwrite bundled or existing scenarios, cannot type in elevation or MOP arrays,
+and cannot lower the booster suction floor.
 
 The API key comes from settings.py (env var or the user's settings file).
 """
@@ -18,6 +19,7 @@ import time
 import traceback
 from typing import Any, Callable, Dict, List, Optional
 
+from ..data.elevation import DEFAULT_SPACING_FT
 from . import settings
 from .workspace import InputError, Workspace, inputs_summary, results_series, results_summary, _f
 
@@ -77,6 +79,12 @@ run_sweep over editing the open scenario repeatedly.
 - New data imports leave pipe geometry, fluid, drive limits and pump-vs-BPCV roles at \
 defaults. Help classify them: which detected stations really pump, whether there's a \
 BPCV, and which job class this is, and state the assumptions explicitly.
+- Elevation comes from data, never from you. Don't type in, estimate or "fill" elevations. \
+A KMZ without altitudes is looked up in USGS 3DEP on import; get_scenario shows the \
+profile's elevation_source (provider, spacing, interpolated points, flags). If a profile \
+is missing, flat, or from too coarse a spacing, use fetch_elevation. Mention any flags \
+(interpolated gaps, dead-flat stretches that may be river or HDD crossings) when they \
+touch the analysis.
 - Keep replies short. Use a small table when comparing runs. No preamble.
 """
 
@@ -140,6 +148,23 @@ TOOLS: List[dict] = [
             "field": {"type": "string"},
             "values": {"type": "array", "items": {}, "minItems": 1, "maxItems": MAX_SWEEP_VALUES}},
             "required": ["field", "values"], "additionalProperties": False},
+    },
+    {
+        "name": "fetch_elevation",
+        "description": (
+            "Look the open scenario's route up in USGS 3DEP (US only) and replace its elevation profile. "
+            "Needs a scenario imported from a KMZ or GPS file (route_points > 0 in get_scenario). Samples every "
+            "spacing_ft (default 250) plus route vertices, refines steep stretches, and interpolates no-data "
+            "points. reverse=true flips the route so mileposts run from the other end (station mileposts are "
+            "not moved). This sends the route's coordinates to the USGS service; if the user has turned on "
+            "'ask before USGS lookups', get their OK first and pass user_confirmed=true. Returns points, "
+            "length, interpolated points and flags."),
+        "input_schema": {"type": "object", "properties": {
+            "spacing_ft": {"type": "number", "minimum": 25, "maximum": 5280},
+            "reverse": {"type": "boolean"},
+            "user_confirmed": {"type": "boolean"},
+            "reason": {"type": "string", "description": "One line on why, shown to the user."}},
+            "required": ["reason"], "additionalProperties": False},
     },
     {
         "name": "save_scenario_as",
@@ -218,6 +243,13 @@ def execute_tool(ws: Workspace, name: str, args: Dict[str, Any]) -> Any:
         raise InputError(f"unknown view {view!r}")
     if name == "run_sweep":
         return _sweep(ws, args["field"], list(args.get("values") or []))
+    if name == "fetch_elevation":
+        if settings.elevation_ask_first() and not args.get("user_confirmed"):
+            raise InputError("the user's settings say to ask before sending a route to USGS; ask them, "
+                             "then call again with user_confirmed=true")
+        out = ws.fetch_elevation(float(args.get("spacing_ft") or DEFAULT_SPACING_FT), bool(args.get("reverse")))
+        return {**out, "note": "The open scenario's elevation profile is replaced (unsaved). Run again to "
+                               "see the effect."}
     if name == "save_scenario_as":
         return ws.save_as(args["name"], args.get("notes"), overwrite=False)
     raise InputError(f"unknown tool {name!r}")
@@ -234,6 +266,10 @@ def _tool_label(name: str, args: Dict[str, Any]) -> str:
         return f"Swept {args.get('field')} over {args.get('values')}"
     if name == "save_scenario_as":
         return f"Saved as {args.get('name')}"
+    if name == "fetch_elevation":
+        reason = args.get("reason")
+        return (f"Looked up elevation in USGS 3DEP at {args.get('spacing_ft') or DEFAULT_SPACING_FT:g} ft"
+                + (", reversed" if args.get("reverse") else "") + (f" ({reason})" if reason else ""))
     return {"list_scenarios": "Listed scenarios", "get_scenario": "Read the scenario",
             "get_elevation_profile": "Read the elevation profile", "run_simulation": "Ran the simulation",
             "get_results": f"Read results ({args.get('view')})"}.get(name, name)
