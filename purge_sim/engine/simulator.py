@@ -85,6 +85,9 @@ SMOOTH_RAMP_FULL_RANGE_HR = 2.0
 SMOOTH_RECOVERY_RAMP_MULT = 4.0
 # Margin (psi) above the drive that holds target speed, the controller's local face aim.
 SMOOTH_TARGET_MARGIN_PSI = 10.0
+# Below min speed the pump runs toward max while the face is more than this far under the
+# aim, tapering to the hold rate as it closes (recovery that lands on the aim, not past it).
+SMOOTH_RECOVERY_BAND_PSI = 50.0
 # Adaptive step: the pig may advance at most this fraction of the gas column per step, so a
 # short column near the launch isn't halved in pressure by one 0.1-mile step (the start-up
 # stall/lurch: 0 mph, 3 mph, 0 mph...).
@@ -1171,13 +1174,24 @@ def simulate(cfg: SimConfig, progress_cb: Optional[Callable[[float], None]] = No
             # The pump rate that moves the pig at target speed with gas at the aim pressure.
             # Not a one-step pressure fix: the column builds or draws down toward the aim at
             # the pace the pig's own displacement sets, and holds there at target speed.
+            # When the aim is capped under the drive target speed needs (drive-capped job,
+            # MOP ahead), the pig will run at the cap's speed, not target: the hold rate is
+            # taken at the speed it actually makes, so the column settles AT the cap instead
+            # of building past it toward the gas-side MOP and venting.
+            _v_rate = (cfg.target_speed_mph
+                       if pig_face_target_psig >= pig_result.drive_for_target_psig
+                       else pig_result.pig_speed_mph)
             _q_set = scfm_from_pig_velocity(
-                mph_to_fts(cfg.target_speed_mph), area_ft2,
+                mph_to_fts(_v_rate), area_ft2,
                 psig_to_psia(max(pig_face_target_psig, 0.0)), cfg.n2_temperature_f,
             )
             if below_min:
-                # Slack-line recovery / launch: bring the pump to max (ramp-limited below).
-                _q_set = cfg.max_injection_scfm
+                # Slack-line recovery / launch: run the pump up toward max while the face is
+                # under the aim, tapering back to the hold rate over the last
+                # SMOOTH_RECOVERY_BAND_PSI so the column arrives at the aim, not past it.
+                _short = max(0.0, pig_face_target_psig - pig_face_psig)
+                _push = min(1.0, _short / SMOOTH_RECOVERY_BAND_PSI)
+                _q_set = _q_set + (cfg.max_injection_scfm - _q_set) * _push
             scf_inject = _q_set * dt_hr * 60.0
         elif not pig_result.meter_valve_active and not _booster_behind:
             target_scf = inj_seg.scf_at_pressure(fill_pressure_psig)
