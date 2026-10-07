@@ -66,6 +66,11 @@ def test_fluid_library():
     assert abs(fluids.api_to_sg(40) - 0.825) < 1e-3
     assert fluids.match("Light Sweet Crude (assumed API 40)") == "light_crude"
     assert fluids.match("Y1 NGL (de-ethanized / EP mix)") == "ngl_y1"
+    assert fluids.match("Powder River Basin Light Sweet Crude (assumed API 40)") == "powder_river"
+    assert fluids.match("WCS dilbit") == "wcs"
+    assert fluids.match("Crude Oil (API 39)") is None
+    assert all(fluids.get(k).min_liquid_psig is None
+               for k in ("bakken", "permian", "wcs", "synthetic_crude", "msw", "powder_river"))
 
 
 # ---------------------------------------------------------------- intake

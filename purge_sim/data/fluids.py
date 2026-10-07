@@ -51,6 +51,23 @@ FLUIDS: Dict[str, Fluid] = {f.key: f for f in [
     Fluid("light_crude", "Light sweet crude (API ~40)", 0.82, 3.5),
     Fluid("medium_crude", "Medium crude (API ~30)", 0.876, 15.0),
     Fluid("heavy_crude", "Heavy crude (API ~20)", 0.93, 325.0, None, "laminar at purge speeds"),
+    # Regional crudes. Sources: CrudeMonitor 5-yr averages (Canadian), Enbridge crude
+    # characteristics, NDPC 2014 Bakken study, ExxonMobil assays, Platts specs. Their RVP
+    # (~5-13 psi) is kept in the note, not vapor_psia: it sits below the 25 psig liquid
+    # floor and these deliver to tankage, so the 100 psi NGL margin does not apply.
+    Fluid("bakken", "Bakken crude (API ~41)", 0.82, 2.7, None,
+          "2.7 cSt at 68 F; RVP ~12 psi (9-14)"),
+    Fluid("permian", "Permian / WTI Midland crude (API ~42)", 0.816, 2.5, None,
+          "2.5 cSt at 68 F; RVP ~9.5 psi"),
+    Fluid("wcs", "Western Canadian Select dilbit (API ~21)", 0.927, 210.0, None,
+          "~210 cSt at 59 F (295 at 50 F, 154 at 68 F); vapor ~11 psi from diluent; laminar at purge speeds"),
+    Fluid("synthetic_crude", "Synthetic crude / Syncrude Sweet Premium (API ~33)", 0.86, 8.3, None,
+          "8.3 cSt at 60 F; vapor ~5.6 psi"),
+    Fluid("msw", "Mixed Sweet Blend, Edmonton (API ~42)", 0.815, 6.0, None,
+          "6.0 cSt at 60 F; vapor ~12.9 psi"),
+    Fluid("powder_river", "Powder River Basin / Wyoming Sweet crude (API ~40)", 0.82, 3.5, None,
+          "as assumed on the Bridger jobs; Wyoming Sweet at Guernsey is API ~43; "
+          "no published viscosity or pour point found, check for wax before a cold stop"),
     Fluid("butane", "Butane (commercial spec)", 0.575, 0.28, 70.0),
     Fluid("propane", "Propane", 0.507, 0.20, 190.0),
     Fluid("ngl_y1", "Y1 NGL (de-ethanized / EP mix)", 0.51, 0.18, 300.0),
@@ -76,7 +93,12 @@ def api_to_sg(api: float) -> float:
 def match(name: str) -> Optional[str]:
     """Best library key for a free-text fluid name (from an old scenario), or None."""
     n = (name or "").lower()
-    for key, words in [("ngl_y1", ["ngl", "y1", "y-grade"]), ("butane", ["butane"]),
+    for key, words in [("bakken", ["bakken"]), ("permian", ["permian", "midland", "wti"]),
+                       ("wcs", ["wcs", "western canadian", "dilbit"]),
+                       ("synthetic_crude", ["synthetic", "syncrude"]),
+                       ("msw", ["mixed sweet", "msw", "edmonton"]),
+                       ("powder_river", ["powder river", "prb", "wyoming"]),
+                       ("ngl_y1", ["ngl", "y1", "y-grade"]), ("butane", ["butane"]),
                        ("propane", ["propane"]), ("diesel", ["diesel", "ulsd"]),
                        ("gasoline", ["gasoline", "mogas"]), ("jet", ["jet", "kerosene"]),
                        ("water", ["water"])]:
