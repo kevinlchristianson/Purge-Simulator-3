@@ -106,6 +106,8 @@ def build_sim_config(inp: ScenarioInputs) -> SimConfig:
         deployed_booster_mps=inp.deployed_booster_mps,
         n2_budget_scf=inp.n2_budget_scf,
         drive_mop_fraction=inp.drive_mop_fraction,
+        smooth_injection=getattr(inp, 'smooth_injection', True),
+        injection_ramp_scfm_per_hr=getattr(inp, 'injection_ramp_scfm_per_hr', None),
         drive_ceiling_fraction=inp.drive_ceiling_fraction,
         bpcv=bpcv,
         n_spreads=inp.n_spreads,

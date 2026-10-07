@@ -147,6 +147,9 @@ def _check_rules(old: ScenarioInputs, new: ScenarioInputs, changed: set) -> None
         raise InputError("drive_ceiling_fraction must be in (0, 1]")
     if "drive_mop_fraction" in changed and not frac_ok(new.drive_mop_fraction):
         raise InputError("drive_mop_fraction must be in (0, 1]")
+    if "injection_ramp_scfm_per_hr" in changed and new.injection_ramp_scfm_per_hr is not None \
+            and not new.injection_ramp_scfm_per_hr > 0:
+        raise InputError("injection_ramp_scfm_per_hr must be > 0 (or null for the default)")
     if changed & {"min_speed_mph", "max_speed_mph", "target_speed_mph"}:
         if new.min_speed_mph <= 0 or new.max_speed_mph < new.min_speed_mph:
             raise InputError("speeds must satisfy 0 < min_speed_mph <= max_speed_mph")

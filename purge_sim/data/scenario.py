@@ -77,6 +77,12 @@ class ScenarioInputs:
     # coast on PV. None = lean floor-defending controller.
     n2_budget_scf: Optional[float] = None
     drive_mop_fraction: float = 0.9
+    # Lean strategy: smooth SP injection. True = the N2 rate is ramp-limited (full range
+    # over ~2 h, 4x faster below min speed) and pressure shortfalls are closed over ~1 h,
+    # with a supply-limited start-up; False = the earlier per-step controller.
+    smooth_injection: bool = True
+    # Max change in SP rate, SCFM per hour (None = max_injection_scfm / 2 h).
+    injection_ramp_scfm_per_hr: Optional[float] = None
     # Operating margin below MOP for the drive/injection/boosters. 1.0 = up to MOP;
     # 0.90 = hold a hard 10% below MOP at all times.
     drive_ceiling_fraction: float = 1.0
