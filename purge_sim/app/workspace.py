@@ -712,6 +712,35 @@ class Workspace:
                          for b in step.booster_states],
         }
 
+    def map_view(self) -> dict:
+        """Route geometry, mileposts and infrastructure placed on the map (gis.py)."""
+        from . import gis
+        with self.lock:
+            return gis.map_view(self.require().inputs)
+
+    def attach_route(self, file_path: str, direction: str = "auto") -> dict:
+        """Add (or replace) the open scenario's route coordinates from a KMZ / KML / GPS file,
+        for the Map tab. Elevation profile, mileposts and stations are not changed."""
+        from . import gis
+        with self.lock:
+            sc = self.require()
+            try:
+                route, notes = gis.route_from_file(file_path, sc.inputs, direction)
+            except gis.RouteError as e:
+                raise InputError(str(e)) from e
+            replaced = len(sc.inputs.route_latlon) >= 2
+            sc.inputs.route_latlon = route
+            fname = os.path.basename(file_path)
+            if fname not in sc.meta.source_files:
+                sc.meta.source_files.append(fname)
+            line = f"Route coordinates for the map from {fname}" + (" (replaced the earlier route)." if replaced else ".")
+            sc.meta.notes = (sc.meta.notes.rstrip() + "\n" + line).strip() if sc.meta.notes else line
+            self.dirty = True
+            self.revision += 1
+            view = gis.map_view(sc.inputs)
+        return {"route_points": len(route), "notes": notes + view["warnings"],
+                "route_length_mi": view.get("route_length_mi"), "mp_scale": view.get("mp_scale")}
+
     def elevation_view(self, start_mp: Optional[float] = None, end_mp: Optional[float] = None,
                        max_points: int = 400) -> dict:
         sc = self.require()

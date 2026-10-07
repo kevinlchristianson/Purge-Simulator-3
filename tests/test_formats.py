@@ -36,6 +36,7 @@ def _pxp_row(dist, elev, mop, desc=None, feature="COORD_PT", valve=None, pump=Fa
     r[C['VlaveType']] = valve
     r[C['MilePost']] = 300 - dist          # station mileposts run backwards on the real sheet
     r[C['PumpLoc']] = elev if pump else "#N/A"
+    r[C['y']], r[C['x']] = 46.0 + (dist - 100) * 0.0145, -108.0   # due north, ~1 mi per mi
     return r
 
 
@@ -161,6 +162,8 @@ def test_import_auto_detects_pxp(tmp_path):
     assert [p["name"] for p in inp.pump_stations] == ["Midway Station"]
     assert len(inp.check_valves) == 2 and inp.mop_joints
     assert "point-by-point" in sc.meta.notes and "TEST 12 INCH CRUDE LINE" in sc.meta.notes
+    # the sheet's x/y columns become the route for the Map tab
+    assert len(inp.route_latlon) > 2 and inp.route_latlon[0] == pytest.approx([46.0, -108.0])
     # the pipe size came from the file, so the job setup doesn't ask for it
     ws = Workspace()
     r = ws.new_from_import(path, "auto", "pxp job")

@@ -270,3 +270,77 @@ def test_elevation_fields_are_import_only(tmp_path, dem):
 def test_live_usgs_smoke():
     vals = E.USGS3DEP().lookup([(45.78, -108.50), (45.80, -108.52)])
     assert all(v is not None and 2500 < v < 5000 for v in vals)   # Billings, MT area
+
+
+# ---------------------------------------------------------------- map (gis.py)
+
+def _along(route, n):
+    """n evenly spaced (milepost, lat, lon) points along the route."""
+    lat, lon = [p[0] for p in route], [p[1] for p in route]
+    vmp = E.route_mileposts(lat, lon)
+    mp = np.linspace(0, vmp[-1], n)
+    plat, plon = E.interpolate_route(vmp, lat, lon, mp)
+    return list(zip(mp, plat, plon))
+
+
+def test_map_view_places_route_and_stations(tmp_path, dem):
+    ws = Workspace()
+    ws.new_from_import(write_kmz(tmp_path / "line.kmz", ROUTE), "profile", "Line")
+    ws.update_inputs({"pump_stations": [{"mp": 3.0, "name": "Mid PS", "suction_psig": 30}],
+                      "check_valves": [{"mp": 3.0, "name": "Mid PS CV"}, {"mp": 99.0, "name": "Far CV"}]})
+    v = ws.map_view()
+    assert v["has_route"] and len(v["mp"]) == len(v["lat"]) == len(v["elevation_ft"])
+    assert v["lat"][0] == pytest.approx(ROUTE[0][0]) and v["lat"][-1] == pytest.approx(ROUTE[-1][0])
+    assert v["mp"][-1] == pytest.approx(ws.scenario.inputs.elevation_profile[-1][0], abs=1e-3)
+    assert abs(v["mp_scale"] - 1) < 0.01
+    kinds = {f["kind"]: f for f in v["features"]}
+    assert kinds["pump"]["lat"] is not None
+    assert [f["name"] for f in v["features"] if f["kind"] == "check_valve"] == ["Far CV"]   # CV at the pump folded in
+    assert any("Far CV" in w for w in v["warnings"])                                         # MP 99 is off the route
+
+
+def test_attach_route_keeps_profile_and_picks_direction(tmp_path):
+    ws = Workspace()
+    ws.load("bundled:CHS_TipvilleSantaRita_East10/tipville_east10_3mph.json")
+    assert not ws.map_view()["has_route"]
+    inp = ws.scenario.inputs
+    inp.elevation_profile = [[float(m), terrain(la, lo)] for m, la, lo in _along(ROUTE, 200)]
+    before = [list(p) for p in inp.elevation_profile]
+    # the file is drawn from the far end; its own elevations (metres in KML) show that
+    drawn = [(la, lo) for _, la, lo in _along(ROUTE, 40)][::-1]
+    path = write_kmz(tmp_path / "rev.kmz", drawn, lambda la, lo: terrain(la, lo) / 3.28084)
+    out = ws.attach_route(path)
+    assert out["notes"][0].startswith("Direction picked from the file's elevations: reversed") and ws.dirty
+    assert inp.elevation_profile == before
+    assert inp.route_latlon[0] == pytest.approx(list(ROUTE[0]), abs=1e-6)
+    assert "rev.kmz" in ws.scenario.meta.source_files
+    ws.attach_route(path, "as_is")
+    assert inp.route_latlon[0] == pytest.approx(list(ROUTE[-1]), abs=1e-6)
+    with pytest.raises(InputError, match="direction"):
+        ws.attach_route(path, "sideways")
+
+
+def test_map_http_route_upload_and_static_assets(tmp_path):
+    app = App()
+    httpd = app.serve(port=0)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    try:
+        app.ws.load("bundled:CHS_TipvilleSantaRita_East10/tipville_east10_3mph.json")
+        with open(write_kmz(tmp_path / "line.kmz", ROUTE), "rb") as f:
+            data = f.read()
+        req = urllib.request.Request(f"{app.url}api/route/import?filename=line.kmz&direction=as_is", data=data,
+                                     method="POST", headers={"X-App-Token": app.token})
+        with urllib.request.urlopen(req, timeout=30) as r:
+            assert json.loads(r.read())["route_points"] >= len(ROUTE)
+        req = urllib.request.Request(f"{app.url}api/map", headers={"X-App-Token": app.token})
+        with urllib.request.urlopen(req, timeout=30) as r:
+            assert json.loads(r.read())["has_route"]
+        with urllib.request.urlopen(f"{app.url}static/vendor/leaflet/leaflet.js", timeout=10) as r:
+            assert r.headers["Content-Type"].startswith("text/javascript") and b"Leaflet" in r.read(2000)
+        for bad in ("static/../server.py", "static/%2e%2e/server.py", "static/nope.js"):
+            with pytest.raises(urllib.error.HTTPError) as e:
+                urllib.request.urlopen(app.url + bad, timeout=10)
+            assert e.value.code in (403, 404)
+    finally:
+        app.shutdown()
+        httpd.server_close()

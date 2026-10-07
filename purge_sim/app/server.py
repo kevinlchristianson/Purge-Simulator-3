@@ -18,7 +18,7 @@ import threading
 import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Optional, Tuple
-from urllib.parse import parse_qs, quote, urlparse
+from urllib.parse import parse_qs, quote, unquote, urlparse
 
 from . import paths, settings
 from ..data.elevation import DEFAULT_SPACING_FT
@@ -27,6 +27,8 @@ from .importers import ElevationConfirmNeeded
 from .workspace import InputError, Workspace, inputs_summary, results_series, results_summary
 
 MAX_UPLOAD_BYTES = 200 * 1024 * 1024
+STATIC_TYPES = {".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8",
+                ".png": "image/png", ".svg": "image/svg+xml", ".txt": "text/plain; charset=utf-8"}
 
 
 class App:
@@ -84,6 +86,10 @@ class App:
             d = j()
             return 200, ws.fetch_elevation(float(d.get("spacing_ft") or DEFAULT_SPACING_FT),
                                            bool(d.get("reverse")))
+        if route == ("GET", "/api/map"):
+            return 200, ws.map_view()
+        if route == ("POST", "/api/route/import"):
+            return self._upload(q, body, lambda tmp: ws.attach_route(tmp, q.get("direction") or "auto"))
         if route == ("POST", "/api/run"):
             ws.start_run()
             return 200, {"ok": True}
@@ -114,6 +120,24 @@ class App:
             return 200, {"ok": True}
         return 404, {"error": f"no route {method} {path}"}
 
+    def _upload(self, q: dict, body: bytes, use) -> Tuple[int, object]:
+        """Write an uploaded file to a temp folder under its own name, hand it to use(path)."""
+        filename = os.path.basename(q.get("filename", "upload")) or "upload"
+        if not body:
+            raise InputError("no file received")
+        tmp_dir = tempfile.mkdtemp(prefix="purge_upload_")
+        tmp = os.path.join(tmp_dir, filename)
+        with open(tmp, "wb") as f:
+            f.write(body)
+        try:
+            return 200, use(tmp)
+        finally:
+            try:
+                os.remove(tmp)
+                os.rmdir(tmp_dir)
+            except OSError:
+                pass
+
     def _import(self, q: dict, body: bytes) -> Tuple[int, object]:
         """?fetch_elevation=1 confirms a USGS lookup the user was asked about (409 below)."""
         kind = q.get("kind", "") or "auto"
@@ -139,6 +163,11 @@ class App:
                 os.rmdir(tmp_dir)
             except OSError:
                 pass
+
+    def static_path(self, rel: str) -> Optional[str]:
+        root = os.path.realpath(paths.static_dir())
+        p = os.path.realpath(os.path.join(root, unquote(rel or "")))
+        return p if p.startswith(root + os.sep) and os.path.isfile(p) else None
 
     def download_path(self, raw: str) -> Optional[str]:
         """Only files under the outputs folder can be downloaded."""
@@ -179,6 +208,8 @@ class App:
                 query = parse_qs(url.query)
                 if url.path in ("/", "/index.html"):
                     return self._index()
+                if url.path.startswith("/static/") and method == "GET":
+                    return self._static(url.path[len("/static/"):])
                 if not url.path.startswith("/api/"):
                     return self._send(404, {"error": "not found"})
                 token = self.headers.get("X-App-Token") or query.get("token", [""])[0]
@@ -205,6 +236,16 @@ class App:
                 with open(os.path.join(paths.static_dir(), "index.html"), "rb") as f:
                     html = f.read().replace(b"__APP_TOKEN__", app.token.encode())
                 self._send(200, html, "text/html; charset=utf-8")
+
+            def _static(self, rel: str) -> None:
+                """Bundled UI assets (the vendored map library). Nothing outside static/."""
+                p = app.static_path(rel)
+                if not p:
+                    return self._send(404, {"error": "not found"})
+                with open(p, "rb") as f:
+                    data = f.read()
+                ext = os.path.splitext(p)[1].lower()
+                self._send(200, data, STATIC_TYPES.get(ext, "application/octet-stream"))
 
             def _download(self, raw: str) -> None:
                 p = app.download_path(raw)
