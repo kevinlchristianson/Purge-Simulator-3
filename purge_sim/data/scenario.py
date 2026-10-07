@@ -87,6 +87,9 @@ class ScenarioInputs:
     smooth_injection: bool = True
     # Max change in SP rate, SCFM per hour (None = max_injection_scfm / 2 h).
     injection_ramp_scfm_per_hr: Optional[float] = None
+    # How fast the requested drive pressure may rise, psi per hour (falls 2x faster).
+    # None = 60 psi/h.
+    drive_setpoint_slew_psi_per_hr: Optional[float] = None
     # Operating margin below MOP for the drive/injection/boosters. 1.0 = up to MOP;
     # 0.90 = hold a hard 10% below MOP at all times.
     drive_ceiling_fraction: float = 1.0

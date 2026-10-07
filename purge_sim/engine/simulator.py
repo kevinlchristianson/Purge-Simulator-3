@@ -85,9 +85,15 @@ SMOOTH_RAMP_FULL_RANGE_HR = 2.0
 SMOOTH_RECOVERY_RAMP_MULT = 4.0
 # Margin (psi) above the drive that holds target speed, the controller's local face aim.
 SMOOTH_TARGET_MARGIN_PSI = 10.0
-# Below min speed the pump runs toward max while the face is more than this far under the
-# aim, tapering to the hold rate as it closes (recovery that lands on the aim, not past it).
-SMOOTH_RECOVERY_BAND_PSI = 50.0
+# Drive-pressure setpoint: how fast the requested drive may rise toward the lean aim (psi per
+# hour; cfg.drive_setpoint_slew_psi_per_hr overrides). It may fall SMOOTH_SETPOINT_DOWN_MULT
+# times faster (backing the pump off is cheap, and a slow fall keeps injecting into a column
+# the descent is already drawing down). A cap (MOP / max drive) applies at once.
+SMOOTH_SETPOINT_SLEW_PSI_PER_HR = 60.0
+SMOOTH_SETPOINT_DOWN_MULT = 2.0
+# Pump gain: the setpoint error (psi) at which the pump asks for its full rate on top of
+# the hold rate. Larger = gentler pump.
+SMOOTH_PUMP_FULL_RATE_ERROR_PSI = 100.0
 # Adaptive step: the pig may advance at most this fraction of the gas column per step, so a
 # short column near the launch isn't halved in pressure by one 0.1-mile step (the start-up
 # stall/lurch: 0 mph, 3 mph, 0 mph...).
@@ -170,6 +176,9 @@ class SimConfig:
     # Max change in SP injection rate (SCFM per hour). None = max_injection_scfm /
     # SMOOTH_RAMP_FULL_RANGE_HR.
     injection_ramp_scfm_per_hr: Optional[float] = None
+    # How fast the requested drive pressure may rise (psi per hour; falls 2x faster).
+    # None = SMOOTH_SETPOINT_SLEW_PSI_PER_HR.
+    drive_setpoint_slew_psi_per_hr: Optional[float] = None
 
     # Allow boosters to inject FRESH N2 (last-resort makeup) when recompression alone cannot
     # hold the pig. Default OFF: boosters recompress upstream gas only, fed by SP injection.
@@ -772,6 +781,7 @@ def simulate(cfg: SimConfig, progress_cb: Optional[Callable[[float], None]] = No
     total_scf_vented   = 0.0
     stall_start_t_hr: Optional[float] = None   # time when pig first stalled (None = not stalled)
     prev_injection_scfm = 0.0                  # SP rate last step (smooth-injection ramp)
+    drive_setpoint_psig: Optional[float] = None  # smooth controller's requested drive
 
     for step_num in range(cfg.max_steps):
         pig_elevation_ft = elevation_at(pig_mp)
@@ -965,6 +975,8 @@ def simulate(cfg: SimConfig, progress_cb: Optional[Callable[[float], None]] = No
         scf_at_floor = scf_from_pressure_volume(psig_to_psia(min_suction_floor), inj_vol_ft3, cfg.n2_temperature_f)
         scf_deficit  = max(0.0, scf_at_floor - inj_seg.scf)
         _smooth = cfg.smooth_injection and cfg.n2_budget_scf is None
+        _rate_control = _smooth and not any(bs.requested and bs.mp < pig_mp
+                                            for bs in booster_states)
 
         # Fill pressure determines how hard injection pushes.
         #
@@ -1106,7 +1118,10 @@ def simulate(cfg: SimConfig, progress_cb: Optional[Callable[[float], None]] = No
             _v_build   = max(pig_result.pig_speed_mph, cfg.min_speed_mph)
             _dP_dx_max = _dP_dt_max / _v_build                    # psi per mile of travel
             _target = roadmap.capacity_projected_floor(pig_mp, _dP_dx_max)
-            if not _booster_behind:
+            if not _booster_behind and not _rate_control:
+                # (Under the smooth drive-pressure controller the setpoint follows the
+                # capacity projection alone: it asks for the climb's drive when the pump can
+                # build it in time, and holds the column lean until then.)
                 # Pre-first-booster, SP is the sole source and can't pressurize a long column
                 # quickly, so the capacity projection discounts distant climbs to ~0 (it "gives
                 # up"). But the right play is to build EARLY — from mile zero while the column is
@@ -1168,31 +1183,32 @@ def simulate(cfg: SimConfig, progress_cb: Optional[Callable[[float], None]] = No
         # the pig face directly. (Gated on a booster actually being behind the pig, not on the
         # scenario having zero boosters — pre-NW the pig has none behind it even though the run
         # uses boosters, and previously the build never fired there, leaving the column slack.)
-        _rate_control = _smooth and not _booster_behind
         if _rate_control:
-            # --- SMOOTH RATE CONTROLLER (SP the only source; see SMOOTH_* above) ---
-            # The pump rate that moves the pig at target speed with gas at the aim pressure.
-            # Not a one-step pressure fix: the column builds or draws down toward the aim at
-            # the pace the pig's own displacement sets, and holds there at target speed.
-            # When the aim is capped under the drive target speed needs (drive-capped job,
-            # MOP ahead), the pig will run at the cap's speed, not target: the hold rate is
-            # taken at the speed it actually makes, so the column settles AT the cap instead
-            # of building past it toward the gas-side MOP and venting.
-            _v_rate = (cfg.target_speed_mph
-                       if pig_face_target_psig >= pig_result.drive_for_target_psig
-                       else pig_result.pig_speed_mph)
-            _q_set = scfm_from_pig_velocity(
-                mph_to_fts(_v_rate), area_ft2,
-                psig_to_psia(max(pig_face_target_psig, 0.0)), cfg.n2_temperature_f,
+            # --- SMOOTH DRIVE-PRESSURE CONTROLLER (SP the only source; see SMOOTH_* above) ---
+            # Drive pressure drives the pig. The engine requests a drive-pressure SETPOINT
+            # that moves slowly (slew-limited toward the lean aim: local drive for target
+            # speed, next station handoff, roadmap climbs, MOP cap), and the nitrogen pump
+            # trims its rate slowly toward delivering it: the rate that holds the current
+            # pressure at the pig's current speed, plus a gain on the setpoint error, then
+            # the ramp limit below. Above the setpoint the pump backs off and the stored
+            # column coasts the pig; below it the pump builds.
+            _aim = pig_face_target_psig
+            if drive_setpoint_psig is None:
+                drive_setpoint_psig = min(_aim, max(pig_face_psig, 0.0))
+            _slew = (cfg.drive_setpoint_slew_psi_per_hr
+                     if cfg.drive_setpoint_slew_psi_per_hr is not None
+                     else SMOOTH_SETPOINT_SLEW_PSI_PER_HR) * dt_hr
+            drive_setpoint_psig = min(max(_aim, drive_setpoint_psig - _slew * SMOOTH_SETPOINT_DOWN_MULT),
+                                      drive_setpoint_psig + _slew)
+            if math.isfinite(mop_cap) and mop_cap > 0:
+                drive_setpoint_psig = min(drive_setpoint_psig, mop_cap)   # a cap is immediate
+            _q_hold = scfm_from_pig_velocity(
+                pig_result.pig_speed_fts, area_ft2,
+                psig_to_psia(max(pig_face_psig, 0.0)), cfg.n2_temperature_f,
             )
-            if below_min:
-                # Slack-line recovery / launch: run the pump up toward max while the face is
-                # under the aim, tapering back to the hold rate over the last
-                # SMOOTH_RECOVERY_BAND_PSI so the column arrives at the aim, not past it.
-                _short = max(0.0, pig_face_target_psig - pig_face_psig)
-                _push = min(1.0, _short / SMOOTH_RECOVERY_BAND_PSI)
-                _q_set = _q_set + (cfg.max_injection_scfm - _q_set) * _push
-            scf_inject = _q_set * dt_hr * 60.0
+            _gain = cfg.max_injection_scfm / SMOOTH_PUMP_FULL_RATE_ERROR_PSI
+            _q_set = _q_hold + _gain * (drive_setpoint_psig - pig_face_psig)
+            scf_inject = max(0.0, _q_set) * dt_hr * 60.0
         elif not pig_result.meter_valve_active and not _booster_behind:
             target_scf = inj_seg.scf_at_pressure(fill_pressure_psig)
             scf_inject = max(scf_inject, target_scf - inj_seg.scf)
@@ -1219,7 +1235,8 @@ def simulate(cfg: SimConfig, progress_cb: Optional[Callable[[float], None]] = No
         # worst-ahead floor) to zero (a band above it). The abrupt cut was what stalled the
         # pig — it coasted to empty, then injection couldn't recover fast enough into a climb.
         # The taper resumes injection gradually as the column draws down, smoothing recovery.
-        if roadmap is not None and not below_min and cfg.n2_budget_scf is None:
+        if roadmap is not None and not below_min and cfg.n2_budget_scf is None \
+                and not _rate_control:
             floor_ahead = roadmap.max_floor_ahead(pig_mp, COAST_HORIZON_MI)
             over = pig_face_psig - floor_ahead
             if over >= COAST_RAMP_BAND_PSI:
