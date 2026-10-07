@@ -72,6 +72,12 @@ class App:
             return 200, ws.save_as(d.get("name", ""), d.get("notes"), bool(d.get("overwrite")))
         if route == ("POST", "/api/scenario/import"):
             return self._import(q, body)
+        if route == ("GET", "/api/intake"):
+            return 200, ws.intake_view()
+        if route == ("POST", "/api/intake"):
+            return 200, ws.apply_intake(j().get("answers") or {})
+        if route == ("GET", "/api/precheck"):
+            return 200, ws.precheck()
         if route == ("GET", "/api/elevation"):
             return 200, ws.elevation_view(max_points=int(q.get("max_points", 800)))
         if route == ("POST", "/api/elevation/fetch"):

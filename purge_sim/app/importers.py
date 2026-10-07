@@ -115,5 +115,8 @@ def scenario_from_file(path: str, kind: str, name: str, fetch_elevation: Optiona
     meta = ScenarioMeta(name=name or os.path.splitext(os.path.basename(path))[0],
                         source_files=[os.path.basename(path)],
                         notes=describe_source(inputs.elevation_source)
-                        if inputs.elevation_source.get("provider") != "file" else "")
+                        if inputs.elevation_source.get("provider") != "file" else "",
+                        # Everything the file can't tell us is still a default; the job intake
+                        # (intake.py) asks for it instead of treating those defaults as answers.
+                        intake={"fresh_import": True})
     return Scenario(meta=meta, inputs=inputs), warnings

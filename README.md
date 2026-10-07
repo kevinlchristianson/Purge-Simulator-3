@@ -28,6 +28,14 @@ Nothing leaves the machine except assistant messages, which go to the Claude API
   `ANTHROPIC_API_KEY` before launching. The key is kept in `~/.purge_sim/settings.json`
   (never in the repo or the packaged app). The model defaults to `claude-opus-5-5` and can
   be changed in Settings.
+- **Setting up a new job.** Import the route (or attach the KMZ in the assistant panel),
+  then answer the questions on the **Job setup** tab: pipe size, product, MOP, drive cap,
+  pig stop and where the liquid leaves, speeds, strategy. Blank questions use a default,
+  and every default that is only a typical value is listed as an assumption to confirm and
+  written into the scenario notes. A pre-run check classifies the job (speed- or
+  drive-capped, friction-dominated, laminar, gravity-assisted) and sizes pack-and-coast
+  before anything runs. Or just describe the job to the assistant, which fills in the same
+  questions.
 - **What the assistant can do.** Read and explain the open scenario, change inputs (the
   same validation as the form, and it can't break the hard engineering rules), run the
   simulation, sweep one input across several values, read results and the profile at any

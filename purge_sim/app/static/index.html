@@ -111,6 +111,16 @@ table.t td.n { text-align: right; font-variant-numeric: tabular-nums; }
 .chat-input { border-top: 1px solid var(--border); padding: 8px; display: flex; gap: 6px; }
 .chat-input textarea { font-family: inherit; font-size: 14px; resize: none; height: 58px; }
 .typing { font-size: 12px; color: var(--muted); padding: 0 12px 6px; min-height: 18px; }
+.attach { padding: 0 12px 6px; display: flex; gap: 8px; align-items: center; }
+.q { display: grid; grid-template-columns: minmax(0, 1fr) 150px; gap: 8px; align-items: center; padding: 3px 0; }
+.q[hidden] { display: none; }
+.q label { font-size: 13px; }
+.q .hint { grid-column: 1 / -1; font-size: 11px; color: var(--muted); margin-top: -2px; }
+.q input, .q select { width: 100%; }
+.q.missing label { color: var(--bad); font-weight: 600; }
+.q.missing input, .q.missing select { border-color: var(--bad); }
+.src { font-size: 10px; text-transform: uppercase; letter-spacing: .03em; padding: 0 4px; border-radius: 3px; border: 1px solid var(--border); color: var(--muted); margin-left: 4px; }
+.src.assumed { border-color: var(--warn); color: var(--warn); }
 .suggest { display: flex; flex-wrap: wrap; gap: 6px; }
 .suggest button { font-size: 12px; text-align: left; }
 
@@ -152,12 +162,14 @@ input[type=range] { width: 100%; }
   <section>
     <div class="tabs" id="tabs">
       <button data-tab="overview" class="on">Overview</button>
+      <button data-tab="setup">Job setup</button>
       <button data-tab="inputs">Inputs</button>
       <button data-tab="charts">Charts</button>
       <button data-tab="profile">Pipeline profile</button>
       <button data-tab="exports">Reports</button>
     </div>
     <div id="tab-overview"></div>
+    <div id="tab-setup" hidden></div>
     <div id="tab-inputs" hidden></div>
     <div id="tab-charts" hidden></div>
     <div id="tab-profile" hidden></div>
@@ -167,8 +179,11 @@ input[type=range] { width: 100%; }
     <div class="chat-head"><b>Assistant</b><button id="btnChatReset" class="small">New chat</button></div>
     <div class="msgs" id="msgs"></div>
     <div class="typing" id="typing"></div>
+    <div class="attach small muted" id="attachInfo" hidden></div>
     <div class="chat-input">
-      <textarea id="chatIn" placeholder="Ask about this scenario or results…"></textarea>
+      <button id="btnAttach" title="Attach a KMZ, profile or ILI file: it is imported as a new scenario when you send">📎</button>
+      <input type="file" id="chatFile" hidden accept=".kmz,.kml,.txt,.csv,.gpx,.xlsx,.xls,.xlsm">
+      <textarea id="chatIn" placeholder="Ask about this scenario, or attach a KMZ and describe the job…"></textarea>
       <button class="primary" id="btnSend">Send</button>
     </div>
   </div>
@@ -205,7 +220,7 @@ input[type=range] { width: 100%; }
     <select id="impKind"><option value="ili">Rosen ILI Excel (elevation, MOP, stations)</option><option value="profile">Elevation profile (KMZ, KML, TXT/CSV, Excel)</option></select></div>
   <div class="row"><label for="impFile">File</label><input id="impFile" type="file"></div>
   <div class="row"><label for="impName">Scenario name</label><input id="impName"></div>
-  <p class="small muted">A KMZ without elevations is looked up in USGS 3DEP (US only, needs internet) at 250 ft spacing. Pipe geometry, fluid, drive limits and station roles start at defaults. Ask the assistant to help classify the data.</p>
+  <p class="small muted">A KMZ without elevations is looked up in USGS 3DEP (US only, needs internet) at 250 ft spacing. Pipe size, product, MOP and drive limits come next, on the Job setup tab (or describe the job to the assistant).</p>
   <div class="actions"><button id="impCancel">Cancel</button><button class="primary" id="impOk">Import</button></div>
 </dialog>
 
@@ -237,7 +252,7 @@ const S = {revision: -1, scenario: null, results: null, scenarios: [], state: nu
 document.querySelectorAll("#tabs button").forEach(b => b.onclick = () => {
   S.tab = b.dataset.tab;
   document.querySelectorAll("#tabs button").forEach(x => x.classList.toggle("on", x === b));
-  for (const id of ["overview", "inputs", "charts", "profile", "exports"]) $("#tab-" + id).hidden = id !== S.tab;
+  for (const id of ["overview", "setup", "inputs", "charts", "profile", "exports"]) $("#tab-" + id).hidden = id !== S.tab;
   try { localStorage.setItem("purge.tab", S.tab); } catch (e) {}
   renderTab();
 });
@@ -295,7 +310,7 @@ setInterval(poll, 800);
 
 // ---------------------------------------------------------------- overview
 function renderTab() {
-  ({overview: renderOverview, inputs: renderInputs, charts: renderCharts, profile: renderProfile, exports: renderExports})[S.tab]();
+  ({overview: renderOverview, setup: renderSetup, inputs: renderInputs, charts: renderCharts, profile: renderProfile, exports: renderExports})[S.tab]();
 }
 function renderOverview() {
   const el = $("#tab-overview");
@@ -359,6 +374,71 @@ $("#elevOk").onclick = async () => {
   $("#elevOk").disabled = false;
 };
 const kpi = (v, l) => `<div class="kpi"><div class="v">${esc(v)}</div><div class="l">${esc(l)}</div></div>`;
+
+
+// ---------------------------------------------------------------- job setup (intake questions)
+async function renderSetup() {
+  const el = $("#tab-setup");
+  if (!S.scenario) { el.innerHTML = `<div class="empty">Open a scenario or import a route first.</div>`; return; }
+  let v; try { v = await api("/api/intake"); } catch (e) { el.innerHTML = `<div class="flag bad">${esc(e.message)}</div>`; return; }
+  if (S.tab !== "setup") return;
+  const shown = x => x == null ? "" : (typeof x === "number" ? String(+x.toFixed(4)) : String(x));
+  let html = `<div class="card"><b>Job setup</b>
+    <p class="small muted" style="margin:4px 0 0">Answer what you know. A blank question uses the default shown in it; defaults marked <span class="src assumed">assumed</span> are typical values listed in the notes for you to confirm. The assistant fills in this same form from a description of the job.</p>
+    ${v.missing.length ? `<div class="flag bad">Still needed: ${v.missing.map(id => esc(v.questions.find(q => q.id === id).label)).join(", ")}</div>` : ""}
+    <div style="display:flex;gap:8px;margin-top:8px"><button class="primary" id="setupApply">Apply</button><button id="setupCheck">Pre-run check</button></div></div><div id="setupReport"></div>`;
+  const sections = [];
+  for (const q of v.questions) { let g = sections.find(x => x[0] === q.section); if (!g) sections.push(g = [q.section, []]); g[1].push(q); }
+  html += `<div class="grid2">` + sections.map(([sec, qs]) => `<details class="group" open><summary>${esc(sec)}</summary>` + qs.map(q => {
+    const ph = q.default == null ? (q.required ? "required" : "") : "default: " + shown(q.default);
+    const ans = q.answer;
+    let ctl;
+    if (q.kind === "select") ctl = `<select data-q="${q.id}"><option value="">${esc(q.default == null ? (q.required ? "— required —" : "—") : "default: " + (q.options.find(o => o.value === String(q.default)) || {label: shown(q.default)}).label)}</option>${q.options.map(o => `<option value="${esc(o.value)}" ${ans != null && String(ans) === o.value ? "selected" : ""}>${esc(o.label)}</option>`).join("")}</select>`;
+    else if (q.kind === "bool") ctl = `<select data-q="${q.id}"><option value="">default: ${q.default ? "yes" : "no"}</option><option value="true" ${ans === true ? "selected" : ""}>yes</option><option value="false" ${ans === false ? "selected" : ""}>no</option></select>`;
+    else ctl = `<input data-q="${q.id}" inputmode="decimal" value="${ans == null ? "" : esc(shown(ans))}" placeholder="${esc(ph)}">`;
+    const src = ans == null && q.default != null && q.default_source === "assumed" ? `<span class="src assumed">assumed</span>` : "";
+    return `<div class="q ${q.status === "missing" ? "missing" : ""}" ${q.relevant ? "" : "hidden"} data-row="${q.id}"><label title="${esc(q.id)}">${esc(q.label)}${q.unit ? ` <span class="muted small">(${esc(q.unit)})</span>` : ""}${src}</label>${ctl}${q.help ? `<div class="hint">${esc(q.help)}</div>` : ""}</div>`;
+  }).join("") + `</details>`).join("") + `</div>`;
+  el.innerHTML = html;
+  if (S.setupReport) $("#setupReport").innerHTML = setupReportHtml(S.setupReport);
+  $("#setupApply").onclick = async () => {
+    const answers = {};
+    el.querySelectorAll("[data-q]").forEach(c => {
+      const q = v.questions.find(x => x.id === c.dataset.q), raw = c.value.trim();
+      answers[q.id] = raw === "" ? null : q.kind === "number" ? Number(raw) : q.kind === "bool" ? raw === "true" : raw;
+    });
+    $("#setupApply").disabled = true;
+    try { S.setupReport = await api("/api/intake", {body: {answers}}); toast("Job setup applied. Review it, then save."); await poll(true); }
+    catch (e) { toast(e.message); }
+    if ($("#setupApply")) $("#setupApply").disabled = false;
+  };
+  $("#setupCheck").onclick = async () => {
+    try { S.setupReport = {precheck: await api("/api/precheck"), assumptions: [], warnings: [], changed: null}; $("#setupReport").innerHTML = setupReportHtml(S.setupReport); }
+    catch (e) { toast(e.message); }
+  };
+}
+function setupReportHtml(r) {
+  const p = r.precheck || {};
+  let h = "";
+  if (r.warnings && r.warnings.length) h += r.warnings.map(w => `<div class="flag warn">${esc(w)}</div>`).join("");
+  if (r.assumptions && r.assumptions.length) h += `<div class="card"><b>Assumptions to confirm</b><ul class="small">${r.assumptions.map(a => `<li>${esc(a)}</li>`).join("")}</ul></div>`;
+  if (p.error) h += `<div class="flag bad">Pre-run check: ${esc(p.error)}</div>`;
+  else if (p.job_type) {
+    const rd = p.required_drive_psig || {};
+    h += `<div class="card"><b>Pre-run check</b> <span class="small muted">${esc(p.job_type.join(" · "))}</span>
+      <div class="kpis" style="margin:8px 0">
+        ${kpi(fmt(rd.at_launch), "Drive needed at launch (psig)")}
+        ${kpi(fmt(p.drive_cap_psig), "Drive cap (psig)")}
+        ${kpi(fmt(p.friction_psi_per_mi, 1), "Friction (psi/mi)")}
+        ${kpi(fmt(p.static_pack_limit_psig), "Flat pack limit (psig)")}
+        ${kpi(fmt(p.line_volume_bbl), "Line volume (bbl)")}
+        ${kpi(p.n2_min_coast_budget_scf ? fmt(p.n2_min_coast_budget_scf / 1e6, 2) : "—", "Min coast N2 (MMscf)")}
+      </div>
+      <ul class="small">${(p.findings || []).map(f => `<li>${esc(f)}</li>`).join("")}</ul>
+      <div class="small muted">An estimate from terrain and steady friction at target speed, exit at ${esc(p.exit_note || "the pig stop")}. Run the scenario for the real answer.</div></div>`;
+  }
+  return h;
+}
 
 // ---------------------------------------------------------------- inputs
 const GROUPS = [
@@ -570,7 +650,9 @@ $("#impOk").onclick = async () => {
   const go = async () => {
     const r = await api("/api/scenario/import?" + q, {method: "POST", raw});
     $("#dlgImport").close();
-    toast("Imported. Review the inputs, then save." + (r.warnings && r.warnings.length ? " " + r.warnings[0] : ""));
+    toast("Imported. Answer the job setup questions, then save." + (r.warnings && r.warnings.length ? " " + r.warnings[0] : ""));
+    S.setupReport = null;
+    document.querySelector('#tabs [data-tab="setup"]').click();
     poll(true);
   };
   try { await go(); }
@@ -624,6 +706,7 @@ function md(text) {
 }
 const SUGGEST = [
   "Summarize this scenario and what kind of job it is.",
+  "What's still missing from the job setup?",
   "Run it and tell me what limits the purge.",
   "Compare max drive pressures of 450, 500 and 550 psig.",
   "Where is the tightest MOP margin, and how close does the run get?",
@@ -640,8 +723,48 @@ async function loadChat() {
   $("#typing").textContent = c.busy ? "Working…" : (S.keySet === false ? "Add your Claude API key in Settings to use the assistant." : "");
   $("#btnSend").disabled = c.busy;
 }
+// A file attached in the chat is imported as a new scenario when the message is sent,
+// so "here's the KMZ, it's a 6 inch diesel line..." is one step.
+let chatFile = null;
+$("#btnAttach").onclick = () => $("#chatFile").click();
+$("#chatFile").onchange = () => {
+  chatFile = $("#chatFile").files[0] || null;
+  $("#attachInfo").hidden = !chatFile;
+  $("#attachInfo").innerHTML = chatFile ? `📎 ${esc(chatFile.name)} <button class="small" id="attachClear">Remove</button>` : "";
+  if (chatFile) $("#attachClear").onclick = () => { chatFile = null; $("#chatFile").value = ""; $("#attachInfo").hidden = true; };
+};
+async function importChatFile(f) {
+  if (S.state && S.state.dirty && !confirm("The open scenario has unsaved changes. Import the attached file as a new scenario anyway?")) return false;
+  const ext = f.name.split(".").pop().toLowerCase();
+  const kinds = ["xlsx", "xls", "xlsm"].includes(ext) ? ["ili", "profile"] : ["profile"];
+  const raw = await f.arrayBuffer();
+  let lastErr;
+  for (const kind of kinds) {
+    const q = new URLSearchParams({kind, filename: f.name, name: f.name.replace(/\.[^.]+$/, "")});
+    try { await api("/api/scenario/import?" + q, {method: "POST", raw}); return true; }
+    catch (e) {
+      if (e.status === 409 && e.data && e.data.needs_elevation_confirm) {
+        if (!confirm(e.message)) return false;
+        q.set("fetch_elevation", "1");
+        try { await api("/api/scenario/import?" + q, {method: "POST", raw}); return true; } catch (e2) { lastErr = e2; continue; }
+      }
+      lastErr = e;
+    }
+  }
+  toast("Couldn't import " + f.name + ": " + (lastErr ? lastErr.message : "unknown error"));
+  return false;
+}
 async function send() {
-  const t = $("#chatIn").value.trim(); if (!t) return;
+  let t = $("#chatIn").value.trim(); if (!t && !chatFile) return;
+  if (chatFile) {
+    $("#btnSend").disabled = true; $("#typing").textContent = "Importing " + chatFile.name + "…";
+    const ok = await importChatFile(chatFile);
+    $("#btnSend").disabled = false; $("#typing").textContent = "";
+    if (!ok) return;
+    t = `[Attached ${chatFile.name}; it is now open as a new scenario.]` + (t ? "\n" + t : "\nSet up this job.");
+    chatFile = null; $("#chatFile").value = ""; $("#attachInfo").hidden = true;
+    await poll(true);
+  }
   try { await api("/api/chat", {body: {message: t}}); $("#chatIn").value = ""; await loadChat(); $("#msgs").scrollTop = 1e9; }
   catch (e) { toast(e.message); }
 }

@@ -28,6 +28,9 @@ class ScenarioMeta:
     modified_at: str = ""
     notes: str = ""
     source_files: List[str] = field(default_factory=list)
+    # Job intake answers (purge_sim/app/intake.py): what the engineer told us about the
+    # job, kept with the scenario so the setup can be reviewed and changed later.
+    intake: dict = field(default_factory=dict)
 
     def __post_init__(self):
         if not self.created_at:
@@ -146,9 +149,10 @@ class Scenario:
 
     @classmethod
     def from_dict(cls, d: dict) -> 'Scenario':
-        meta = ScenarioMeta(**d.get('meta', {}))
-        # Strip keys no longer in ScenarioInputs so old saved scenarios load cleanly
+        # Strip keys no longer in ScenarioMeta / ScenarioInputs so old saved scenarios load cleanly
         import dataclasses
+        meta_valid = {f.name for f in dataclasses.fields(ScenarioMeta)}
+        meta = ScenarioMeta(**{k: v for k, v in d.get('meta', {}).items() if k in meta_valid})
         valid = {f.name for f in dataclasses.fields(ScenarioInputs)}
         inputs_raw = {k: v for k, v in d.get('inputs', {}).items() if k in valid}
         inputs = ScenarioInputs(**inputs_raw)
