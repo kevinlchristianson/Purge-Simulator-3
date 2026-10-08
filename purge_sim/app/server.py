@@ -72,7 +72,12 @@ class App:
                          "assistant_entries": len(asst.transcript)}
         if route == ("GET", "/api/scenarios"):
             return 200, {"scenarios": ws.list_scenarios(),
+                         "hidden": len(settings.hidden_scenarios()),
                          "user_dir": paths.user_scenarios_dir()}
+        if route == ("POST", "/api/scenario/delete"):
+            return 200, ws.delete_scenario(j().get("id", ""))
+        if route == ("POST", "/api/scenario/restore_hidden"):
+            return 200, ws.restore_hidden_scenarios()
         if route == ("POST", "/api/scenario/load"):
             return 200, ws.load(j().get("id", ""))
         if route == ("GET", "/api/scenario"):

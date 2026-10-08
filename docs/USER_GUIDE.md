@@ -326,6 +326,13 @@ carry a small *mine* tag. Anything without a client or pipeline sits under **Unf
 (older saved files keep loading as they are; give them a client and pipeline and save to
 file them).
 
+**Deleting a scenario:** hover it in the library and click **✕ Delete**; the app asks
+first. One of your own scenarios is moved to a `.deleted` folder inside your scenarios
+folder (the library doesn't show it; move the file back out to restore it). A built-in
+client-job scenario is never removed from disk, only hidden: *show again* at the bottom of
+the library brings back every hidden one. If the scenario you delete is open, it stays open
+as an unsaved scenario until you open another one.
+
 **Name, client, pipeline, details and notes are edited at the top of the Overview tab.**
 *Details* is the one line shown under the name in the library (for example
 `500 psig cap, 3 mph`). Edits stay in the form until you click **Save** (or press
@@ -359,7 +366,12 @@ name.
   profile they can scrub or play through the run (N2 and liquid pressure, MOP, elevation,
   hydraulic grade line, pump station status), the four charts with hover readouts, the job
   basis, stations and valves (pump stations, check valves, block valves, the BPCV and the
-  boosters that ran), and the Purge Report table. It prints cleanly (Ctrl+P, or save as PDF).
+  boosters that ran), and the Purge Report table, shown whole (no scroll box; its header row
+  stays at the top as you scroll down). Two checkboxes above the charts add the elevation
+  profile (right axis, ft; on the time charts it is the ground under the pig) and a vertical
+  line at every station and valve (on the time charts, at the moment the pig passed it;
+  hover a line for its name). It prints cleanly (Ctrl+P, or save as PDF), with the charts as
+  they were last set.
   Your scenario notes are **left off** unless you tick *Put the scenario notes on the client
   web page*, because notes often carry internal tender reasoning.
 - **Purge Report:** the table in the client xlsx and on the client web page has one row

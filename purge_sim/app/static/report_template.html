@@ -62,6 +62,8 @@ h2 { font-size: 19px; margin: 0 0 10px; }
 .flag.warn { border-color: var(--warn); color: var(--warn); }
 .legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 13px; color: var(--muted); margin: 2px 0 4px; }
 .legend i { display: inline-block; width: 14px; height: 3px; vertical-align: middle; margin-right: 6px; border-radius: 2px; }
+.legend i.mk { width: 2px; height: 12px; border-radius: 0; }
+.chartopts { display: flex; gap: 6px 18px; flex-wrap: wrap; font-size: 13.5px; margin: 0 0 12px; }
 .legend i.dash { background: repeating-linear-gradient(90deg, currentColor 0 5px, transparent 5px 8px) !important; }
 .chart { position: relative; }
 .chart svg { display: block; width: 100%; height: auto; }
@@ -76,13 +78,15 @@ button:hover { border-color: var(--accent); }
 .readout b { color: var(--text); }
 .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 14px; }
 .scroll { overflow-x: auto; }
-#purge .scroll { max-height: 75vh; overflow: auto; }
 table { border-collapse: collapse; width: 100%; font-size: 13px; }
 th, td { border-bottom: 1px solid var(--border); padding: 5px 8px; text-align: left; vertical-align: top; }
 th { color: var(--muted); font-weight: 600; }
 td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 table.basis th { width: 34%; }
-table.purge thead th { position: sticky; top: 0; background: var(--panel); font-size: 12px; }
+/* The Purge Report is shown whole (no scroll box): headers wrap so every column fits the page
+   width, and the header row stays visible under the menu bar as the page scrolls. */
+table.purge thead th { position: sticky; top: var(--nav-h, 41px); background: var(--panel); font-size: 12px; white-space: normal; vertical-align: bottom; z-index: 1; }
+table.purge td { padding: 4px 6px; }
 table.purge tbody tr:nth-child(even) td { background: var(--panel-2); }
 tr.feat td { background: color-mix(in srgb, var(--hgl) 10%, transparent) !important; }
 tr.viol td { color: var(--bad); font-weight: 600; }
@@ -100,7 +104,8 @@ footer { color: var(--muted); font-size: 12.5px; padding: 18px 0 34px; }
   .hero { -webkit-print-color-adjust: exact; print-color-adjust: exact; padding: 16px; }
   .card, .kpi, tr { break-inside: avoid; }
   section { padding-top: 10px; }
-  .scroll, #purge .scroll { overflow: visible; max-height: none; }
+  .scroll { overflow: visible; }
+  table.purge thead th { position: static; }
   #featToggle { display: none; }
 }
 </style>
@@ -128,7 +133,12 @@ footer { color: var(--muted); font-size: 12.5px; padding: 18px 0 34px; }
       <div id="pfStations" class="scroll"></div>
     </div>
   </section>
-  <section id="charts"><h2>Charts</h2><div id="chartList"></div></section>
+  <section id="charts"><h2>Charts</h2>
+    <div class="chartopts noprint">
+      <label><input type="checkbox" id="optElev"> Overlay the elevation profile (right axis, ft)</label>
+      <label id="optMarkLabel"><input type="checkbox" id="optMarks"> Show stations and valves (vertical lines)</label>
+    </div>
+    <div id="chartList"></div></section>
   <section id="basis"><h2>Job basis</h2><div class="grid2">
     <div class="card"><h3>Inputs</h3><table class="basis" id="basisTable"></table></div>
     <div class="card"><h3>Stations and valves</h3><div id="facilities"></div></div>
@@ -136,7 +146,7 @@ footer { color: var(--muted); font-size: 12.5px; padding: 18px 0 34px; }
   <section id="purge"><h2>Purge report</h2>
     <div class="card"><p class="small muted" style="margin:0 0 8px">One row for every quarter mile the pig travels, counted from 0 at the launch (the same table as the Purge Report workbook). Red rows exceed MOP; a shaded speed cell marks slack-line risk.</p>
     <div class="small" id="featToggle" hidden style="margin:0 0 8px"><label><input type="checkbox" id="showFeat"> Add stations, valves, markers and crossings to the table</label></div>
-    <div class="scroll"><table class="purge" id="purgeTable"></table></div></div>
+    <table class="purge" id="purgeTable"></table></div>
   </section>
   <section id="notes" hidden><h2>Notes</h2><div class="card notes" id="notesBody"></div></section>
   <footer id="foot"></footer>
@@ -188,11 +198,13 @@ function niceTicks(lo, hi, n) {
 const tickFmt = t => fmt(t, Math.abs(t) < 10 && t % 1 ? 1 : 0);
 const css = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 
-// opts: {x, series: [{name, y, color, axis, dash, width, nd, unit}], xLabel, yLabel, y2Label, zeroBase, markers, height}
+// opts: {x, series: [{name, y, color, axis: "left"|"right"|"elev", dash, width, nd, unit}], xLabel, yLabel, y2Label, elevLabel,
+//        zeroBase, markers: [{x, label, name, color, solid, dash, row}], height}
+// "elev" is a feet axis on the right, outside the "right" axis when a chart has both.
 function lineChart(el, opts) {
   const W = Math.max(320, el.clientWidth || 900), H = opts.height || Math.round(Math.min(320, Math.max(220, W * 0.36)));
-  const right = opts.series.some(s => s.axis === "right");
-  const m = {l: 60, r: right ? 60 : 16, t: 14, b: 38};
+  const hasR = opts.series.some(s => s.axis === "right"), hasE = opts.series.some(s => s.axis === "elev");
+  const m = {l: 60, r: hasR && hasE ? 116 : hasR || hasE ? 60 : 16, t: 14, b: 38};
   const xs = opts.x.filter(v => v != null);
   if (!xs.length) { el.innerHTML = `<p class="muted small">No data</p>`; return; }
   const xlo = Math.min(...xs), xhi = Math.max(...xs);
@@ -200,30 +212,34 @@ function lineChart(el, opts) {
     let lo = Infinity, hi = -Infinity;
     for (const s of opts.series) if ((s.axis || "left") === axis) for (const v of s.y) if (v != null) { lo = Math.min(lo, v); hi = Math.max(hi, v); }
     if (!isFinite(lo)) return null; if (hi === lo) { hi += 1; lo -= 1; }
-    const pad = (hi - lo) * 0.06; return [opts.zeroBase && lo >= 0 ? 0 : lo - pad, hi + pad];
+    const pad = (hi - lo) * 0.06; return [opts.zeroBase && axis !== "elev" && lo >= 0 ? 0 : lo - pad, hi + pad];
   };
-  const L = range("left"), R = range("right");
+  const L = range("left"), R = range("right"), E = range("elev");
+  if (L) m.l = Math.max(m.l, 22 + 6.5 * Math.max(...niceTicks(L[0], L[1], 5).map(t => tickFmt(t).length)));   // room for "12,000,000"
   const sx = v => m.l + (v - xlo) / ((xhi - xlo) || 1) * (W - m.l - m.r);
   const sy = (v, r) => H - m.b - (v - r[0]) / (r[1] - r[0]) * (H - m.t - m.b);
   let g = "";
   for (const t of niceTicks(xlo, xhi, Math.max(4, Math.round(W / 110)))) g += `<line x1="${sx(t)}" x2="${sx(t)}" y1="${m.t}" y2="${H - m.b}" stroke="var(--grid)"/><text x="${sx(t)}" y="${H - m.b + 16}" text-anchor="middle">${tickFmt(t)}</text>`;
   if (L) for (const t of niceTicks(L[0], L[1], 5)) g += `<line x1="${m.l}" x2="${W - m.r}" y1="${sy(t, L)}" y2="${sy(t, L)}" stroke="var(--grid)"/><text x="${m.l - 7}" y="${sy(t, L) + 4}" text-anchor="end">${tickFmt(t)}</text>`;
   if (R) for (const t of niceTicks(R[0], R[1], 5)) g += `<text x="${W - m.r + 7}" y="${sy(t, R) + 4}">${tickFmt(t)}</text>`;
+  if (E) for (const t of niceTicks(E[0], E[1], 5)) g += `<text x="${W - m.r + (R ? 62 : 7)}" y="${sy(t, E) + 4}" style="fill:var(--ground)">${tickFmt(t)}</text>`;
   g += `<line x1="${m.l}" x2="${W - m.r}" y1="${H - m.b}" y2="${H - m.b}" stroke="var(--border)"/>`;
   g += `<text x="${(m.l + W - m.r) / 2}" y="${H - 5}" text-anchor="middle">${esc(opts.xLabel || "")}</text>`;
   if (opts.yLabel) g += `<text transform="translate(14 ${(H - m.b + m.t) / 2}) rotate(-90)" text-anchor="middle">${esc(opts.yLabel)}</text>`;
-  if (opts.y2Label) g += `<text transform="translate(${W - 8} ${(H - m.b + m.t) / 2}) rotate(90)" text-anchor="middle">${esc(opts.y2Label)}</text>`;
+  if (opts.y2Label && R) g += `<text transform="translate(${E ? W - 64 : W - 8} ${(H - m.b + m.t) / 2}) rotate(90)" text-anchor="middle">${esc(opts.y2Label)}</text>`;
+  if (E) g += `<text transform="translate(${W - 8} ${(H - m.b + m.t) / 2}) rotate(90)" text-anchor="middle" style="fill:var(--ground)">${esc(opts.elevLabel || "Elevation (ft)")}</text>`;
   for (const s of opts.series) {
-    const r = (s.axis || "left") === "right" ? R : L; if (!r) continue;
+    const r = {right: R, elev: E}[s.axis] || L; if (!r) continue;
     const xv = s.x || opts.x;
     let d = "", pen = false;
     xv.forEach((x, i) => { const y = s.y[i]; if (x == null || y == null) { pen = false; return; } d += (pen ? "L" : "M") + sx(x).toFixed(1) + " " + sy(y, r).toFixed(1); pen = true; });
     if (s.fill) d && (g += `<path d="${d} L${sx(xv[xv.length - 1]).toFixed(1)} ${H - m.b} L${sx(xv[0]).toFixed(1)} ${H - m.b} Z" fill="${s.color}" fill-opacity=".12" stroke="none"/>`);
     g += `<path d="${d}" fill="none" stroke="${s.color}" stroke-width="${s.width || 1.8}" ${s.dash ? `stroke-dasharray="${s.dash}"` : ""} stroke-linejoin="round" stroke-linecap="round"/>`;
   }
-  for (const mk of opts.markers || []) {
+  const marks = (opts.markers || []).filter(mk => mk.x != null && mk.x >= xlo - 1e-9 && mk.x <= xhi + 1e-9);
+  for (const mk of marks) {
     const c = mk.color || "var(--muted)";
-    g += `<line x1="${sx(mk.x)}" x2="${sx(mk.x)}" y1="${m.t}" y2="${H - m.b}" stroke="${c}" stroke-dasharray="${mk.solid ? "" : "3 3"}" stroke-width="${mk.solid ? 2 : 1}"/>`;
+    g += `<line x1="${sx(mk.x)}" x2="${sx(mk.x)}" y1="${m.t}" y2="${H - m.b}" stroke="${c}" stroke-dasharray="${mk.solid ? "" : mk.dash || "3 3"}" stroke-width="${mk.solid ? 2 : mk.width || 1}"/>`;
     if (mk.label) g += `<text x="${sx(mk.x) + 4}" y="${m.t + 11 + (mk.row || 0) * 12}" style="fill:${c}">${esc(mk.label)}</text>`;
   }
   g += `<line class="hair" x1="0" x2="0" y1="${m.t}" y2="${H - m.b}" stroke="var(--muted)" visibility="hidden"/>`;
@@ -238,33 +254,83 @@ function lineChart(el, opts) {
     const rows = opts.series.filter(s => s.name).map(s => { const xv = s.x || opts.x; const i = near(xv, x); const y = s.y[i];
       return y == null || Math.abs(xv[i] - x) > (xhi - xlo) / 20 ? "" : `<div><i style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${s.color};margin-right:5px"></i>${esc(s.name)}: <b>${fmt(y, s.nd ?? 0)}</b>${s.unit ? " " + esc(s.unit) : ""}</div>`; }).join("");
     hair.setAttribute("x1", px); hair.setAttribute("x2", px); hair.setAttribute("visibility", "visible");
-    tip.innerHTML = `<div class="muted">${esc(opts.xLabel)} ${fmt(x, opts.xnd ?? 2)}</div>${rows}`;
+    // stations and valves within a few pixels of the cursor
+    const hits = marks.filter(mk => mk.name && Math.abs(sx(mk.x) - px) <= 5 * W / b.width)
+      .map(mk => `<div><i style="display:inline-block;width:2px;height:10px;background:${mk.color};margin:0 8px 0 3px"></i>${esc(mk.name)}</div>`).join("");
+    tip.innerHTML = `<div class="muted">${esc(opts.xLabel)} ${fmt(x, opts.xnd ?? 2)}</div>${hits}${rows}`;
     tip.style.display = "block";
     const left = (px / W) * b.width; tip.style.left = (left > b.width * 0.6 ? left - tip.offsetWidth - 12 : left + 12) + "px"; tip.style.top = "8px";
   };
   svg.onmouseleave = () => { tip.style.display = "none"; hair.setAttribute("visibility", "hidden"); };
 }
-const legend = items => items.map(s => `<span><i class="${s.dash ? "dash" : ""}" style="background:${s.color};color:${s.color}"></i>${esc(s.name)}</span>`).join("");
+const legend = items => items.map(s => `<span><i class="${s.mk ? "mk" : s.dash ? "dash" : ""}" style="background:${s.color};color:${s.color}"></i>${esc(s.name)}</span>`).join("");
+
+// ---------------------------------------------------------------- chart options: elevation + station/valve lines
+const pref = (k, d) => { try { return localStorage.getItem("purgeReport." + k) ?? d; } catch (e) { return d; } };
+const setPref = (k, v) => { try { localStorage.setItem("purgeReport." + k, v); } catch (e) {} };
+const MARK_KINDS = [   // facility type -> line style; pump stations, BPCV and boosters are labeled, valves show their name on hover
+  {type: "Pump station", name: "Pump station", color: "var(--s2)", width: 1.6, dash: "6 3", label: true},
+  {type: "Back-pressure control valve", name: "BPCV", color: "var(--mop)", width: 1.6, dash: "6 3", label: true},
+  {type: "N2 booster (ran)", name: "N2 booster", color: "var(--s4)", width: 1.6, dash: "6 3", label: true},
+  {type: "Check valve", name: "Check valve", color: "var(--hgl)", dash: "3 3"},
+  {type: "Block valve", name: "Block valve", color: "var(--muted)", dash: "2 3"},
+];
+const FACS = (D.facilities || []).filter(f => f.mp != null && MARK_KINDS.some(k => k.type === f.type));
+// Time the pig reached a milepost (for the time charts); null if it never got there.
+function timeAtMp(mp) {
+  const xs = SE.pig_mp || [], ts = SE.t_hr || []; if (xs.length < 2) return null;
+  const dir = (xs[xs.length - 1] ?? 0) >= (xs[0] ?? 0) ? 1 : -1;
+  for (let i = 0; i < xs.length; i++) {
+    if (xs[i] == null || ts[i] == null || (xs[i] - mp) * dir < 0) continue;
+    if (i === 0 || xs[i - 1] == null || xs[i] === xs[i - 1]) return ts[i];
+    return ts[i - 1] + (mp - xs[i - 1]) / (xs[i] - xs[i - 1]) * (ts[i] - ts[i - 1]);
+  }
+  return null;
+}
+// Vertical lines at the stations and valves; "time" puts them where the pig passed each one.
+function facilityMarkers(axis, labelRow0 = 0) {
+  if (!$("#optMarks").checked) return [];
+  let k = 0;
+  return FACS.map(f => {
+    const kind = MARK_KINDS.find(m => m.type === f.type), x = axis === "time" ? timeAtMp(f.mp) : f.mp;
+    if (x == null) return null;
+    return {x, color: kind.color, dash: kind.dash, width: kind.width, name: `${kind.name}: ${f.name} (MP ${fmt(f.mp, 2)})`,
+            label: kind.label ? f.name : "", row: kind.label ? labelRow0 + (k++ % 2) : 0};
+  }).filter(Boolean);
+}
+const markerLegend = () => $("#optMarks").checked
+  ? MARK_KINDS.filter(k => FACS.some(f => f.type === k.type)).map(k => ({name: k.name, color: k.color, mk: true})) : [];
+const hasElev = (SE.pig_elevation_ft || []).some(v => v != null);
+// ground under the pig: the route's profile on the milepost charts, the ground the pig is crossing on the time charts
+const elevSeries = name => $("#optElev").checked && hasElev
+  ? [{name, y: SE.pig_elevation_ft, color: "var(--ground)", axis: "elev", width: 1.2, fill: true, unit: "ft"}] : [];
 
 const CHARTS = [
   {title: "Pressures along the route", note: "N2 drive at the pig face, N2 injection pressure, and pressure where the liquid leaves the line, plotted against pig position.",
-   opts: () => ({x: SE.pig_mp, xLabel: "Pig milepost", yLabel: "psig", series: [
+   opts: () => ({x: SE.pig_mp, xLabel: "Pig milepost", yLabel: "psig", markers: facilityMarkers("mp"), series: [
      {name: "Injection", y: SE.injection_psig, color: "var(--s2)", width: 3, unit: "psig"},
      {name: "Pig face (N2 drive)", y: SE.pig_face_psig, color: "var(--gas)", unit: "psig"},
-     {name: "Exit", y: SE.exit_psig, color: "var(--liquid)", dash: "5 4", unit: "psig"}]})},
+     {name: "Exit", y: SE.exit_psig, color: "var(--liquid)", dash: "5 4", unit: "psig"}, ...elevSeries("Elevation")]})},
   {title: "Pig speed along the route",
-   opts: () => ({x: SE.pig_mp, xLabel: "Pig milepost", yLabel: "mph", series: [{name: "Pig speed", y: SE.pig_speed_mph, color: "var(--gas)", nd: 2, unit: "mph"}]})},
+   opts: () => ({x: SE.pig_mp, xLabel: "Pig milepost", yLabel: "mph", markers: facilityMarkers("mp"),
+     series: [{name: "Pig speed", y: SE.pig_speed_mph, color: "var(--gas)", nd: 2, unit: "mph"}, ...elevSeries("Elevation")]})},
   {title: "Nitrogen over time", note: "N2 in the line (left axis) and the injection rate (right axis).",
-   opts: () => ({x: SE.t_hr, xLabel: "Hours", xnd: 1, yLabel: "SCF in line", y2Label: "Injection SCFM", zeroBase: true, series: [
+   opts: () => ({x: SE.t_hr, xLabel: "Hours", xnd: 1, yLabel: "SCF in line", y2Label: "Injection SCFM", zeroBase: true, markers: facilityMarkers("time"), series: [
      {name: "N2 in line", y: SE.total_scf, color: "var(--s4)", unit: "SCF", fill: true},
-     {name: "Injection rate", y: SE.injection_scfm, color: "var(--s2)", axis: "right", unit: "SCFM"}]})},
+     {name: "Injection rate", y: SE.injection_scfm, color: "var(--s2)", axis: "right", unit: "SCFM"}, ...elevSeries("Elevation under the pig")]})},
   {title: "Pig position over time",
-   opts: () => ({x: SE.t_hr, xLabel: "Hours", xnd: 1, yLabel: "Milepost", series: [{name: "Pig milepost", y: SE.pig_mp, color: "var(--gas)", nd: 2}]})},
+   opts: () => ({x: SE.t_hr, xLabel: "Hours", xnd: 1, yLabel: "Milepost", markers: facilityMarkers("time"),
+     series: [{name: "Pig milepost", y: SE.pig_mp, color: "var(--gas)", nd: 2}, ...elevSeries("Elevation under the pig")]})},
 ];
 $("#chartList").innerHTML = CHARTS.map((c, i) => `<div class="card"><h3>${esc(c.title)}</h3>${c.note ? `<div class="small muted">${esc(c.note)}</div>` : ""}<div class="legend" id="lg${i}"></div><div class="chart" id="ch${i}"></div></div>`).join("");
 function drawCharts() {
-  CHARTS.forEach((c, i) => { const o = c.opts(); o.title = c.title; $("#lg" + i).innerHTML = legend(o.series); lineChart($("#ch" + i), o); });
+  CHARTS.forEach((c, i) => { const o = c.opts(); o.title = c.title; $("#lg" + i).innerHTML = legend(o.series.concat(markerLegend())); lineChart($("#ch" + i), o); });
 }
+$("#optElev").checked = hasElev && pref("elev", "0") === "1"; $("#optElev").disabled = !hasElev;
+$("#optMarks").checked = FACS.length > 0 && pref("marks", "0") === "1"; $("#optMarks").disabled = !FACS.length;
+if (!FACS.length) $("#optMarkLabel").title = "This route has no stations or valves";
+$("#optElev").onchange = () => { setPref("elev", $("#optElev").checked ? "1" : "0"); drawCharts(); };
+$("#optMarks").onchange = () => { setPref("marks", $("#optMarks").checked ? "1" : "0"); drawAll(); };
 
 // ---------------------------------------------------------------- pipeline profile
 let frame = Math.max(0, Math.floor((P.frames.length - 1) / 2));
@@ -284,8 +350,9 @@ function drawProfile() {
   P.mp.forEach((x, i) => { if (x > f.pig && f.p[i] != null && P.elev[i] != null) { hx.push(x); hy.push(P.elev[i] + f.p[i] / grad); } });
   if (hx.length) series.push({name: "Hydraulic grade line", x: hx, y: hy, color: "var(--hgl)", axis: "right", width: 2, dash: "7 3", unit: "ft"});
   const markers = [{x: f.pig, label: "Pig", color: "var(--text)", solid: true}]
-    .concat((f.stations || []).map((s, k) => ({x: s.mp, label: s.name, row: 1 + (k % 2)})));
-  $("#pfLegend").innerHTML = legend(series);
+    .concat((f.stations || []).map((s, k) => ({x: s.mp, label: s.name, row: 1 + (k % 2), name: "Pump station: " + s.name})))
+    .concat(facilityMarkers("mp", 1).filter(mk => !mk.name.startsWith("Pump station")));
+  $("#pfLegend").innerHTML = legend(series.concat(markerLegend().filter(k => k.name !== "Pump station")));
   lineChart($("#pfChart"), {x: P.mp, xLabel: "Milepost", yLabel: "psig", y2Label: "Elevation / HGL (ft)", series, markers, title: "Pipeline profile"});
   $("#readout").innerHTML = `<b>${fmt(f.t, 1)} hr</b> into the run · pig at <b>MP ${fmt(f.pig, 2)}</b> moving <b>${fmt(f.speed, 2)} mph</b> · N2 drive <b>${fmt(f.face)} psig</b> · exit <b>${fmt(f.exit_psig)} psig</b> at MP ${fmt(f.exit_mp, 2)}`
     + (f.slack ? ` · <span style="color:var(--bad)">slack-line risk</span>` : "");
@@ -330,7 +397,7 @@ drawPurgeTable();
 if (D.notes) { $("#notes").hidden = false; $("#navNotes").hidden = false; $("#notesBody").textContent = D.notes; }
 $("#foot").innerHTML = `Prepared ${esc(D.date)} with Purge Simulator. Results are simulation estimates based on the job basis listed above.`;
 
-function drawAll() { drawCharts(); drawProfile(); }
+function drawAll() { drawCharts(); drawProfile(); document.documentElement.style.setProperty("--nav-h", $("nav").offsetHeight + "px"); }
 drawAll();
 let rz; addEventListener("resize", () => { clearTimeout(rz); rz = setTimeout(drawAll, 120); });
 addEventListener("beforeprint", drawAll);

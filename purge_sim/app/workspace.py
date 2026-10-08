@@ -409,9 +409,12 @@ class Workspace:
     def _roots(self) -> Dict[str, str]:
         return {"bundled": paths.bundled_scenarios_dir(), "user": paths.user_scenarios_dir()}
 
-    def list_scenarios(self) -> List[dict]:
+    def list_scenarios(self, include_hidden: bool = False) -> List[dict]:
         """Every scenario in the library, filed by client and pipeline (meta.client / meta.pipeline,
-        else the folders it sits in, else "Unfiled")."""
+        else the folders it sits in, else "Unfiled"). Bundled scenarios the user deleted are
+        left out unless include_hidden (they come back flagged "hidden")."""
+        from . import settings
+        hidden = set(settings.hidden_scenarios())
         out = []
         for origin, root in self._roots().items():
             if not os.path.isdir(root):
@@ -427,12 +430,16 @@ class Workspace:
                 rel = os.path.relpath(path, root).replace("\\", "/")
                 meta = raw.get("meta", {})
                 inp = raw.get("inputs", {})
+                sid = f"{origin}:{rel}"
+                if sid in hidden and not include_hidden:
+                    continue
                 folders = rel.split("/")[:-1]
                 client = (meta.get("client") or "").strip() or (folders[0] if len(folders) >= 2 else "")
                 pipeline = (meta.get("pipeline") or "").strip() or (folders[-1] if folders else "")
                 out.append({
-                    "id": f"{origin}:{rel}",
+                    "id": sid,
                     "origin": origin,
+                    "hidden": sid in hidden,
                     "job": folders[0] if folders else "",
                     "client": client or UNFILED,
                     "pipeline": pipeline or UNFILED,
@@ -455,6 +462,39 @@ class Workspace:
         if not path.startswith(os.path.realpath(root) + os.sep) or not os.path.isfile(path):
             raise InputError(f"scenario {scenario_id!r} not found")
         return path
+
+    def delete_scenario(self, scenario_id: str) -> dict:
+        """Remove a scenario from the library. One of the user's own files is moved to a
+        ".deleted" folder in their scenarios folder (the library never lists it; the file can
+        be moved back by hand). A bundled scenario is never deleted from disk, only hidden.
+        The open scenario stays open, as an unsaved copy, if it is the one removed."""
+        from . import settings
+        path = self._resolve(scenario_id)
+        origin, _, rel = scenario_id.partition(":")
+        if origin == "user":
+            stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+            base, ext = os.path.splitext(rel.replace("/", "__"))
+            dest = os.path.join(paths.user_scenarios_dir(), ".deleted", f"{base} ({stamp}){ext}")
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
+            os.replace(path, dest)
+            where = dest
+        else:
+            settings.set_hidden_scenarios(settings.hidden_scenarios() + [scenario_id])
+            where = ""
+        with self.lock:
+            if self.scenario_id == scenario_id:
+                self.scenario_id, self.dirty = None, True
+            self.revision += 1
+        return {"ok": True, "origin": origin, "moved_to": where}
+
+    def restore_hidden_scenarios(self) -> dict:
+        """Show every bundled scenario the user hid again."""
+        from . import settings
+        n = len(settings.hidden_scenarios())
+        settings.set_hidden_scenarios([])
+        with self.lock:
+            self.revision += 1
+        return {"restored": n}
 
     def scenario_path(self, scenario_id: str) -> str:
         """The library file behind a scenario id; raises InputError if it isn't one."""

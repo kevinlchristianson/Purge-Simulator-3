@@ -89,7 +89,9 @@ purge_sim/
                          result views, exports. The UI and the assistant act only through it.
                          Library is filed Client > Pipeline > Scenario from meta.client /
                          meta.pipeline (else the folders, else "Unfiled"); user saves go to
-                         <Client>/<Pipeline>/ under PurgeSimScenarios
+                         <Client>/<Pipeline>/ under PurgeSimScenarios. Delete moves a user file to
+                         PurgeSimScenarios/.deleted/; bundled ones are only hidden (settings
+                         hidden_scenarios)
     assistant.py       — Claude API tool loop over the Workspace (list/load/read/edit/run/sweep/
                          job setup/pre-run check/save). Key from ANTHROPIC_API_KEY or
                          ~/.purge_sim/settings.json.

@@ -64,6 +64,23 @@ def elevation_ask_first() -> bool:
     return bool(_read().get("elevation_ask_first", False))
 
 
+def hidden_scenarios() -> list:
+    """Bundled scenarios the user removed from the library (ids like "bundled:Job/x.json").
+    Bundled files are never deleted, only hidden, so they can be shown again."""
+    v = _read().get("hidden_scenarios", [])
+    return [x for x in v if isinstance(x, str)] if isinstance(v, list) else []
+
+
+def set_hidden_scenarios(ids) -> None:
+    data = _read()
+    ids = sorted(set(ids))
+    if ids:
+        data["hidden_scenarios"] = ids
+    else:
+        data.pop("hidden_scenarios", None)
+    _write(data)
+
+
 def public_view() -> dict:
     """Settings as shown to the UI: never includes the key itself."""
     key = api_key()
