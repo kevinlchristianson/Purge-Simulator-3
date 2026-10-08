@@ -42,6 +42,14 @@ purge_sim/
     simulator.py      — simulate(config) -> SimResults. Main timestep loop: pig position,
                          N2 segment inventories, check-valve cascade, booster transfers,
                          pump shutdown eval, BPCV state, per-joint MOP check, injection rate.
+                         Lean strategy runs SP as a RATE controller (smooth_injection, default
+                         on): the pump rate is the SCFM that moves the pig at target speed with
+                         gas at the aim pressure (the column then builds/draws down toward the
+                         aim on its own), scaled by the coast taper, max rate below min speed,
+                         and ramp-limited (full range over 2 h, 4x faster below min speed).
+                         The launch is resolved with column-fraction steps so the pump ramps up
+                         instead of the pig lurching. False = the old per-step pressure fix.
+                         Pack-and-coast is unchanged.
     physics.py         — pure, stateless physics functions (friction, Z-factor, haversine, etc.)
     constants.py       — NPS tables, roughness, fluid/N2 property lookups
     segment_model.py   — N2Segment: gas column divided into segments by check valves/boosters,

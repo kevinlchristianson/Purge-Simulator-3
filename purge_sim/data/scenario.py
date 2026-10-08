@@ -85,6 +85,15 @@ class ScenarioInputs:
     # coast on PV. None = lean floor-defending controller.
     n2_budget_scf: Optional[float] = None
     drive_mop_fraction: float = 0.9
+    # Lean strategy: smooth SP injection. True = SP is run as a rate (the rate that moves
+    # the pig at target speed with gas at the aim pressure), ramp-limited to the full range
+    # over ~2 h (4x faster below min speed); False = the earlier per-step controller.
+    smooth_injection: bool = True
+    # Max change in SP rate, SCFM per hour (None = max_injection_scfm / 2 h).
+    injection_ramp_scfm_per_hr: Optional[float] = None
+    # How fast the requested drive pressure may rise, psi per hour (falls 2x faster).
+    # None = 60 psi/h.
+    drive_setpoint_slew_psi_per_hr: Optional[float] = None
     # Operating margin below MOP for the drive/injection/boosters. 1.0 = up to MOP;
     # 0.90 = hold a hard 10% below MOP at all times.
     drive_ceiling_fraction: float = 1.0

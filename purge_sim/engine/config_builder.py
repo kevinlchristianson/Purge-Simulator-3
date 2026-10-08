@@ -30,9 +30,15 @@ def build_sim_config(inp: ScenarioInputs) -> SimConfig:
 
     cvs = [CheckValve(mp=cv['mp'], name=cv['name']) for cv in inp.check_valves]
 
+    # A pump station past the pig stop is not part of this purge: the pig never reaches it
+    # and the liquid beyond the stop is carried by the exit pressure (see
+    # precheck.exit_pressure_at_stop). Left in, the engine would push the pig toward that
+    # station's suction instead of the exit at the stop (GL-09: Lavina at MP 239.5 vs the
+    # stop at MP 220, 30 psig instead of 583).
     pss = [
         PumpStationConfig(mp=ps['mp'], name=ps['name'], suction_psig=ps['suction_psig'])
         for ps in inp.pump_stations
+        if ps['mp'] < inp.purge_end_mp
     ]
 
     # Per-booster overrides (max_flow_scfm / discharge_psig / suction_min_psig) fall back
@@ -106,6 +112,9 @@ def build_sim_config(inp: ScenarioInputs) -> SimConfig:
         deployed_booster_mps=inp.deployed_booster_mps,
         n2_budget_scf=inp.n2_budget_scf,
         drive_mop_fraction=inp.drive_mop_fraction,
+        smooth_injection=getattr(inp, 'smooth_injection', True),
+        injection_ramp_scfm_per_hr=getattr(inp, 'injection_ramp_scfm_per_hr', None),
+        drive_setpoint_slew_psi_per_hr=getattr(inp, 'drive_setpoint_slew_psi_per_hr', None),
         drive_ceiling_fraction=inp.drive_ceiling_fraction,
         bpcv=bpcv,
         n_spreads=inp.n_spreads,

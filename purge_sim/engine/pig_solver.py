@@ -92,6 +92,10 @@ class PigSolverResult:
     # Injection requirement (SCFM to maintain N2 column)
     injection_scfm: float = 0.0
 
+    # Pig-face drive (psig) that would hold exactly target speed from here (peak-aware
+    # resistance at v_target). The smooth lean controller aims the face at this.
+    drive_for_target_psig: float = 0.0
+
 
 def solve_pig_speed(
     cfg: PigSolverConfig,
@@ -172,6 +176,7 @@ def solve_pig_speed(
 
     # Check if drive can sustain minimum speed
     res_at_min = _resistance_at_speed(v_min)
+    res_at_tgt = _resistance_at_speed(v_tgt)
     if drive < res_at_min:
         # Pig cannot maintain minimum speed — slack line risk
         # Compute actual achievable speed by bisection
@@ -202,10 +207,10 @@ def solve_pig_speed(
             slack_line_deficit_mph=fts_to_mph(v_min - v_achievable),
             injection_scfm=scfm_from_pig_velocity(v_achievable, area_ft2,
                                                    psig_to_psia(pig_face_psig), cfg.temperature_f),
+            drive_for_target_psig=res_at_tgt,
         )
 
     # Drive can sustain at least minimum. Find achievable speed.
-    res_at_tgt = _resistance_at_speed(v_tgt)
     meter_valve_active = False
     meter_back_psi = 0.0
 
@@ -259,6 +264,7 @@ def solve_pig_speed(
         meter_valve_active=meter_valve_active,
         meter_valve_back_pressure_psi=meter_back_psi,
         injection_scfm=inj_scfm,
+        drive_for_target_psig=res_at_tgt,
     )
 
 
