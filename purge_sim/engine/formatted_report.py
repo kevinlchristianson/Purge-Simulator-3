@@ -3,8 +3,9 @@ formatted_report.py  —  Client-facing purge deliverable xlsx.
 
 Three sheets:
 
-  FILL REPORT      — project header + 50-point field ops table
-                     (matches the hand-formatted Bridger-style layout)
+  Purge Report     — project header + field ops table, one row every 1/4 mile of pig
+                     travel (miles from 0 at the launch), optionally with a row at each
+                     station, valve, marker and crossing (matches the Bridger-style layout)
   Pressure Profile — embedded matplotlib chart: drive/friction/head/exit vs milepost
   Run Profile      — embedded matplotlib chart: pig speed + cumulative N2 vs time
 
@@ -24,7 +25,8 @@ import numpy as np
 
 from .simulator import SimResults, SimConfig
 from .purge_report import (_build_rows, _select_n, _mop_at, _elev_interp,
-                           _PSIG_PER_FT, _deployed_boosters)
+                           _PSIG_PER_FT, _deployed_boosters, purge_report_rows,
+                           report_features, PURGE_REPORT_STEP_MI)
 
 try:
     import openpyxl
@@ -64,7 +66,7 @@ _F_NUM    = Font(name="Calibri", size=10)
 
 # Base data-table columns (Head Pressure + Exit Pressure dropped per field request).
 # Per-booster Flow / Cum Flow columns are appended dynamically after Pig Speed.
-_FILL_COLS = [
+_REPORT_COLS = [
     "Miles", "Elevation (ft)", "Elapsed Time (hr)",
     "Drive Pressure (psi)", "Friction Loss (psi)",
     "Injection Rate (SCFM)", "Cumulative N2 (SCF)", "Pig Speed (mph)",
@@ -75,7 +77,7 @@ _DATA_KEYS = [
     "inj_scfm", "cum_scf", "speed_mph",
 ]
 _DATA_FMTS = [
-    "0.000", "0.0", "0.000",
+    "0.00", "0.0", "0.000",
     "0.0", "0.0",
     "0.0", "#,##0", "0.000",
 ]
@@ -99,9 +101,14 @@ def export_formatted_report(
     path: str,
     scenario_name: str = "",
     project_info: Optional[dict] = None,
+    landmarks: Optional[List[dict]] = None,
+    include_features: bool = False,
 ) -> None:
     """
     Write the client-facing formatted report to *path*.
+
+    include_features adds a Purge Report row at every station, valve, marker and crossing
+    (the scenario's inputs.landmarks plus the stations, check valves, BPCV and boosters).
 
     project_info keys (all optional):
         project, job_no, client, system, date, notes,
@@ -113,12 +120,13 @@ def export_formatted_report(
     cfg = results.config
     pi  = project_info or {}
     rows = _build_rows(results)
-    rows_50 = _select_n(rows, 50)
+    feats = report_features(results, landmarks) if include_features else None
+    report_rows = purge_report_rows(results, features=feats)
 
     wb = openpyxl.Workbook()
     wb.remove(wb.active)
 
-    _sheet_fill_report(wb, results, cfg, scenario_name, pi, rows_50)
+    _sheet_purge_report(wb, results, cfg, scenario_name, pi, report_rows)
     _sheet_pressure_profile(wb, results, cfg, scenario_name, rows)
     _sheet_run_profile(wb, results, cfg, scenario_name, rows)
     _sheet_booster_profile(wb, results, cfg, scenario_name)
@@ -128,10 +136,10 @@ def export_formatted_report(
 
 
 # ---------------------------------------------------------------------------
-# Sheet 1 — FILL REPORT (field ops document)
+# Sheet 1 — Purge Report (field ops document)
 # ---------------------------------------------------------------------------
 
-def _sheet_fill_report(wb, results, cfg, scenario_name, pi, rows_50):
+def _sheet_purge_report(wb, results, cfg, scenario_name, pi, rows):
     ws = wb.create_sheet("Purge Report")
 
     last  = results.steps[-1] if results.steps else None
@@ -144,9 +152,12 @@ def _sheet_fill_report(wb, results, cfg, scenario_name, pi, rows_50):
     # Dynamic data-table columns: base table + per-booster Flow / Cum Flow
     # (appended to the right of Pig Speed, in milepost order).
     bnames = [nm for nm, _mp in _deployed_boosters(results)]
-    cols = list(_FILL_COLS)
+    cols = list(_REPORT_COLS)
     keys = list(_DATA_KEYS)
     fmts = list(_DATA_FMTS)
+    has_feat = any(r.get("feature") for r in rows)
+    if has_feat:   # station / valve / marker name, right after Miles
+        cols.insert(1, "Feature"); keys.insert(1, "feature"); fmts.insert(1, "@")
     for nm in bnames:
         cols += [f"{nm} Booster Flow (SCFM)", f"{nm} Booster Cum Flow (SCF)"]
         keys += [f"__bflow__{nm}", f"__bcum__{nm}"]
@@ -196,14 +207,14 @@ def _sheet_fill_report(wb, results, cfg, scenario_name, pi, rows_50):
     _pair(14, "PUMP STATIONS:", f"{n_ps}",
                "BOOSTER STATIONS:", f"{n_b}")
     _pair(15, "DURATION (hr):", f"{last.t_hr:.2f}" if last else "",
-               "RESOLUTION:", f"{len(rows_50)}-point")
+               "RESOLUTION:", f"every {PURGE_REPORT_STEP_MI:g} mi" + (" + features" if has_feat else ""))
 
     # Separator
     for col in range(1, ncols + 1):
         ws.cell(row=16, column=col).fill = _fill(_C_TITLE)
     ws.row_dimensions[16].height = 4
 
-    # ---- 50-point data table -------------------------------------------------
+    # ---- Purge Report table ---------------------------------------------------
     hdr_row = 17
     for ci, h in enumerate(cols, 1):
         c = ws.cell(row=hdr_row, column=ci, value=h)
@@ -211,9 +222,10 @@ def _sheet_fill_report(wb, results, cfg, scenario_name, pi, rows_50):
         c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
         c.border = _border()
     ws.row_dimensions[hdr_row].height = 30
+    ws.freeze_panes = ws.cell(row=hdr_row + 1, column=1)   # header stays put on a long table
 
     fills = [_fill(_C_ZEBRA), _fill(_C_WHITE)]
-    for ri, row in enumerate(rows_50):
+    for ri, row in enumerate(rows):
         r = hdr_row + 1 + ri
         row_fill = fills[ri % 2]
         for ci, (key, fmt) in enumerate(zip(keys, fmts), 1):
@@ -226,7 +238,9 @@ def _sheet_fill_report(wb, results, cfg, scenario_name, pi, rows_50):
             c = ws.cell(row=r, column=ci, value=v)
             c.font = _F_NUM; c.fill = row_fill
             c.number_format = fmt; c.border = _border()
-            c.alignment = Alignment(horizontal="right")
+            c.alignment = Alignment(horizontal="left" if key == "feature" else "right")
+            if key == "feature" and v:
+                c.font = Font(name="Calibri", size=10, bold=True)
             # Flag MOP-near drive pressure in orange font
             if key == "drive_psi" and row.get("mop_margin") is not None:
                 if row["mop_margin"] < 0:
@@ -238,7 +252,7 @@ def _sheet_fill_report(wb, results, cfg, scenario_name, pi, rows_50):
                 c.fill = _fill("FF9999")
 
     # Notes footer
-    note_row = hdr_row + len(rows_50) + 2
+    note_row = hdr_row + len(rows) + 2
     if n_b > 0:
         booster_note = "BOOSTER STATIONS: " + ", ".join(
             f"{b.name} @ MP {b.mp:.1f}" for b in cfg.booster_configs)
@@ -252,7 +266,8 @@ def _sheet_fill_report(wb, results, cfg, scenario_name, pi, rows_50):
         ws.merge_cells(f"A{note_row}:{last_col}{note_row}")
 
     # Wide data columns: base widths + per-booster (Flow, Cum Flow)
-    col_widths_data = [10, 12, 12, 14, 14, 15, 15, 12] + [15, 18] * len(bnames)
+    col_widths_data = ([10] + ([34] if has_feat else []) + [12, 12, 14, 14, 15, 15, 12]
+                       + [15, 18] * len(bnames))
     for i, w in enumerate(col_widths_data, 1):
         ws.column_dimensions[get_column_letter(i)].width = w
 

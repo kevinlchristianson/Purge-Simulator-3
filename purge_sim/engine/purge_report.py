@@ -220,6 +220,93 @@ def _deployed_boosters(results: SimResults) -> List[tuple]:
     return sorted(seen.items(), key=lambda kv: kv[1])
 
 
+# ---------------------------------------------------------------------------
+# Purge Report rows — fixed distance increments from the launch end
+# ---------------------------------------------------------------------------
+
+PURGE_REPORT_STEP_MI = 0.25
+
+# landmark kind -> label (data/landmarks.py KINDS, repeated so the engine needn't import it)
+_FEATURE_KIND = {
+    "block_valve": "Block valve", "launcher_receiver": "Launcher / receiver",
+    "aerial_marker": "Aerial marker", "ground_marker": "Above-ground marker", "crossing": "Crossing",
+}
+_INTERP_KEYS = ("elapsed_hr", "drive_psi", "friction_psi", "head_psi", "exit_psi",
+                "inj_scfm", "cum_scf", "speed_mph", "bph")
+
+
+def report_features(results: SimResults, landmarks: Optional[List[dict]] = None) -> List[dict]:
+    """Stations, valves, markers and crossings inside the purged span, as [{mp, label}] in
+    milepost order: the optional extra rows of the Purge Report. landmarks: the scenario's
+    inputs.landmarks (block valves, AGMs, crossings...) from the ILI / PxP import."""
+    cfg = results.config
+    lo, hi = sorted((cfg.purge_start_mp, cfg.purge_end_mp))
+    out = [{"mp": p.mp, "label": f"Pump station: {p.name}"} for p in cfg.pump_stations]
+    out += [{"mp": c.mp, "label": f"Check valve: {c.name}"} for c in cfg.check_valves if not c.is_pump_station]
+    if cfg.bpcv is not None:
+        out.append({"mp": cfg.bpcv.mp, "label": f"Back-pressure control valve: {cfg.bpcv.name}"})
+    out += [{"mp": mp, "label": f"N2 booster: {n}"} for n, mp in _deployed_boosters(results)]
+    for lm in landmarks or []:
+        try:
+            mp = float(lm.get("mp"))
+        except (TypeError, ValueError):
+            continue
+        kind = _FEATURE_KIND.get(lm.get("kind"), "Feature")
+        name = (lm.get("name") or "").strip()
+        out.append({"mp": mp, "label": kind if not name or name == kind else f"{kind}: {name}"})
+    return sorted((f for f in out if lo - 1e-9 <= f["mp"] <= hi + 1e-9), key=lambda f: f["mp"])
+
+
+def purge_report_rows(results: SimResults, step_mi: float = PURGE_REPORT_STEP_MI,
+                      features: Optional[List[dict]] = None) -> List[dict]:
+    """The Purge Report table: one row each time the pig has travelled another step_mi from
+    the launch (plus the final pig position), values interpolated between the timesteps
+    either side. "miles" counts from 0 at the launch, not the data file's milepost ("mp").
+    features ([{mp, label}], see report_features) add a row at each one, with "feature" set."""
+    rows = _build_rows(results)
+    if not rows:
+        return []
+    cfg = results.config
+    start = cfg.purge_start_mp
+    sign = 1.0 if cfg.purge_end_mp >= start else -1.0
+    dist = np.maximum.accumulate(np.array([sign * (r["miles"] - start) for r in rows], dtype=float))
+    total = float(dist[-1])
+    elev = _elev_interp(cfg) if len(cfg.elevation_profile) else None
+
+    def at(d: float, feature: str = "") -> dict:
+        i = int(np.searchsorted(dist, d - 1e-9))   # first step at or past d
+        i = min(i, len(rows) - 1)
+        b = rows[i]
+        a = rows[i - 1] if i > 0 else b
+        span = dist[i] - dist[i - 1] if i > 0 else 0.0
+        f = (d - dist[i - 1]) / span if span > 1e-12 else 1.0
+        f = min(max(f, 0.0), 1.0)
+        row = {k: (a[k] + (b[k] - a[k]) * f if a.get(k) is not None and b.get(k) is not None else b.get(k))
+               for k in _INTERP_KEYS}
+        mp = start + sign * d
+        mop = _mop_at(mp, cfg)
+        row.update({
+            "miles": d, "mp": mp, "feature": feature,
+            "elevation_ft": elev(mp) if elev else b.get("elevation_ft"),
+            "miles_to_outlet": abs(cfg.purge_end_mp - mp),
+            "mop": mop, "mop_margin": (mop - row["drive_psi"]) if mop else None,
+            "slack": bool(b.get("slack")), "mop_viol": bool(b.get("mop_viol")),
+            "booster_flow": b.get("booster_flow", {}), "booster_cum": b.get("booster_cum", {}),
+        })
+        return row
+
+    n = int(math.floor(total / step_mi + 1e-9))
+    out = [at(k * step_mi) for k in range(n + 1)]
+    if total - n * step_mi > 1e-6:
+        out.append(at(total))   # where the pig stopped
+    for ft in features or []:
+        d = sign * (float(ft["mp"]) - start)
+        if 0.0 <= d <= total + 1e-9:
+            out.append(at(d, ft.get("label") or "Feature"))
+    out.sort(key=lambda r: (r["miles"], r["feature"] != ""))
+    return out
+
+
 def _select_n(rows: List[dict], n: int) -> List[dict]:
     """Select exactly n rows evenly spaced by pig milepost."""
     if len(rows) <= n:

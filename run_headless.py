@@ -100,7 +100,7 @@ def main():
         import traceback; traceback.print_exc()
         print(f"xlsx export failed: {e}")
 
-    # Formatted (client-facing) report — FILL REPORT + embedded pressure/run charts
+    # Formatted (client-facing) report — Purge Report + embedded pressure/run charts
     fmt_path = (_base[:-4] if _base.endswith('_log') else _base) + '_formatted.xlsx'
     try:
         from purge_sim.engine.formatted_report import export_formatted_report

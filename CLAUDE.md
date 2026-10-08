@@ -72,8 +72,11 @@ purge_sim/
     optimizer.py       — forward booster-spread deployment planner (which station, when to
                          mobilize) to hit a target N2 budget without stalling the pig
     animation.py        — generate_animation(): GIF/MP4 export of the animated profile chart
-    formatted_report.py — client-facing xlsx: FILL REPORT table + 2 embedded charts
-    purge_report.py     — comprehensive 7-sheet technical xlsx (full run-data record)
+    formatted_report.py — client-facing xlsx: Purge Report table (every 1/4 mi, miles from
+                         0, optional valve/AGM/station rows) + embedded charts
+    purge_report.py     — comprehensive 7-sheet technical xlsx (full run-data record);
+                         also purge_report_rows(), the 1/4-mile Purge Report rows both client
+                         reports share
     log_export.py       — human-readable + CSV run log export
     precheck.py         — pre-run job check, no simulation: speed- vs drive-capped (and the speed
                          the cap allows), friction share, laminar, descents steeper than friction,
@@ -99,7 +102,7 @@ purge_sim/
     server.py          — JSON API + page; 127.0.0.1 only, Host check, per-launch token
     importers.py       — new scenario from ILI / KMZ / TXT / Excel via data/ parsers
     client_report.py   — client web page export: one self-contained .html per run (summary,
-                         profile scrubber, charts, job basis, FILL REPORT table), layout in
+                         profile scrubber, charts, job basis, Purge Report table), layout in
                          static/report_template.html. Reports tab also zips every deliverable
     gis.py             — Map tab geometry: milepost per route vertex (route_latlon scaled to the
                          profile's milepost span), stations/CVs/boosters/BPCV placed on it, and

@@ -1099,8 +1099,12 @@ function hglChart(p) {
   const mop = p.mop_mp.length ? p.mp.map(x => interp(p.mop_mp, p.mop_psig, x)) : null;
   const series = [{name: "N2 pressure (behind pig)", y: gas, color: "var(--gas)", width: 2}, {name: "Liquid pressure (ahead)", y: liq, color: "var(--liquid)", width: 2}];
   if (mop) series.push({name: "MOP", y: mop, color: "var(--mop)", dash: "5 3", width: 1.2});
-  series.push({name: "Elevation (ft)", y: p.elevation_ft, color: "var(--ground)", axis: "right", width: 1.2});
-  return lineChart({x: p.mp, xLabel: "Milepost", yLabel: "psig", y2Label: "Elevation ft", series,
+  series.push({name: "Elevation (ft)", y: p.elevation_ft, color: "var(--ground)", axis: "right", width: 1.2, fill: true});
+  // hydraulic grade line ahead of the pig, in feet on the elevation axis: ground + pressure / (0.433 psi/ft x SG)
+  const grad = (p.fluid_sg || 1) * PSI_PER_FT_WATER;
+  const hgl = p.pressure_psig.map((v, i) => p.is_gas[i] || v == null || p.elevation_ft[i] == null ? null : p.elevation_ft[i] + v / grad);
+  if (hgl.some(v => v != null)) series.push({name: "Hydraulic grade line (ft)", y: hgl, color: "var(--hgl)", axis: "right", width: 2, dash: "7 3"});
+  return lineChart({x: p.mp, xLabel: "Milepost", yLabel: "psig", y2Label: "Elevation / HGL ft", series,
     markers: [{x: p.pig_mp, label: "pig", color: "var(--text)"}].concat(p.stations.map(s => ({x: s.mp, label: s.name})))});
 }
 function interp(xs, ys, x) {
@@ -1368,18 +1372,22 @@ $("#routeOk").onclick = async () => {
 function renderExports() {
   const el = $("#tab-exports");
   if (!S.results) { el.innerHTML = `<div class="empty">Run the scenario to export reports.</div>`; return; }
-  el.innerHTML = `<div class="card"><b>Everything for the client</b>
+  el.innerHTML = `<div class="card"><b>Purge Report</b>
+    <p class="small muted">The Purge Report table in the client xlsx and on the client web page has a row for every quarter mile the pig travels, with Miles counted from 0 at the launch.</p>
+    <label class="small"><input type="checkbox" id="expFeat"${chartPref("feat", "0") === "1" ? " checked" : ""}> Add a row at each valve, AGM, aerial marker, crossing and station</label></div>
+    <div class="card"><b>Everything for the client</b>
     <p class="small muted">One zip with the client web page, both xlsx reports, the run log, the profile animation and the scenario file.</p>
     <div style="margin:8px 0"><button class="primary" data-exp="all">Download all reports (zip)</button> <span class="small muted" id="exp-all"></span></div>
     <label class="small"><input type="checkbox" id="expGif" checked> Include the profile animation (GIF, slower)</label><br>
     <label class="small"><input type="checkbox" id="expNotes"> Put the scenario notes on the client web page</label></div>
     <div class="card"><b>One at a time</b><p class="small muted">Each export goes to a new dated folder under PurgeSimOutputs in your home folder, so earlier variants are never overwritten.</p>
-    ${[["html", "Client web page (html, opens in any browser, works offline)"], ["formatted", "Client report (FILL REPORT + charts, xlsx)"], ["full", "Full technical report (7 sheets, xlsx)"], ["log", "Run log (txt)"], ["gif", "Profile animation (GIF, slower)"]]
+    ${[["html", "Client web page (html, opens in any browser, works offline)"], ["formatted", "Client report (Purge Report + charts, xlsx)"], ["full", "Full technical report (7 sheets, xlsx)"], ["log", "Run log (txt)"], ["gif", "Profile animation (GIF, slower)"]]
       .map(([k, l]) => `<div style="margin:8px 0"><button data-exp="${k}">${l}</button> <span class="small muted" id="exp-${k}"></span></div>`).join("")}</div>`;
+  $("#expFeat").onchange = () => setChartPref("feat", $("#expFeat").checked ? "1" : "0");
   el.querySelectorAll("[data-exp]").forEach(b => b.onclick = async () => {
     const k = b.dataset.exp, note = $("#exp-" + k); b.disabled = true; note.textContent = "Generating…";
     try {
-      const r = await api("/api/export", {body: {kind: k, include_notes: $("#expNotes").checked, include_gif: $("#expGif").checked}});
+      const r = await api("/api/export", {body: {kind: k, include_notes: $("#expNotes").checked, include_gif: $("#expGif").checked, include_features: $("#expFeat").checked}});
       note.innerHTML = `Saved to ${esc(r.path)} · <a href="${r.url}">download</a>`;
       if (k === "all" || k === "html") location.href = r.url;   // one click: start the download right away
     }
