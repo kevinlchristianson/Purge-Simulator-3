@@ -12,7 +12,7 @@
   --text: #1c2330; --muted: #5d6878; --accent: #1f6feb; --accent-text: #ffffff;
   --good: #1a7f37; --warn: #9a6700; --bad: #cf222e;
   --s1: #1f6feb; --s2: #d4580b; --s3: #1a7f37; --s4: #8250df; --ground: #8c7a5b; --mop: #cf222e;
-  --gas: #1f6feb; --liquid: #1a7f37;
+  --gas: #1f6feb; --liquid: #1a7f37; --hgl: #0e7c86;
   --shadow: 0 1px 2px rgba(0,0,0,.06);
 }
 @media (prefers-color-scheme: dark) {
@@ -21,7 +21,7 @@
     --text: #e6edf3; --muted: #9aa6b4; --accent: #4493f8; --accent-text: #0b0f14;
     --good: #3fb950; --warn: #d29922; --bad: #f85149;
     --s1: #4493f8; --s2: #f0883e; --s3: #3fb950; --s4: #a371f7; --ground: #b3a17e; --mop: #f85149;
-    --gas: #4493f8; --liquid: #3fb950; --shadow: none;
+    --gas: #4493f8; --liquid: #3fb950; --hgl: #39c5cf; --shadow: none;
   }
 }
 :root[data-theme="dark"] {
@@ -29,7 +29,7 @@
   --text: #e6edf3; --muted: #9aa6b4; --accent: #4493f8; --accent-text: #0b0f14;
   --good: #3fb950; --warn: #d29922; --bad: #f85149;
   --s1: #4493f8; --s2: #f0883e; --s3: #3fb950; --s4: #a371f7; --ground: #b3a17e; --mop: #f85149;
-  --gas: #4493f8; --liquid: #3fb950; --shadow: none;
+  --gas: #4493f8; --liquid: #3fb950; --hgl: #39c5cf; --shadow: none;
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; }
@@ -589,8 +589,10 @@ function niceTicks(lo, hi, n = 5) {
   return out;
 }
 function lineChart(opts) {
-  // opts: {x: [], series: [{name, y: [], color, axis: "left"|"right", dash}], xLabel, yLabel, y2Label, markers: [{x, label}], area: {y, color}}
-  const W = 900, H = 260, m = {l: 58, r: opts.series.some(s => s.axis === "right") ? 58 : 16, t: 12, b: 34};
+  // opts: {x: [], series: [{name, y: [], color, axis: "left"|"right"|"elev", dash, fill}], xLabel, yLabel, y2Label, elevLabel,
+  //        markers: [{x, label}], area: {y, color}}. "elev" is a feet axis on the right, outside the "right" axis when both are used.
+  const hasR = opts.series.some(s => s.axis === "right"), hasE = opts.series.some(s => s.axis === "elev");
+  const W = 900, H = 260, m = {l: 58, r: hasR && hasE ? 112 : hasR || hasE ? 58 : 16, t: 12, b: 34};
   const xs = opts.x.filter(v => v != null);
   if (!xs.length) return `<div class="empty">No data</div>`;
   const xlo = Math.min(...xs), xhi = Math.max(...xs);
@@ -599,26 +601,33 @@ function lineChart(opts) {
     if (axis === "left" && opts.area) for (const v of opts.area.y) if (v != null) vals.push(v);
     if (!vals.length) return null;
     let lo = Math.min(...vals), hi = Math.max(...vals); if (hi === lo) { hi += 1; lo -= 1; }
-    const pad = (hi - lo) * 0.06; return [opts.zeroBase && lo >= 0 ? 0 : lo - pad, hi + pad];
+    const pad = (hi - lo) * 0.06; return [opts.zeroBase && axis !== "elev" && lo >= 0 ? 0 : lo - pad, hi + pad];
   };
-  const L = range("left"), R = range("right");
+  const L = range("left"), R = range("right"), E = range("elev");
   const sx = v => m.l + (v - xlo) / ((xhi - xlo) || 1) * (W - m.l - m.r);
   const sy = (v, r) => H - m.b - (v - r[0]) / (r[1] - r[0]) * (H - m.t - m.b);
   let g = "";
   for (const t of niceTicks(xlo, xhi, 8)) g += `<line x1="${sx(t)}" x2="${sx(t)}" y1="${m.t}" y2="${H - m.b}" stroke="var(--border)"/><text x="${sx(t)}" y="${H - m.b + 15}" text-anchor="middle">${fmt(t, Math.abs(t) < 10 && t % 1 ? 1 : 0)}</text>`;
   if (L) for (const t of niceTicks(L[0], L[1], 5)) g += `<line x1="${m.l}" x2="${W - m.r}" y1="${sy(t, L)}" y2="${sy(t, L)}" stroke="var(--border)"/><text x="${m.l - 6}" y="${sy(t, L) + 4}" text-anchor="end">${fmt(t, Math.abs(t) < 10 && t % 1 ? 1 : 0)}</text>`;
   if (R) for (const t of niceTicks(R[0], R[1], 5)) g += `<text x="${W - m.r + 6}" y="${sy(t, R) + 4}">${fmt(t, Math.abs(t) < 10 && t % 1 ? 1 : 0)}</text>`;
+  const ex = W - m.r + (R ? 60 : 6);
+  if (E) for (const t of niceTicks(E[0], E[1], 5)) g += `<text x="${ex}" y="${sy(t, E) + 4}" style="fill:var(--ground)">${fmt(t, Math.abs(t) < 10 && t % 1 ? 1 : 0)}</text>`;
   g += `<text x="${(m.l + W - m.r) / 2}" y="${H - 4}" text-anchor="middle">${esc(opts.xLabel || "")}</text>`;
   if (opts.yLabel) g += `<text transform="translate(13 ${(H - m.b + m.t) / 2}) rotate(-90)" text-anchor="middle">${esc(opts.yLabel)}</text>`;
-  if (opts.y2Label) g += `<text transform="translate(${W - 8} ${(H - m.b + m.t) / 2}) rotate(90)" text-anchor="middle">${esc(opts.y2Label)}</text>`;
+  if (opts.y2Label && R) g += `<text transform="translate(${E ? W - 62 : W - 8} ${(H - m.b + m.t) / 2}) rotate(90)" text-anchor="middle">${esc(opts.y2Label)}</text>`;
+  if (E) g += `<text transform="translate(${W - 8} ${(H - m.b + m.t) / 2}) rotate(90)" text-anchor="middle" style="fill:var(--ground)">${esc(opts.elevLabel || "Elevation ft")}</text>`;
   if (opts.area && L) {
     let d = ""; opts.x.forEach((xv, i) => { const yv = opts.area.y[i]; if (xv != null && yv != null) d += (d ? "L" : "M") + sx(xv).toFixed(1) + " " + sy(yv, L).toFixed(1); });
     g += `<path d="${d} L${sx(xhi)} ${H - m.b} L${sx(xlo)} ${H - m.b} Z" fill="${opts.area.color}" fill-opacity=".18" stroke="${opts.area.color}" stroke-width="1"/>`;
   }
   for (const s of opts.series) {
-    const r = (s.axis || "left") === "right" ? R : L; if (!r) continue;
+    const r = {right: R, elev: E}[s.axis] || L; if (!r) continue;
     let d = "", pen = false;
     opts.x.forEach((xv, i) => { const yv = s.y[i]; if (xv == null || yv == null) { pen = false; return; } d += (pen ? "L" : "M") + sx(xv).toFixed(1) + " " + sy(yv, r).toFixed(1); pen = true; });
+    if (s.fill && d) {   // shaded down to the chart floor (ground profile); only for x that only increases
+      const pts = opts.x.map((xv, i) => [xv, s.y[i]]).filter(([xv, yv]) => xv != null && yv != null);
+      g += `<path d="M${pts.map(([xv, yv]) => sx(xv).toFixed(1) + " " + sy(yv, r).toFixed(1)).join("L")} L${sx(pts[pts.length - 1][0]).toFixed(1)} ${H - m.b} L${sx(pts[0][0]).toFixed(1)} ${H - m.b} Z" fill="${s.color}" fill-opacity=".15" stroke="none"/>`;
+    }
     g += `<path d="${d}" fill="none" stroke="${s.color}" stroke-width="${s.width || 1.6}" ${s.dash ? `stroke-dasharray="${s.dash}"` : ""} stroke-linejoin="round"/>`;
   }
   for (const mk of opts.markers || []) g += `<line x1="${sx(mk.x)}" x2="${sx(mk.x)}" y1="${m.t}" y2="${H - m.b}" stroke="${mk.color || "var(--muted)"}" stroke-dasharray="3 3"/><text x="${sx(mk.x) + 3}" y="${m.t + 10}" style="fill:${mk.color || "var(--muted)"}">${esc(mk.label || "")}</text>`;
@@ -627,20 +636,59 @@ function lineChart(opts) {
   return `<div class="legend">${legend}</div><svg class="chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="${esc(opts.title || "")}">${g}</svg>`;
 }
 
+const chartPref = (k, d) => { try { return localStorage.getItem("purge.charts." + k) || d; } catch (e) { return d; } };
+const setChartPref = (k, v) => { try { localStorage.setItem("purge.charts." + k, v); } catch (e) {} };
+const PSI_PER_FT_WATER = 62.4 / 144;   // same head conversion as engine/hgl.py
 function renderCharts() {
   const el = $("#tab-charts");
   if (!S.results) { el.innerHTML = `<div class="empty">Run the scenario to see charts.</div>`; return; }
-  const s = S.results.series;
+  const s = S.results.series, showElev = chartPref("elev", "0") === "1";
+  const pigElev = s.pig_elevation_ft || [], hasElev = pigElev.some(v => v != null);
+  const grad = (s.fluid_sg || 1) * PSI_PER_FT_WATER;
+  // elevation under the pig: along the route on the milepost charts, over time on the time charts
+  const elev = name => showElev && hasElev ? [{name, y: pigElev, color: "var(--ground)", axis: "elev", width: 1.2, fill: true}] : [];
+  const faceHgl = s.pig_face_psig.map((p, i) => p == null || pigElev[i] == null ? null : pigElev[i] + p / grad);
+  const n = S.results.summary.steps;
   el.innerHTML =
-    `<div class="card"><b>Pig speed along the route</b>${lineChart({x: s.pig_mp, xLabel: "Pig milepost", yLabel: "mph",
-       series: [{name: "Pig speed", y: s.pig_speed_mph, color: "var(--s1)"}]})}</div>
-     <div class="card"><b>Pressures along the route</b>${lineChart({x: s.pig_mp, xLabel: "Pig milepost", yLabel: "psig",
+    `<div class="card" style="display:flex;gap:16px;align-items:center;flex-wrap:wrap">
+       <label class="small"><input type="checkbox" id="chElev" ${showElev ? "checked" : ""} ${hasElev ? "" : "disabled"}> Show elevation profile on each chart (right axis, ft)</label>
+       ${hasElev ? "" : `<span class="small muted">This run has no elevation profile.</span>`}</div>
+     <div class="card"><b>Pig speed along the route</b>${lineChart({x: s.pig_mp, xLabel: "Pig milepost", yLabel: "mph",
+       series: [{name: "Pig speed", y: s.pig_speed_mph, color: "var(--s1)"}, ...elev("Elevation (ft)")]})}</div>
+     <div class="card"><b>Pressures along the route</b>${lineChart({x: s.pig_mp, xLabel: "Pig milepost", yLabel: "psig", elevLabel: "Elevation / head ft",
        series: [{name: "Pig face", y: s.pig_face_psig, color: "var(--s1)"}, {name: "Injection", y: s.injection_psig, color: "var(--s2)"},
-                {name: "Exit", y: s.exit_psig, color: "var(--s3)", dash: "4 3"}]})}</div>
+                {name: "Exit", y: s.exit_psig, color: "var(--s3)", dash: "4 3"}, ...elev("Elevation (ft)"),
+                ...(showElev && hasElev ? [{name: "HGL at pig face (ft)", y: faceHgl, color: "var(--hgl)", axis: "elev", width: 1.6}] : [])]})}</div>
      <div class="card"><b>N2 over time</b>${lineChart({x: s.t_hr, xLabel: "Hours", yLabel: "SCF in line", y2Label: "Injection SCFM", zeroBase: true,
-       series: [{name: "N2 inventory (SCF)", y: s.total_scf, color: "var(--s4)"}, {name: "Injection rate (SCFM)", y: s.injection_scfm, color: "var(--s2)", axis: "right"}]})}</div>
+       series: [{name: "N2 inventory (SCF)", y: s.total_scf, color: "var(--s4)"}, {name: "Injection rate (SCFM)", y: s.injection_scfm, color: "var(--s2)", axis: "right"},
+                ...elev("Elevation under pig (ft)")]})}</div>
      <div class="card"><b>Pig position over time</b>${lineChart({x: s.t_hr, xLabel: "Hours", yLabel: "Milepost",
-       series: [{name: "Pig MP", y: s.pig_mp, color: "var(--s1)"}]})}</div>`;
+       series: [{name: "Pig MP", y: s.pig_mp, color: "var(--s1)"}, ...elev("Elevation under pig (ft)")]})}</div>
+     ${hasElev ? `<div class="card"><b>Hydraulic grade line</b>
+       <div style="display:flex;gap:10px;align-items:center"><input type="range" id="chHglStep" min="0" max="${n - 1}" value="${S.profileStep}" style="flex:1"></div>
+       <div class="small muted" id="chHglInfo"></div><div id="chHgl"></div></div>` : ""}`;
+  $("#chElev").onchange = () => { setChartPref("elev", $("#chElev").checked ? "1" : "0"); renderCharts(); };
+  if (!hasElev) return;
+  $("#chHglStep").oninput = () => { S.profileStep = +$("#chHglStep").value; clearTimeout(profileTimer); profileTimer = setTimeout(drawChartHgl, 60); };
+  drawChartHgl();
+}
+async function drawChartHgl() {
+  let p; try { p = await api("/api/results/profile?step=" + S.profileStep); } catch (e) { return; }
+  if (!$("#chHgl")) return;
+  $("#chHglInfo").innerHTML = `t = ${fmt(p.t_hr, 2)} hr · pig at MP ${fmt(p.pig_mp, 2)} · face ${fmt(p.pig_face_psig)} psig · SG ${fmt(p.fluid_sg, 3)}`;
+  $("#chHgl").innerHTML = hglHeadChart(p);
+}
+function hglHeadChart(p) {
+  // Everything in feet on the elevation axis: head = elevation + pressure / (0.433 psi/ft x SG)
+  const grad = (p.fluid_sg || 1) * PSI_PER_FT_WATER, head = (v, i) => v == null || p.elevation_ft[i] == null ? null : p.elevation_ft[i] + v / grad;
+  const liq = p.pressure_psig.map((v, i) => p.is_gas[i] ? null : head(v, i));
+  const gas = p.pressure_psig.map((v, i) => p.is_gas[i] ? head(v, i) : null);
+  const series = [{name: "Ground elevation", y: p.elevation_ft, color: "var(--ground)", width: 1.2, fill: true},
+                  {name: "Hydraulic grade line (liquid ahead of pig)", y: liq, color: "var(--hgl)", width: 2},
+                  {name: "N2 pressure as liquid head (behind pig)", y: gas, color: "var(--gas)", width: 1.4, dash: "5 3"}];
+  if (p.mop_mp.length) series.push({name: "MOP grade line", y: p.mp.map((x, i) => head(interp(p.mop_mp, p.mop_psig, x), i)), color: "var(--mop)", dash: "5 3", width: 1.2});
+  return lineChart({x: p.mp, xLabel: "Milepost", yLabel: "Elevation / head ft", series,
+    markers: [{x: p.pig_mp, label: "pig", color: "var(--text)"}].concat(p.stations.map(s => ({x: s.mp, label: s.name})))});
 }
 
 // ---------------------------------------------------------------- profile (live HGL scrubber)
