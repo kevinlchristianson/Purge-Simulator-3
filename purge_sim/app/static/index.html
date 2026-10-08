@@ -4,15 +4,20 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Purge Simulator</title>
+<link rel="icon" id="favicon" href="data:,">
 <link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css">
 <script src="/static/vendor/leaflet/leaflet.js"></script>
 <style>
 :root {
   --bg: #f6f7f9; --panel: #ffffff; --panel-2: #f0f2f5; --border: #dde1e7;
-  --text: #1c2330; --muted: #5d6878; --accent: #1f6feb; --accent-text: #ffffff;
+  --text: #1c2330; --muted: #5d6878; --accent: var(--brand-primary); --accent-text: #ffffff;
   --good: #1a7f37; --warn: #9a6700; --bad: #cf222e;
   --s1: #1f6feb; --s2: #d4580b; --s3: #1a7f37; --s4: #8250df; --ground: #8c7a5b; --mop: #cf222e;
   --gas: #1f6feb; --liquid: #1a7f37; --hgl: #0e7c86;
+  /* Brand (Settings > Branding, purge_sim/branding.py): header bar, buttons, tabs. Defaults
+     are EnerMech; applyBrand() sets the chosen brand. Chart data colors don't change. */
+  --brand-primary: #00489a; --brand-mid: #084766; --brand-secondary: #128d36; --brand-highlight: #23a63d;
+  --brand-bar: linear-gradient(100deg, var(--brand-primary) 0%, var(--brand-mid) 55%, var(--brand-secondary) 100%);
   --shadow: 0 1px 2px rgba(0,0,0,.06);
 }
 @media (prefers-color-scheme: dark) {
@@ -46,12 +51,21 @@ h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: v
 .muted { color: var(--muted); }
 .small { font-size: 12px; }
 
-header { display: flex; align-items: center; gap: 10px; padding: 8px 14px; background: var(--panel); border-bottom: 1px solid var(--border); flex-wrap: wrap; }
-header .brand { font-weight: 700; }
-header .scen { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 40vw; }
+header { display: flex; align-items: center; gap: 10px; padding: 7px 14px; background: var(--brand-bar); color: #fff; border-bottom: 3px solid var(--brand-highlight); flex-wrap: wrap; }
+header .logo { height: 34px; width: auto; max-width: 200px; object-fit: contain; display: block; }
+header .logo.chip { background: #fff; padding: 3px 6px; border-radius: 5px; }
+header .brand { font-weight: 700; padding-left: 10px; border-left: 1px solid rgba(255,255,255,.35); }
+header .scen { color: rgba(255,255,255,.78); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 40vw; }
 header .spacer { flex: 1; }
+header .muted { color: rgba(255,255,255,.78); }
+header button { background: rgba(255,255,255,.12); border-color: rgba(255,255,255,.35); color: #fff; }
+header button:hover:not(:disabled) { background: rgba(255,255,255,.22); border-color: #fff; }
+header button.primary { background: var(--brand-highlight); border-color: var(--brand-highlight); color: #fff; }
+header button.primary:hover:not(:disabled) { filter: brightness(.92); border-color: #fff; }
 .progress { width: 140px; height: 6px; background: var(--panel-2); border-radius: 3px; overflow: hidden; }
+header .progress { background: rgba(255,255,255,.25); }
 .progress > div { height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+header .progress > div { background: var(--brand-highlight); }
 
 main { display: grid; grid-template-columns: 290px minmax(0, 1fr) 380px; height: calc(100vh - 51px); }
 aside, section, .chat { overflow: auto; }
@@ -61,7 +75,7 @@ section { padding: 10px 16px 30px; }
 
 .tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--border); margin-bottom: 10px; flex-wrap: wrap; }
 .tabs button { border: none; border-bottom: 2px solid transparent; border-radius: 0; background: none; padding: 7px 12px; color: var(--muted); }
-.tabs button.on { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
+.tabs button.on { color: var(--text); border-bottom-color: var(--brand-highlight); font-weight: 600; }
 
 .lib-job { margin-top: 10px; font-weight: 600; font-size: 12px; color: var(--muted); }
 .lib-client { margin-top: 8px; }
@@ -160,6 +174,10 @@ dialog { border: 1px solid var(--border); border-radius: 10px; background: var(-
 dialog::backdrop { background: rgba(0,0,0,.35); }
 dialog .row { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; }
 dialog .actions { display: flex; justify-content: flex-end; gap: 8px; }
+.brand-colors input[type=color] { width: 36px; height: 26px; padding: 1px; vertical-align: middle; margin-left: 6px; }
+.brand-logo-row { display: flex; align-items: center; gap: 8px; }
+.brand-logo-row img { height: 34px; max-width: 160px; object-fit: contain; background: var(--brand-bar); padding: 3px 6px; border-radius: 5px; }
+.brand-logo-row img.chip { background: #fff; border: 1px solid var(--border); }
 .toast { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); background: var(--text); color: var(--bg); padding: 8px 14px; border-radius: 8px; font-size: 13px; opacity: 0; transition: opacity .2s; pointer-events: none; max-width: 90vw; }
 .toast.on { opacity: .95; }
 input[type=range] { width: 100%; }
@@ -194,6 +212,7 @@ input[type=range] { width: 100%; }
 </head>
 <body>
 <header>
+  <img class="logo" id="brandLogo" alt="" hidden>
   <span class="brand">Purge Simulator</span>
   <span class="scen" id="scenName">No scenario open</span>
   <span class="spacer"></span>
@@ -251,6 +270,18 @@ input[type=range] { width: 100%; }
   <div class="row"><label for="setKey">Claude API key</label><input id="setKey" type="password" autocomplete="off" placeholder="sk-ant-…"><span class="small muted" id="setKeyState"></span></div>
   <div class="row"><label for="setModel">Model</label><input id="setModel" placeholder="claude-opus-5-5"></div>
   <div class="row"><label><input id="setElevAsk" type="checkbox"> Ask before sending a route to USGS for an elevation lookup</label></div>
+  <div class="row"><label for="setBrand">Branding</label>
+    <select id="setBrand"><option value="enermech">EnerMech</option><option value="plain">Plain (no logo)</option><option value="custom">Custom company…</option></select>
+    <span class="small muted">Shown in the app header, the client web page and the xlsx reports.</span></div>
+  <div id="brandCustom" hidden>
+    <div class="row"><label for="brName">Company name</label><input id="brName" maxlength="80"></div>
+    <div class="row brand-colors"><label>Colors</label>
+      <span><input type="color" id="brPrimary"> Main <input type="color" id="brSecondary"> Second <input type="color" id="brHighlight"> Highlight</span></div>
+    <div class="row"><label>Logo</label>
+      <span class="brand-logo-row"><img id="brLogoPrev" alt="" hidden><button id="brLogoPick">Choose logo…</button><button id="brLogoDel" hidden>Remove</button><input type="file" id="brLogoFile" accept=".png,.jpg,.jpeg,.svg" hidden></span>
+      <select id="brLogoOn"><option value="dark">White or light logo, shown on the colored bar</option><option value="light">Dark or colored logo, shown on a white tile</option></select>
+      <span class="small muted">PNG, JPG or SVG under 1 MB. A transparent background looks best.</span></div>
+  </div>
   <div class="actions"><button id="setClear">Remove saved key</button><span style="flex:1"></span><button id="setCancel">Cancel</button><button class="primary" id="setOk">Save</button></div>
 </dialog>
 
@@ -1448,12 +1479,49 @@ async function openSettings() {
   $("#setKey").value = ""; $("#setModel").value = s.model; $("#setElevAsk").checked = !!s.elevation_ask_first;
   $("#setKeyState").textContent = s.api_key_set ? `A key is set (${s.api_key_source === "environment" ? "from ANTHROPIC_API_KEY" : "saved here"}, ending ${s.api_key_hint}). Leave blank to keep it.` : "No key set yet.";
   $("#setClear").hidden = s.api_key_source !== "settings";
+  fillBrand(s.brand);
   $("#dlgSettings").showModal();
 }
+// branding (purge_sim/branding.py): applied to the header now, read by every report at export
+function applyBrand(b) {
+  if (!b) return;
+  const r = document.documentElement.style;
+  for (const k of ["primary", "mid", "secondary", "highlight"]) r.setProperty("--brand-" + k, b[k]);
+  const img = $("#brandLogo");
+  img.hidden = !b.logo; if (b.logo) img.src = b.logo;
+  img.alt = b.name || ""; img.classList.toggle("chip", b.logo_on === "light");
+  document.title = b.name ? `Purge Simulator · ${b.name}` : "Purge Simulator";
+  $("#favicon").href = b.preset === "enermech" ? "/static/brand/enermech-icon.png" : (b.logo || "data:,");
+}
+function fillBrand(b) {
+  $("#setBrand").value = b.preset;
+  $("#brName").value = b.preset === "custom" ? b.name : "";
+  $("#brPrimary").value = b.primary.toLowerCase(); $("#brSecondary").value = b.secondary.toLowerCase(); $("#brHighlight").value = b.highlight.toLowerCase();
+  $("#brLogoOn").value = b.logo_on;
+  const prev = $("#brLogoPrev"), logo = b.preset === "custom" ? b.logo : "";
+  prev.hidden = !logo; if (logo) prev.src = logo; prev.classList.toggle("chip", b.logo_on === "light");
+  $("#brLogoDel").hidden = !b.has_custom_logo;
+  $("#brandCustom").hidden = b.preset !== "custom";
+}
+const brandForm = () => ({preset: $("#setBrand").value, name: $("#brName").value, primary: $("#brPrimary").value,
+                          secondary: $("#brSecondary").value, highlight: $("#brHighlight").value, logo_on: $("#brLogoOn").value});
+$("#setBrand").onchange = () => { $("#brandCustom").hidden = $("#setBrand").value !== "custom"; };
+$("#brLogoOn").onchange = () => $("#brLogoPrev").classList.toggle("chip", $("#brLogoOn").value === "light");
+$("#brLogoPick").onclick = () => $("#brLogoFile").click();
+$("#brLogoFile").onchange = async e => {
+  const f = e.target.files[0]; e.target.value = ""; if (!f) return;
+  try {
+    // keep the dialog's other choices: save them with the logo so the preview shows the custom brand
+    await api("/api/settings", {body: {brand: brandForm()}});
+    const s = await api("/api/brand/logo?" + new URLSearchParams({filename: f.name}), {method: "POST", raw: await f.arrayBuffer()});
+    fillBrand(s.brand); applyBrand(s.brand);
+  } catch (err) { toast(err.message); }
+};
+$("#brLogoDel").onclick = async () => { const s = await api("/api/brand/logo/remove", {body: {}}); fillBrand(s.brand); applyBrand(s.brand); };
 $("#btnSettings").onclick = openSettings;
 $("#setCancel").onclick = () => $("#dlgSettings").close();
 $("#setOk").onclick = async () => {
-  try { await api("/api/settings", {body: {api_key: $("#setKey").value || null, model: $("#setModel").value, elevation_ask_first: $("#setElevAsk").checked}}); $("#dlgSettings").close(); toast("Settings saved"); refreshKey(); }
+  try { const s = await api("/api/settings", {body: {api_key: $("#setKey").value || null, model: $("#setModel").value, elevation_ask_first: $("#setElevAsk").checked, brand: brandForm()}}); applyBrand(s.brand); $("#dlgSettings").close(); toast("Settings saved"); refreshKey(); }
   catch (e) { toast(e.message); }
 };
 $("#setClear").onclick = async () => { await api("/api/settings", {body: {clear_key: true}}); $("#dlgSettings").close(); toast("Saved key removed"); refreshKey(); };
@@ -1552,7 +1620,7 @@ $("#btnChatReset").onclick = async () => { try { await api("/api/chat/reset", {b
 // ---------------------------------------------------------------- boot
 try { const t = localStorage.getItem("purge.tab"); if (t) document.querySelector(`#tabs [data-tab="${t}"]`)?.click(); } catch (e) {}
 loadLibrary().then(() => poll(true));
-const refreshKey = () => api("/api/settings").then(s => { S.keySet = s.api_key_set; loadChat(); }).catch(() => {});
+const refreshKey = () => api("/api/settings").then(s => { S.keySet = s.api_key_set; applyBrand(s.brand); loadChat(); }).catch(() => {});
 refreshKey();
 </script>
 </body>

@@ -20,6 +20,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Optional, Tuple
 from urllib.parse import parse_qs, quote, unquote, urlparse
 
+from .. import branding
 from . import paths, settings
 from ..data.elevation import DEFAULT_SPACING_FT
 from .assistant import Assistant
@@ -125,8 +126,20 @@ class App:
             return 200, settings.public_view()
         if route == ("POST", "/api/settings"):
             d = j()
-            return 200, settings.update(d.get("api_key"), d.get("model"), bool(d.get("clear_key")),
-                                        d.get("elevation_ask_first"))
+            try:
+                return 200, settings.update(d.get("api_key"), d.get("model"), bool(d.get("clear_key")),
+                                            d.get("elevation_ask_first"), d.get("brand"))
+            except ValueError as e:
+                raise InputError(str(e))
+        if route == ("POST", "/api/brand/logo"):
+            try:
+                branding.save_logo(q.get("filename", ""), body)
+            except ValueError as e:
+                raise InputError(str(e))
+            return 200, settings.public_view()
+        if route == ("POST", "/api/brand/logo/remove"):
+            branding.remove_logo()
+            return 200, settings.public_view()
         if route == ("GET", "/api/chat"):
             return 200, asst.view()
         if route == ("POST", "/api/chat"):

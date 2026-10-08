@@ -1,6 +1,7 @@
 """
-App settings: the Claude API key and model for the assistant, and whether to ask
-before sending a route's coordinates to USGS for an elevation lookup.
+App settings: the Claude API key and model for the assistant, whether to ask
+before sending a route's coordinates to USGS for an elevation lookup, and the
+company branding (purge_sim/branding.py).
 
 The key is never hardcoded or bundled. It comes from the ANTHROPIC_API_KEY
 environment variable, or from the settings file the user fills in through the
@@ -14,6 +15,7 @@ import json
 import os
 from typing import Optional
 
+from .. import branding
 from .paths import settings_path
 
 DEFAULT_MODEL = "claude-opus-5-5"
@@ -71,12 +73,16 @@ def public_view() -> dict:
         "api_key_hint": ("…" + key[-4:]) if key else "",
         "model": model(),
         "elevation_ask_first": elevation_ask_first(),
+        "brand": branding.public(),
     }
 
 
 def update(api_key_value: Optional[str] = None, model_value: Optional[str] = None,
-           clear_key: bool = False, elevation_ask_first_value: Optional[bool] = None) -> dict:
+           clear_key: bool = False, elevation_ask_first_value: Optional[bool] = None,
+           brand_value: Optional[dict] = None) -> dict:
     data = _read()
+    if brand_value is not None:
+        data["brand"] = branding.validate(brand_value)    # ValueError -> 400 before anything is written
     if elevation_ask_first_value is not None:
         data["elevation_ask_first"] = bool(elevation_ask_first_value)
     if clear_key:
