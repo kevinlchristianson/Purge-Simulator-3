@@ -1,6 +1,8 @@
 {
   "meta": {
     "name": "PH-30/PR-01 Rock Creek to Borger Frac NGL - 6in Y1 NGL - 700 psi spread",
+    "client": "Phillips 66",
+    "pipeline": "PH-30 / PR-01 Rock Creek to Borger 6in",
     "created_at": "2026-09-29T15:42:20",
     "modified_at": "2026-09-29T15:42:20",
     "notes": "P66 Amarillo Division, Hutchinson County TX. Rock Creek -> Borger Patton (MP 2.21) on PH-30 / line G-199, leaving PH-30 at the PR-01 (Powder River) crossing at MP 2.99 and continuing NE on PR-01 to the Borger Frac NGL plant. 5.36 mi total of 6.625\" OD x 0.156\" WT (6\" NPS), MOP 1440 psi. Stubs trimmed at the crossing: 287 ft of PH-30 on toward Borger Refinery and 1108 ft of PR-01 back toward Borger Rocky PR. N2 displacement of Y1 NGL, west to east/NE, single displacement pig. Y1 vapor pressure ~300 psia; the liquid column is held 100 psi above it (385 psig) at the exit and at every terrain peak ahead of the pig, so the column stays single-phase. Receipt is a pressurized NGL sphere held at 405 psig for the whole run (no blowdown tail -- NGL cannot be let down as a liquid). N2 spread: 700 psig / 3000 SCFM at 3 mph."

@@ -1,6 +1,8 @@
 {
   "meta": {
     "name": "WB-08 Spindle to MP 10 Jct - 3in butane - 700 psi spread",
+    "client": "Phillips 66",
+    "pipeline": "WB-08 Spindle to MP 10 Jct 3in",
     "created_at": "2026-09-01T12:45:12",
     "modified_at": "2026-09-01T12:45:12",
     "notes": "P66 WB-08 / line DJ-9201, Spindle Station to MP 10 Junction. 10.18 mi of 3.5\" OD x 0.216\" WT, MOP 1440 psi. N2 displacement of commercial-spec butane, west to east, single displacement pig. 3 mph against a 450 psig delivery, then the final 1 mi at 1 mph to flare at 175 psig (held well above butane vapor pressure to keep the column single-phase). N2 spread: 700 psig / 3000 SCFM."

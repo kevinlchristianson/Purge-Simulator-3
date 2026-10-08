@@ -30,6 +30,19 @@ MAX_UPLOAD_BYTES = 200 * 1024 * 1024
 STATIC_TYPES = {".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8",
                 ".png": "image/png", ".svg": "image/svg+xml", ".txt": "text/plain; charset=utf-8"}
 
+_META_FIELDS = ("name", "client", "pipeline", "details", "notes")
+
+
+def _meta_args(d: dict) -> dict:
+    """The scenario name/filing/notes fields present in a request body, as strings."""
+    out = {}
+    for k in _META_FIELDS:
+        if d.get(k) is not None:
+            if not isinstance(d[k], str):
+                raise InputError(f"{k} must be text")
+            out[k] = d[k]
+    return out
+
 
 class App:
     def __init__(self, assistant_client_factory=None):
@@ -66,12 +79,14 @@ class App:
         if route == ("POST", "/api/scenario/update"):
             return 200, {"changed": ws.update_inputs(j().get("changes") or {})}
         if route == ("POST", "/api/scenario/meta"):
-            d = j()
-            ws.update_meta(d.get("name"), d.get("notes"))
+            ws.update_meta(**_meta_args(j()))
             return 200, {"ok": True}
         if route == ("POST", "/api/scenario/save"):
             d = j()
-            return 200, ws.save_as(d.get("name", ""), d.get("notes"), bool(d.get("overwrite")))
+            return 200, ws.save_as(overwrite=bool(d.get("overwrite")), **{"name": "", **_meta_args(d)})
+        if route == ("POST", "/api/scenario/save_current"):
+            d = j()
+            return 200, ws.save(overwrite=bool(d.get("overwrite")), **_meta_args(d))
         if route == ("POST", "/api/scenario/import"):
             return self._import(q, body)
         if route == ("GET", "/api/intake"):

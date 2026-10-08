@@ -1,6 +1,8 @@
 {
   "meta": {
     "name": "PH-30 Rock Creek to Borger Refinery - 6in Y1 NGL - 430 psi spread",
+    "client": "Phillips 66",
+    "pipeline": "PH-30 / PR-01 Rock Creek to Borger 6in",
     "created_at": "2026-09-29T15:13:23",
     "modified_at": "2026-09-29T15:13:23",
     "notes": "P66 PH-30 / line G-199 (Amarillo Division), Rock Creek -> Borger Patton -> Borger Refinery, Hutchinson County TX. 3.05 mi of 6.625\" OD x 0.156\" WT (6\" NPS), MOP 1440 psi. N2 displacement of Y1 NGL, west to east, single displacement pig. Borger Patton at MP 2.21. Y1 vapor pressure ~300 psia; the liquid column is held 100 psi above it (385 psig) at the exit and at every terrain peak ahead of the pig, so the column stays single-phase. Receipt is a pressurized refinery NGL sphere held at 400 psig for the whole run (no blowdown tail -- NGL cannot be let down as a liquid). N2 spread: 430 psig / 3000 SCFM at 3 mph."

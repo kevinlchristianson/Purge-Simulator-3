@@ -261,7 +261,8 @@ def inputs_summary(sc: Scenario) -> dict:
                if k not in _IMPORT_ONLY_FIELDS and k not in _LIST_ITEM_KEYS
                and k not in ("bpcv", "deployed_booster_mps")}
     return {
-        "meta": {"name": sc.meta.name, "notes": sc.meta.notes, "source_files": sc.meta.source_files,
+        "meta": {"name": sc.meta.name, "client": sc.meta.client, "pipeline": sc.meta.pipeline,
+                 "details": sc.meta.details, "notes": sc.meta.notes, "source_files": sc.meta.source_files,
                  "modified_at": sc.meta.modified_at},
         "job_setup": _setup_status(sc),
         "scalars": scalars,
@@ -365,6 +366,7 @@ def results_series(res: SimResults, max_points: int = 1500) -> dict:
 # Workspace
 # ---------------------------------------------------------------------------
 
+UNFILED = "Unfiled"
 _SAFE_NAME = re.compile(r"[^A-Za-z0-9._ -]+")
 
 
@@ -393,6 +395,8 @@ class Workspace:
         return {"bundled": paths.bundled_scenarios_dir(), "user": paths.user_scenarios_dir()}
 
     def list_scenarios(self) -> List[dict]:
+        """Every scenario in the library, filed by client and pipeline (meta.client / meta.pipeline,
+        else the folders it sits in, else "Unfiled")."""
         out = []
         for origin, root in self._roots().items():
             if not os.path.isdir(root):
@@ -408,11 +412,17 @@ class Workspace:
                 rel = os.path.relpath(path, root).replace("\\", "/")
                 meta = raw.get("meta", {})
                 inp = raw.get("inputs", {})
+                folders = rel.split("/")[:-1]
+                client = (meta.get("client") or "").strip() or (folders[0] if len(folders) >= 2 else "")
+                pipeline = (meta.get("pipeline") or "").strip() or (folders[-1] if folders else "")
                 out.append({
                     "id": f"{origin}:{rel}",
                     "origin": origin,
-                    "job": rel.split("/")[0] if "/" in rel else "",
+                    "job": folders[0] if folders else "",
+                    "client": client or UNFILED,
+                    "pipeline": pipeline or UNFILED,
                     "name": meta.get("name") or os.path.splitext(os.path.basename(rel))[0],
+                    "details": meta.get("details") or "",
                     "file": rel,
                     "notes": (meta.get("notes") or "")[:400],
                     "modified_at": meta.get("modified_at", ""),
@@ -461,34 +471,80 @@ class Workspace:
                 self.revision += 1
             return diff
 
-    def update_meta(self, name: Optional[str] = None, notes: Optional[str] = None) -> None:
+    def update_meta(self, name: Optional[str] = None, notes: Optional[str] = None,
+                    client: Optional[str] = None, pipeline: Optional[str] = None,
+                    details: Optional[str] = None) -> None:
+        """Change the open scenario's name, filing and notes (unsaved until saved)."""
         with self.lock:
             sc = self.require()
-            if name is not None:
-                sc.meta.name = name.strip() or sc.meta.name
-            if notes is not None:
-                sc.meta.notes = notes
+            m = sc.meta
+            new = {"name": (name.strip() or m.name) if name is not None else m.name,
+                   "client": client.strip() if client is not None else m.client,
+                   "pipeline": pipeline.strip() if pipeline is not None else m.pipeline,
+                   "details": details.strip() if details is not None else m.details,
+                   "notes": notes if notes is not None else m.notes}
+            if all(getattr(m, k) == v for k, v in new.items()):
+                return
+            for k, v in new.items():
+                setattr(m, k, v)
             self.dirty = True
             self.revision += 1
 
-    def save_as(self, name: str, notes: Optional[str] = None, overwrite: bool = False) -> dict:
-        """Save to the user's scenario folder. Bundled scenarios are never written."""
+    def _user_path(self, name: str, client: str, pipeline: str) -> str:
+        """Where a scenario is saved in the user's folder: <Client>/<Pipeline>/<name>.json,
+        leaving out a blank level."""
+        fname = safe_name(name)
+        if not fname.lower().endswith(".json"):
+            fname += ".json"
+        parts = [safe_name(p) for p in (client, pipeline) if (p or "").strip()]
+        return os.path.join(paths.user_scenarios_dir(), *parts, fname)
+
+    def _write(self, sc: Scenario, path: str) -> dict:
+        save_scenario(sc, path)
+        rel = os.path.relpath(path, paths.user_scenarios_dir()).replace("\\", "/")
+        self.scenario_id, self.dirty = f"user:{rel}", False
+        self.revision += 1
+        return {"id": self.scenario_id, "path": path}
+
+    def save_as(self, name: str, notes: Optional[str] = None, overwrite: bool = False,
+                client: Optional[str] = None, pipeline: Optional[str] = None,
+                details: Optional[str] = None) -> dict:
+        """Save to the user's scenario folder, filed under client and pipeline.
+        Bundled scenarios are never written."""
         with self.lock:
             sc = self.require()
-            fname = safe_name(name)
-            if not fname.lower().endswith(".json"):
-                fname += ".json"
-            root = paths.user_scenarios_dir()
-            path = os.path.join(root, fname)
+            safe_name(name)   # a name is required
+            before = dataclasses.replace(sc.meta)
+            dirty, rev = self.dirty, self.revision
+            self.update_meta(name=name, notes=notes, client=client, pipeline=pipeline, details=details)
+            path = self._user_path(sc.meta.name, sc.meta.client, sc.meta.pipeline)
             if os.path.exists(path) and not overwrite:
-                raise InputError(f"{fname} already exists in your scenarios folder; pick a new name")
-            sc.meta.name = os.path.splitext(fname)[0]
-            if notes is not None:
-                sc.meta.notes = notes
-            save_scenario(sc, path)
-            self.scenario_id, self.dirty = f"user:{fname}", False
-            self.revision += 1
-            return {"id": self.scenario_id, "path": path}
+                where = self._where(sc)
+                sc.meta, self.dirty, self.revision = before, dirty, rev   # a refused save changes nothing
+                raise InputError(f"{os.path.basename(path)} already exists in your scenarios folder "
+                                 f"under {where}; pick a new name")
+            return self._write(sc, path)
+
+    @staticmethod
+    def _where(sc: Scenario) -> str:
+        return " > ".join([sc.meta.client or UNFILED, sc.meta.pipeline or UNFILED])
+
+    def save(self, overwrite: bool = False, **meta: Optional[str]) -> dict:
+        """Save the open scenario with the given name/filing/notes. One of the user's own
+        scenarios is saved over its own file; a bundled or newly imported one becomes a new
+        file in the user's folder (refused if that file exists, unless overwrite)."""
+        with self.lock:
+            sc = self.require()
+            sid = self.scenario_id or ""
+            if sid.startswith("user:"):
+                try:
+                    path = self._resolve(sid)
+                except InputError:
+                    path = None
+                if path:
+                    self.update_meta(**meta)
+                    return self._write(sc, path)
+            return self.save_as(meta.pop("name", None) or sc.meta.name, overwrite=overwrite, **meta)
 
     def _busy_job(self, message: str) -> None:
         with self.lock:

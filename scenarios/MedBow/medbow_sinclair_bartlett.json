@@ -1,6 +1,8 @@
 {
   "meta": {
     "name": "Med Bow 6in - Sinclair to Bartlett (Elk Mountain)",
+    "client": "",
+    "pipeline": "Med Bow 6in",
     "created_at": "2026-07-02T00:00:00",
     "modified_at": "2026-07-02T00:00:00",
     "notes": "Elk Mountain Pump Station Pipe Replacement N2 Purge. 40-mile 6-inch NPS diesel purge, pig to Bartlett BV. MOP 1726 psi, N2 max 1500 psi.",

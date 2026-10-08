@@ -1,6 +1,8 @@
 {
   "meta": {
     "name": "Laurel to Allendale - 8in-10in Diesel Purge - 3 mph delivery",
+    "client": "CHS",
+    "pipeline": "Laurel to Allendale 8in-10in",
     "created_at": "2026-07-07T00:00:00",
     "modified_at": "2026-07-07T00:00:00",
     "notes": "Customer: CHS Pipeline. N2 displacement of diesel, Laurel to the Allendale BV (MP 4.489 - purge end, pig stop). Hydraulic exit is tankage at the Billings Tank Farm, MP 33.329 (KMZ route end), minimum delivery pressure 50 psig. 8-inch to 10-inch switch at MP 3.723. Pig held near 3.0 mph (endpoint delivery limit); min operational speed 2.75 mph. Drive sized to keep the HGL positive over the rimrocks (4,031 ft at MP 11.9) and the MP 26 peak (3,950 ft). MOP 720 psig, N2 supply <= 720 psig.",

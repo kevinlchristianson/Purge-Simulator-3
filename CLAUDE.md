@@ -76,6 +76,9 @@ purge_sim/
   app/                  — standalone app (python app.py), standard-library HTTP server
     workspace.py       — open scenario, edits (validated; hard rule 4 enforced on edits), runs,
                          result views, exports. The UI and the assistant act only through it.
+                         Library is filed Client > Pipeline > Scenario from meta.client /
+                         meta.pipeline (else the folders, else "Unfiled"); user saves go to
+                         <Client>/<Pipeline>/ under PurgeSimScenarios
     assistant.py       — Claude API tool loop over the Workspace (list/load/read/edit/run/sweep/
                          job setup/pre-run check/save). Key from ANTHROPIC_API_KEY or
                          ~/.purge_sim/settings.json.
@@ -124,7 +127,8 @@ purge_sim/
                          Tkinter KMZ load and tools/kmz_elevations.py. Don't fetch elevation
                          by other means in a session; use this
     scenario.py        — JSON save/load of full simulation input state (human-readable,
-                         inline arrays, hand-editable; does NOT store results). Carries
+                         inline arrays, hand-editable; does NOT store results). meta carries name,
+                         client, pipeline, details (library filing) and notes. Carries
                          elevation_source (provenance) and route_latlon (for re-fetching)
   ui/
     main_window.py      — Tkinter root: left config panel (30%) / right results panel (70%),

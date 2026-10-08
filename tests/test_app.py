@@ -44,6 +44,50 @@ def test_library_lists_only_real_scenarios():
     assert not any(i.endswith(("elev_ph30.json", "ph30_route_meta.json")) for i in ids)
 
 
+def test_library_is_filed_by_client_and_pipeline(tmp_path):
+    items = {s["id"]: s for s in Workspace().list_scenarios()}
+    assert (items[SHORT]["client"], items[SHORT]["pipeline"]) == ("CHS", "Tipville to Santa Rita East 10in")
+    med = items["bundled:MedBow/medbow_sinclair_bartlett.json"]
+    assert (med["client"], med["pipeline"]) == ("Unfiled", "Med Bow 6in")
+    # Older saved files with no filing: folders they sit in, else Unfiled. They still load.
+    user = tmp_path / "scenarios"
+    (user / "Acme" / "Line 1").mkdir(parents=True)
+    (user / "Loose").mkdir()
+    src = json.loads(open(Workspace().scenario_path(SHORT)).read())
+    for k in ("client", "pipeline"):
+        src["meta"].pop(k)
+    for rel in ("old.json", "Acme/Line 1/nested.json", "Loose/one.json"):
+        (user / rel).write_text(json.dumps(src))
+    ws = Workspace()
+    items = {s["id"]: s for s in ws.list_scenarios()}
+    assert (items["user:old.json"]["client"], items["user:old.json"]["pipeline"]) == ("Unfiled", "Unfiled")
+    assert (items["user:Acme/Line 1/nested.json"]["client"], items["user:Acme/Line 1/nested.json"]["pipeline"]) == ("Acme", "Line 1")
+    assert (items["user:Loose/one.json"]["client"], items["user:Loose/one.json"]["pipeline"]) == ("Unfiled", "Loose")
+    ws.load("user:old.json")
+    assert ws.scenario.meta.client == ""
+
+
+def test_overview_meta_edit_and_save_in_place():
+    ws = Workspace()
+    ws.load(SHORT)
+    rev = ws.revision
+    ws.update_meta(name=ws.scenario.meta.name)          # no change: not dirty
+    assert not ws.dirty and ws.revision == rev
+    # A bundled scenario is never written: Save makes the user's own copy.
+    bundled = open(ws.scenario_path(SHORT)).read()
+    out = ws.save(name="East 10 3 mph", client="CHS", pipeline="Tipville East 10in", details="3 mph", notes="n1")
+    assert out["id"] == "user:CHS/Tipville East 10in/East 10 3 mph.json"
+    assert open(ws.scenario_path(SHORT)).read() == bundled
+    # One of the user's own is saved over its own file, even when renamed or refiled.
+    out2 = ws.save(name="Renamed (3 mph, final)", client="CHS Inc", notes="n2")
+    assert out2["path"] == out["path"]
+    saved = json.loads(open(out["path"]).read())["meta"]
+    assert (saved["name"], saved["client"], saved["pipeline"], saved["details"], saved["notes"]) == \
+        ("Renamed (3 mph, final)", "CHS Inc", "Tipville East 10in", "3 mph", "n2")
+    listed = next(s for s in ws.list_scenarios() if s["id"] == out["id"])
+    assert (listed["client"], listed["name"], listed["details"]) == ("CHS Inc", "Renamed (3 mph, final)", "3 mph")
+
+
 def test_edit_validation_and_booster_floor():
     ws = Workspace()
     ws.load(SHORT)
@@ -85,9 +129,14 @@ def test_save_never_overwrites_without_flag():
     ws = Workspace()
     ws.load(SHORT)
     out = ws.save_as("my variant", notes="why")
-    assert os.path.isfile(out["path"]) and out["id"] == "user:my variant.json"
+    # filed under the bundled scenario's client and pipeline
+    assert os.path.isfile(out["path"])
+    assert out["id"] == "user:CHS/Tipville to Santa Rita East 10in/my variant.json"
     with pytest.raises(InputError, match="already exists"):
-        ws.save_as("my variant")
+        ws.save_as("my variant", notes="other")
+    assert ws.scenario.meta.notes == "why" and not ws.dirty   # a refused save changes nothing
+    out = ws.save_as("loose", client="", pipeline="")
+    assert out["id"] == "user:loose.json"
     with pytest.raises(InputError):
         ws._resolve("bundled:../../etc/passwd")
 
@@ -255,6 +304,23 @@ def test_http_scenario_download(server):
     for bad in ("bundled:../app.py", "bundled:CHS_TipvilleSantaRita_East10/nope.json", "nope"):
         assert _call(server, "/api/scenario/download?id=" + bad)[0] == 404
     assert _call(server, "/api/scenario/download?id=" + SHORT, token=False)[0] == 403
+
+
+def test_http_save_current_from_overview(server):
+    assert _call(server, "/api/scenario/load", {"id": SHORT})[0] == 200
+    assert _call(server, "/api/scenario/meta", {"notes": 5})[0] == 400
+    body = {"name": "Tip E10", "client": "CHS", "pipeline": "East 10", "details": "d", "notes": "n"}
+    code, out = _call(server, "/api/scenario/save_current", body)
+    assert code == 200 and out["id"] == "user:CHS/East 10/Tip E10.json"
+    st = _call(server, "/api/state")[1]
+    assert st["scenario_id"] == out["id"] and not st["dirty"]
+    meta = _call(server, "/api/scenario")[1]["meta"]
+    assert (meta["client"], meta["pipeline"], meta["details"]) == ("CHS", "East 10", "d")
+    # Saving a second bundled copy to the same name asks before replacing.
+    assert _call(server, "/api/scenario/load", {"id": SHORT})[0] == 200
+    code, err = _call(server, "/api/scenario/save_current", body)
+    assert code == 400 and "already exists" in err["error"]
+    assert _call(server, "/api/scenario/save_current", {**body, "overwrite": True})[0] == 200
 
 
 def test_assistant_load_refuses_to_discard_unsaved_edits():
