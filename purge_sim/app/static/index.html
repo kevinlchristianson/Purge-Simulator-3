@@ -124,6 +124,9 @@ table.t td.n { text-align: right; font-variant-numeric: tabular-nums; }
 .q label { font-size: 13px; }
 .q .hint { grid-column: 1 / -1; font-size: 11px; color: var(--muted); margin-top: -2px; }
 .q input, .q select { width: 100%; }
+.q .stack { display: flex; flex-direction: column; gap: 3px; }
+.q input[type=checkbox] { width: auto; justify-self: start; margin: 0; }
+.q label.inl { display: flex; align-items: center; gap: 5px; }
 .q.missing label { color: var(--bad); font-weight: 600; }
 .q.missing input, .q.missing select { border-color: var(--bad); }
 .src { font-size: 10px; text-transform: uppercase; letter-spacing: .03em; padding: 0 4px; border-radius: 3px; border: 1px solid var(--border); color: var(--muted); margin-left: 4px; }
@@ -475,23 +478,53 @@ async function renderSetup() {
     <div style="display:flex;gap:8px;margin-top:8px"><button class="primary" id="setupApply">Apply</button><button id="setupCheck">Pre-run check</button></div></div><div id="setupReport"></div>`;
   const sections = [];
   for (const q of v.questions) { let g = sections.find(x => x[0] === q.section); if (!g) sections.push(g = [q.section, []]); g[1].push(q); }
-  html += `<div class="grid2">` + sections.map(([sec, qs]) => `<details class="group" open><summary>${esc(sec)}</summary>` + qs.map(q => {
+  const control = q => {
     const ph = q.default == null ? (q.required ? "required" : "") : "default: " + shown(q.default);
     const ans = q.answer;
-    let ctl;
-    if (q.kind === "select") ctl = `<select data-q="${q.id}"><option value="">${esc(q.default == null ? (q.required ? "— required —" : "—") : "default: " + (q.options.find(o => o.value === String(q.default)) || {label: shown(q.default)}).label)}</option>${q.options.map(o => `<option value="${esc(o.value)}" ${ans != null && String(ans) === o.value ? "selected" : ""}>${esc(o.label)}</option>`).join("")}</select>`;
-    else if (q.kind === "bool") ctl = `<select data-q="${q.id}"><option value="">default: ${q.default ? "yes" : "no"}</option><option value="true" ${ans === true ? "selected" : ""}>yes</option><option value="false" ${ans === false ? "selected" : ""}>no</option></select>`;
-    else ctl = `<input data-q="${q.id}" inputmode="decimal" value="${ans == null ? "" : esc(shown(ans))}" placeholder="${esc(ph)}">`;
-    const src = ans == null && q.default != null && q.default_source === "assumed" ? `<span class="src assumed">assumed</span>` : "";
+    if (q.kind === "select") return `<select data-q="${q.id}"><option value="">${esc(q.default == null ? (q.required ? "— required —" : "—") : "default: " + (q.options.find(o => o.value === String(q.default)) || {label: shown(q.default)}).label)}</option>${q.options.map(o => `<option value="${esc(o.value)}" ${ans != null && String(ans) === o.value ? "selected" : ""}>${esc(o.label)}</option>`).join("")}</select>`;
+    if (q.kind === "bool") return `<input type="checkbox" data-q="${q.id}" ${(ans == null ? q.default : ans) ? "checked" : ""}>`;
+    return `<input data-q="${q.id}" inputmode="decimal" value="${ans == null ? "" : esc(shown(ans))}" placeholder="${esc(ph)}">`;
+  };
+  const inline = v.questions.filter(q => q.inline_with);
+  html += `<div class="grid2">` + sections.map(([sec, qs]) => `<details class="group" open><summary>${esc(sec)}</summary>` + qs.filter(q => !q.inline_with).map(q => {
+    const src = q.answer == null && q.default != null && q.default_source === "assumed" ? `<span class="src assumed">assumed</span>` : "";
+    const extra = inline.filter(x => x.inline_with === q.id).map(x => `<label class="small inl" title="${esc(x.help || x.id)}">${control(x)} ${esc(x.label)}</label>`).join("");
+    const ctl = extra ? `<div class="stack">${control(q)}${extra}</div>` : control(q);
     return `<div class="q ${q.status === "missing" ? "missing" : ""}" ${q.relevant ? "" : "hidden"} data-row="${q.id}"><label title="${esc(q.id)}">${esc(q.label)}${q.unit ? ` <span class="muted small">(${esc(q.unit)})</span>` : ""}${src}</label>${ctl}${q.help ? `<div class="hint">${esc(q.help)}</div>` : ""}</div>`;
   }).join("") + `</details>`).join("") + `</div>`;
   el.innerHTML = html;
   if (S.setupReport) $("#setupReport").innerHTML = setupReportHtml(S.setupReport);
+  // live follow-ups: the fields that depend on another answer update as it changes
+  const qc = id => el.querySelector(`[data-q="${id}"]`), qd = id => v.questions.find(x => x.id === id);
+  const row = id => el.querySelector(`[data-row="${id}"]`);
+  const setPh = (id, val, fallback) => { const c = qc(id); if (c) c.placeholder = val == null ? fallback : "default: " + shown(val); };
+  const followFluid = () => {
+    const key = qc("fluid").value, f = v.fluids[key], api = Number(qc("api_gravity").value);
+    if (row("api_gravity")) row("api_gravity").hidden = !(key || qd("fluid").default || "").includes("crude");
+    if (!key) {   // back to the scenario's own default
+      setPh("fluid_sg", qd("fluid_sg").default, ""); setPh("fluid_viscosity_cst", qd("fluid_viscosity_cst").default, "");
+    } else {
+      setPh("fluid_sg", api > 0 ? Math.round(141.5 / (api + 131.5) * 1e4) / 1e4 : f.sg, "");
+      setPh("fluid_viscosity_cst", f.viscosity_cst, "");
+    }
+  };
+  qc("fluid").onchange = followFluid;
+  qc("api_gravity").oninput = followFluid;
+  const followEndpoint = () => {
+    const tick = qc("fluid_exit_at_profile_end"), mp = qc("fluid_exit_mp");
+    if (tick && mp) mp.disabled = tick.checked;
+    const mod = (qc("exit_behavior").value || qd("exit_behavior").default) === "modulating";
+    if (row("exit_min_pressure_psig")) row("exit_min_pressure_psig").hidden = !mod;
+  };
+  if (qc("fluid_exit_at_profile_end")) qc("fluid_exit_at_profile_end").onchange = followEndpoint;
+  qc("exit_behavior").onchange = followEndpoint;
+  followEndpoint();
   $("#setupApply").onclick = async () => {
     const answers = {};
     el.querySelectorAll("[data-q]").forEach(c => {
-      const q = v.questions.find(x => x.id === c.dataset.q), raw = c.value.trim();
-      answers[q.id] = raw === "" ? null : q.kind === "number" ? Number(raw) : q.kind === "bool" ? raw === "true" : raw;
+      const q = qd(c.dataset.q), raw = c.value.trim();
+      if (q.kind === "bool") answers[q.id] = q.answer == null && c.checked === !!q.default ? null : c.checked;
+      else answers[q.id] = raw === "" ? null : q.kind === "number" ? Number(raw) : raw;
     });
     $("#setupApply").disabled = true;
     try { S.setupReport = await api("/api/intake", {body: {answers}}); toast("Job setup applied. Review it, then save."); await poll(true); }

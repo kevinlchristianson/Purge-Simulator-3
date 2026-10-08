@@ -136,8 +136,7 @@ costs.
   for the number of points, how many were interpolated, and any warning flags (for example
   dead-flat stretches that may be a river or HDD crossing).
 - **Route direction.** KMZ routes are often drawn backwards. If MP 0 is at the wrong end, fix
-  it with the first Job setup question ("Pig runs from the file's far end back toward its
-  start"), not by editing mileposts.
+  it with the first Job setup question, **Reverse Direction**, not by editing mileposts.
 - **For a PxP sheet:** mileposts are the sheet's distance from the line's origin, so the
   purge may start well past MP 0. MOP is the sheet's MOP column, which can be lower than its
   MOP Limit column. The product is not set from the sheet's specific gravity; you still pick
@@ -153,11 +152,22 @@ Open the **Job setup** tab. Answer everything you know, then click **Apply**.
   tankage, a 3 mph target speed), not facts about this job. Every assumption is listed after Apply and written into the scenario notes.
   **Read that list and either confirm or answer each one.** An unconfirmed assumption is the
   most common source of a wrong result.
-- **Where the liquid really leaves the line.** If the pig stops at a block valve but the
-  product keeps going to a tank farm or pump further on, answer "Where the liquid actually
-  leaves the line". The app then holds the right back pressure at the pig stop. Leaving it
-  blank when the liquid does go further makes the purge look easier than it is (on Laurel the
-  difference is about 400 psig vs 50 psig at the pig stop).
+- **Hydraulic Endpoint (where the liquid really leaves the line).** If the pig stops at a
+  block valve but the product keeps going to a tank farm or pump further on, give that
+  milepost as the Hydraulic Endpoint, or tick **Profile endpoint** when it's the last milepost
+  of the imported profile. The app then holds the right back pressure at the pig stop. Leaving
+  it blank when the liquid does go further makes the purge look easier than it is (on Laurel
+  the difference is about 400 psig vs 50 psig at the pig stop).
+- **What receives the liquid** can be tankage, a pressurized receipt or a **Downstream Pump
+  Station**. **Behavior** is **Fixed Pressure** (the default) or **Modulating**; Modulating
+  shows a **Minimum pressure** box. The simulator does not model a modulating endpoint yet: it
+  records the minimum with the job and in the notes, and still holds the endpoint at the
+  fixed pressure above it, which is the conservative case.
+- **Fluid.** When you pick a product, the grey defaults in Specific gravity and Viscosity
+  change to that product's library values (and SG follows an API gravity you type for a
+  crude). Type a value only if the client gave you one.
+- **Pig speed.** Blank speeds on a new job default to 3 mph target, 5 mph maximum and
+  1.5 mph minimum (the maximum never drops below the target, the minimum never rises above it).
 - **Volatile products** (butane, NGL): the delivery pressure must stay above vapor pressure +
   100 psi. The Pre-run check flags it if it doesn't.
 
@@ -312,7 +322,7 @@ Also check:
 - [ ] Pipe size, wall, grade, product and MOP basis are confirmed, not assumed.
 - [ ] Every item in the Job setup assumptions list was confirmed or answered.
 - [ ] Route direction is right (MP 0 is the launch end).
-- [ ] The liquid exit is right: pig stop vs where the product actually leaves.
+- [ ] The Hydraulic Endpoint is right: pig stop vs where the product actually leaves.
 - [ ] Elevation source checked; interpolated gaps and flat stretches looked at.
 - [ ] Station roles (pump / BPCV / nothing) are your decision, not the import default.
 - [ ] Pre-run check job type makes sense for the line.
@@ -333,7 +343,7 @@ Also check:
   hydraulics than the displayed station pressures, so the N2/liquid interface can sit below
   the pump-held line on the chart. This is a known open engine item.
 - **The Laurel and GL-08 scenarios** carry a liquid exit past the pig stop that the engine
-  doesn't read yet. If you reuse them, set the liquid exit through Job setup.
+  doesn't read yet. If you reuse them, set the Hydraulic Endpoint through Job setup.
 - **Elevation lookup is US only.**
 - **Station classification and the final strategy** (lean vs pack-and-coast, booster
   plan) are still engineering judgment. The app and assistant help you make the call; they

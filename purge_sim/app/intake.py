@@ -45,24 +45,35 @@ _NPS_CHOICES = [k for k in NPS_OD_IN if NPS_OD_IN[k] >= 2.375]
 # kind: number | select | bool. required: no default can stand in for it on a new job.
 QUESTIONS: List[dict] = [
     # ---- route
-    {"id": "reverse_route", "section": "Route", "kind": "bool",
-     "label": "Pig runs from the file's far end back toward its start",
-     "help": "KMZ routes are often drawn the other way (Tipville: inverted so MP increases southbound). "
-             "Flips the profile so MP 0 is the launch; every milepost below is then in the new direction."},
+    {"id": "reverse_route", "section": "Route", "kind": "bool", "label": "Reverse Direction",
+     "help": "The pig runs from the file's far end back toward its start. KMZ routes are often drawn the other "
+             "way (Tipville: inverted so MP increases southbound). Flips the profile so MP 0 is the launch; every "
+             "milepost below is then in the new direction."},
     {"id": "purge_start_mp", "section": "Route", "kind": "number", "unit": "MP", "label": "Pig launch milepost"},
     {"id": "purge_end_mp", "section": "Route", "kind": "number", "unit": "MP", "label": "Pig stop milepost (purge end)"},
-    {"id": "fluid_exit_mp", "section": "Route", "kind": "number", "unit": "MP",
-     "label": "Where the liquid actually leaves the line",
-     "help": "Leave blank if it's the pig stop. If the product goes on past the pig stop (Laurel: pig stops at "
-             "the Allendale BV, diesel goes on to the Billings tank farm), the stretch beyond is still pushed "
-             "through, so the pig stop sees the delivery pressure plus that stretch's friction and head."},
-    # ---- exit
-    {"id": "exit_type", "section": "Exit", "kind": "select", "label": "What receives the liquid",
+    {"id": "fluid_exit_mp", "section": "Route", "kind": "number", "unit": "MP", "label": "Hydraulic Endpoint",
+     "help": "Where the liquid actually leaves the line. Leave blank if it's the pig stop. If the product goes on "
+             "past the pig stop (Laurel: pig stops at the Allendale BV, diesel goes on to the Billings tank farm), "
+             "the stretch beyond is still pushed through, so the pig stop sees the endpoint pressure plus that "
+             "stretch's friction and head. Tick Profile endpoint when it's the end of the imported profile."},
+    {"id": "fluid_exit_at_profile_end", "section": "Route", "kind": "bool", "label": "Profile endpoint",
+     "inline_with": "fluid_exit_mp",
+     "help": "The hydraulic endpoint is the last milepost of the profile."},
+    # ---- hydraulic endpoint (the exit)
+    {"id": "exit_type", "section": "Hydraulic Endpoint", "kind": "select", "label": "What receives the liquid",
      "options": [{"value": "tankage", "label": "Tankage"},
-                 {"value": "pressurized", "label": "Pressurized receipt (sphere, pipeline, flare header)"}]},
-    {"id": "exit_pressure_psig", "section": "Exit", "kind": "number", "unit": "psig",
-     "label": "Delivery pressure held at the exit",
+                 {"value": "pressurized", "label": "Pressurized receipt (sphere, pipeline, flare header)"},
+                 {"value": "pump_station", "label": "Downstream Pump Station"}]},
+    {"id": "exit_behavior", "section": "Hydraulic Endpoint", "kind": "select", "label": "Behavior",
+     "options": [{"value": "fixed", "label": "Fixed Pressure"},
+                 {"value": "modulating", "label": "Modulating"}],
+     "help": "Modulating: the endpoint lets its pressure come down as far as the minimum below. Recorded with the "
+             "job; the simulator still holds the endpoint at the pressure above."},
+    {"id": "exit_pressure_psig", "section": "Hydraulic Endpoint", "kind": "number", "unit": "psig",
+     "label": "Pressure held at the endpoint",
      "help": "Past tankage jobs held 50 psig. Volatile products need vapor pressure + 100 psi."},
+    {"id": "exit_min_pressure_psig", "section": "Hydraulic Endpoint", "kind": "number", "unit": "psig",
+     "label": "Minimum pressure (modulating)"},
     # ---- pipe
     {"id": "nps", "section": "Pipe", "kind": "select", "label": "Nominal pipe size (in)", "required": True,
      "options": [{"value": k, "label": f'{k}" ({NPS_OD_IN[k]:.3f}" OD)'} for k in _NPS_CHOICES],
@@ -104,9 +115,9 @@ QUESTIONS: List[dict] = [
     # ---- speed
     {"id": "target_speed_mph", "section": "Pig speed", "kind": "number", "unit": "mph", "label": "Target pig speed"},
     {"id": "max_speed_mph", "section": "Pig speed", "kind": "number", "unit": "mph", "label": "Hard maximum pig speed",
-     "help": "Blank uses the target speed as the cap."},
+     "help": "Blank on a new job uses 5 mph (or the target, if that's higher)."},
     {"id": "min_speed_mph", "section": "Pig speed", "kind": "number", "unit": "mph", "label": "Minimum pig speed",
-     "help": "Blank on a new job uses target - 0.25 mph so the controller defends the target."},
+     "help": "Blank on a new job uses 1.5 mph (or the target, if that's lower)."},
     # ---- strategy
     {"id": "strategy", "section": "Strategy", "kind": "select", "label": "Injection strategy",
      "options": [{"value": "lean", "label": "Lean: inject as needed to hold speed"},
@@ -119,7 +130,10 @@ QUESTIONS: List[dict] = [
 ]
 _Q = {q["id"]: q for q in QUESTIONS}
 
+# Kevin's standing pig speed defaults (2026-10-08): target 3, max 5, min 1.5 mph
 FRESH_DEFAULT_SPEED_MPH = 3.0
+DEFAULT_MAX_SPEED_MPH = 5.0
+DEFAULT_MIN_SPEED_MPH = 1.5
 
 
 class IntakeError(ValueError):
@@ -160,7 +174,8 @@ def _clean(qid: str, value: Any) -> Any:
         raise IntakeError(f"{qid} must be finite")
     if qid in ("purge_start_mp", "purge_end_mp", "fluid_exit_mp"):
         return x
-    if x < 0 or (x == 0 and qid not in ("drive_margin_pct", "n2_temperature_f", "exit_pressure_psig")):
+    if x < 0 or (x == 0 and qid not in ("drive_margin_pct", "n2_temperature_f", "exit_pressure_psig",
+                                          "exit_min_pressure_psig")):
         raise IntakeError(f"{qid} must be positive")
     if qid == "drive_margin_pct" and x >= 100:
         raise IntakeError("drive_margin_pct must be below 100")
@@ -212,6 +227,7 @@ def _defaults(sc: Scenario, a: Dict[str, Any]) -> Dict[str, Tuple[Any, str]]:
     d["purge_start_mp"] = (inp.purge_start_mp, "data")
     d["purge_end_mp"] = (inp.purge_end_mp, "data")
     d["fluid_exit_mp"] = (None, "data")
+    d["fluid_exit_at_profile_end"] = (False, "data")
 
     # fluid
     key = fluid_lib.match(inp.fluid_name)
@@ -229,10 +245,12 @@ def _defaults(sc: Scenario, a: Dict[str, Any]) -> Dict[str, Tuple[Any, str]]:
     vmin = f.min_liquid_psig if f else None
     if vmin and vmin > 50:
         d["exit_pressure_psig"] = (float(5 * math.ceil(vmin / 5)), "derived")
-    elif fresh or a.get("fluid_exit_mp"):
+    elif fresh or a.get("fluid_exit_mp") or a.get("fluid_exit_at_profile_end"):
         d["exit_pressure_psig"] = (50.0, "assumed")
     else:
         d["exit_pressure_psig"] = (inp.exit_pressure_run_psig, "data")
+    d["exit_behavior"] = ("fixed", "standard")
+    d["exit_min_pressure_psig"] = (None, "data")
 
     # pipe
     placeholder = _pipe_is_placeholder(inp)
@@ -288,8 +306,9 @@ def _defaults(sc: Scenario, a: Dict[str, Any]) -> Dict[str, Tuple[Any, str]]:
     # speed
     d["target_speed_mph"] = ((FRESH_DEFAULT_SPEED_MPH, "assumed") if fresh else (inp.target_speed_mph, "data"))
     tgt = a.get("target_speed_mph") or d["target_speed_mph"][0]
-    d["max_speed_mph"] = ((tgt, "derived") if fresh or a.get("target_speed_mph") else (inp.max_speed_mph, "data"))
-    d["min_speed_mph"] = ((max(0.5, round(tgt - 0.25, 3)), "derived") if fresh or a.get("target_speed_mph")
+    d["max_speed_mph"] = ((max(DEFAULT_MAX_SPEED_MPH, tgt), "standard") if fresh or a.get("target_speed_mph")
+                          else (inp.max_speed_mph, "data"))
+    d["min_speed_mph"] = ((min(DEFAULT_MIN_SPEED_MPH, tgt), "standard") if fresh or a.get("target_speed_mph")
                           else (inp.min_speed_mph, "data"))
 
     # strategy (budget and pack pressure are filled from the pre-run check in apply())
@@ -326,11 +345,15 @@ def view(sc: Scenario) -> dict:
             relevant = strategy == "pack_and_coast"
         elif qid == "api_gravity":
             relevant = "crude" in (a.get("fluid") or d["fluid"][0] or "")
+        elif qid == "exit_min_pressure_psig":
+            relevant = (a.get("exit_behavior") or d["exit_behavior"][0]) == "modulating"
         # Product is only unknown on a fresh import; a saved scenario's SG and viscosity are data.
         required = (bool(q.get("required")) and (qid != "fluid" or _is_fresh(sc))) \
             or (qid == "flange_class" and basis == "flange_class")
         if qid == "mop_psig":
             required = basis == "flat"
+        if qid == "exit_min_pressure_psig":
+            required = relevant
         if qid in a and a[qid] is not None:
             status = "answered"
         elif dv is not None:
@@ -428,7 +451,7 @@ def apply(sc: Scenario, answers: Dict[str, Any]) -> Tuple[ScenarioInputs, Dict[s
         if "purge_start_mp" in old_mp:
             a["purge_end_mp"] = _mirror(old_mp["purge_start_mp"], pa, pb)
         if "fluid_exit_mp" in old_mp:
-            warnings.append("The liquid exit milepost was answered in the old direction; it was cleared, "
+            warnings.append("The hydraulic endpoint milepost was answered in the old direction; it was cleared, "
                             "answer it again.")
         warnings.append("Route reversed: mileposts now run from the other end of the file, and every station "
                         "and joint milepost moved with it.")
@@ -457,8 +480,13 @@ def apply(sc: Scenario, answers: Dict[str, Any]) -> Tuple[ScenarioInputs, Dict[s
                           "with the stop past the launch")
     inp.purge_start_mp, inp.purge_end_mp = start, end
     fluid_exit = a.get("fluid_exit_mp")
+    if a.get("fluid_exit_at_profile_end"):
+        if fluid_exit is not None and abs(fluid_exit - p1) > 1e-6:
+            warnings.append(f"Profile endpoint is ticked, so the hydraulic endpoint is MP {p1:g} (the end of the "
+                            f"profile), not the MP {fluid_exit:g} typed in.")
+        fluid_exit = p1
     if fluid_exit is not None and fluid_exit < end - 1e-6:
-        raise IntakeError(f"the liquid exit (MP {fluid_exit:g}) can't be before the pig stop (MP {end:g})")
+        raise IntakeError(f"the hydraulic endpoint (MP {fluid_exit:g}) can't be before the pig stop (MP {end:g})")
 
     # ---- fluid
     fkey = val("fluid")
@@ -568,10 +596,26 @@ def apply(sc: Scenario, answers: Dict[str, Any]) -> Tuple[ScenarioInputs, Dict[s
             at_stop = round(exit_pressure_at_stop(inp, end, float(fluid_exit), delivery), 1)
         except ValueError as e:
             raise IntakeError(str(e))
-        warnings.append(f"The liquid leaves at MP {fluid_exit:g}, past the pig stop at MP {end:g}. The simulator "
+        warnings.append(f"The hydraulic endpoint is MP {fluid_exit:g}, past the pig stop at MP {end:g}. The simulator "
                         f"puts the exit at the pig stop, so it is set to {at_stop:g} psig: {delivery:g} psig delivery "
                         f"plus that stretch's friction at {tgt:g} mph and the head to clear its terrain.")
-    exit_answered = any(a.get(k) is not None for k in ("exit_pressure_psig", "exit_type", "fluid_exit_mp", "fluid"))
+    behavior = val("exit_behavior")
+    exit_min = a.get("exit_min_pressure_psig")
+    if behavior == "modulating":
+        if exit_min is None:
+            warnings.append("The endpoint is modulating but no minimum pressure was given; answer the minimum.")
+        else:
+            if exit_min > delivery + 1e-6:
+                raise IntakeError(f"the modulating minimum ({exit_min:g} psig) can't be above the endpoint "
+                                  f"pressure ({delivery:g} psig)")
+            if vmin and exit_min < vmin:
+                warnings.append(f"The {exit_min:g} psig modulating minimum is below the {vmin:g} psig "
+                                f"{inp.fluid_name} needs to stay liquid.")
+        warnings.append(f"Modulating endpoint" + (f" (minimum {exit_min:g} psig)" if exit_min is not None else "")
+                        + f" is recorded with the job, but the simulator doesn't model a modulating endpoint yet: "
+                        f"it holds {delivery:g} psig there, which is conservative.")
+    exit_answered = any(a.get(k) is not None for k in ("exit_pressure_psig", "exit_type", "fluid_exit_mp",
+                                               "fluid_exit_at_profile_end", "fluid"))
     if fresh or exit_answered:
         # past jobs all held a constant delivery pressure to the end of the run
         inp.exit_pressure_run_psig = inp.exit_pressure_end_psig = float(at_stop)
