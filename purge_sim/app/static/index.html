@@ -3,33 +3,38 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Purge Simulator</title>
+<title>Purge Simulator · EnerMech</title>
+<link rel="icon" type="image/png" href="/static/brand/enermech-icon.png">
 <link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css">
 <script src="/static/vendor/leaflet/leaflet.js"></script>
 <style>
 :root {
   --bg: #f6f7f9; --panel: #ffffff; --panel-2: #f0f2f5; --border: #dde1e7;
-  --text: #1c2330; --muted: #5d6878; --accent: #1f6feb; --accent-text: #ffffff;
+  --text: #1c2330; --muted: #5d6878; --accent: #00489a; --accent-text: #ffffff;
   --good: #1a7f37; --warn: #9a6700; --bad: #cf222e;
-  --s1: #1f6feb; --s2: #d4580b; --s3: #1a7f37; --s4: #8250df; --ground: #8c7a5b; --mop: #cf222e;
-  --gas: #1f6feb; --liquid: #1a7f37; --hgl: #0e7c86;
+  --s1: #00489a; --s2: #d4580b; --s3: #1e9638; --s4: #8250df; --ground: #8c7a5b; --mop: #cf222e;
+  --gas: #00489a; --liquid: #1e9638; --hgl: #0e7c86;
+  /* EnerMech brand: blue #00489A and green #23A63D from the logo; the header uses the
+     green-to-teal gradient of the logo tile. */
+  --brand-blue: #00489a; --brand-green: #23a63d;
+  --brand-bar: linear-gradient(100deg, #00489a 0%, #084766 55%, #128d36 100%);
   --shadow: 0 1px 2px rgba(0,0,0,.06);
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     --bg: #0f1318; --panel: #161b22; --panel-2: #1c232c; --border: #2d3540;
-    --text: #e6edf3; --muted: #9aa6b4; --accent: #4493f8; --accent-text: #0b0f14;
+    --text: #e6edf3; --muted: #9aa6b4; --accent: #5b9cf0; --accent-text: #0b0f14;
     --good: #3fb950; --warn: #d29922; --bad: #f85149;
-    --s1: #4493f8; --s2: #f0883e; --s3: #3fb950; --s4: #a371f7; --ground: #b3a17e; --mop: #f85149;
-    --gas: #4493f8; --liquid: #3fb950; --hgl: #39c5cf; --shadow: none;
+    --s1: #5b9cf0; --s2: #f0883e; --s3: #3cc35a; --s4: #a371f7; --ground: #b3a17e; --mop: #f85149;
+    --gas: #5b9cf0; --liquid: #3cc35a; --hgl: #39c5cf; --shadow: none;
   }
 }
 :root[data-theme="dark"] {
   --bg: #0f1318; --panel: #161b22; --panel-2: #1c232c; --border: #2d3540;
-  --text: #e6edf3; --muted: #9aa6b4; --accent: #4493f8; --accent-text: #0b0f14;
+  --text: #e6edf3; --muted: #9aa6b4; --accent: #5b9cf0; --accent-text: #0b0f14;
   --good: #3fb950; --warn: #d29922; --bad: #f85149;
-  --s1: #4493f8; --s2: #f0883e; --s3: #3fb950; --s4: #a371f7; --ground: #b3a17e; --mop: #f85149;
-  --gas: #4493f8; --liquid: #3fb950; --hgl: #39c5cf; --shadow: none;
+  --s1: #5b9cf0; --s2: #f0883e; --s3: #3cc35a; --s4: #a371f7; --ground: #b3a17e; --mop: #f85149;
+  --gas: #5b9cf0; --liquid: #3cc35a; --hgl: #39c5cf; --shadow: none;
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; }
@@ -46,12 +51,20 @@ h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: v
 .muted { color: var(--muted); }
 .small { font-size: 12px; }
 
-header { display: flex; align-items: center; gap: 10px; padding: 8px 14px; background: var(--panel); border-bottom: 1px solid var(--border); flex-wrap: wrap; }
-header .brand { font-weight: 700; }
-header .scen { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 40vw; }
+header { display: flex; align-items: center; gap: 10px; padding: 7px 14px; background: var(--brand-bar); color: #fff; border-bottom: 3px solid var(--brand-green); flex-wrap: wrap; }
+header .logo { height: 34px; width: auto; display: block; }
+header .brand { font-weight: 700; padding-left: 10px; border-left: 1px solid rgba(255,255,255,.35); }
+header .scen { color: rgba(255,255,255,.78); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 40vw; }
 header .spacer { flex: 1; }
+header .muted { color: rgba(255,255,255,.78); }
+header button { background: rgba(255,255,255,.12); border-color: rgba(255,255,255,.35); color: #fff; }
+header button:hover:not(:disabled) { background: rgba(255,255,255,.22); border-color: #fff; }
+header button.primary { background: var(--brand-green); border-color: var(--brand-green); color: #fff; }
+header button.primary:hover:not(:disabled) { background: #1e9638; border-color: #fff; }
 .progress { width: 140px; height: 6px; background: var(--panel-2); border-radius: 3px; overflow: hidden; }
+header .progress { background: rgba(255,255,255,.25); }
 .progress > div { height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+header .progress > div { background: var(--brand-green); }
 
 main { display: grid; grid-template-columns: 290px minmax(0, 1fr) 380px; height: calc(100vh - 51px); }
 aside, section, .chat { overflow: auto; }
@@ -61,7 +74,7 @@ section { padding: 10px 16px 30px; }
 
 .tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--border); margin-bottom: 10px; flex-wrap: wrap; }
 .tabs button { border: none; border-bottom: 2px solid transparent; border-radius: 0; background: none; padding: 7px 12px; color: var(--muted); }
-.tabs button.on { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
+.tabs button.on { color: var(--text); border-bottom-color: var(--brand-green); font-weight: 600; }
 
 .lib-job { margin-top: 10px; font-weight: 600; font-size: 12px; color: var(--muted); }
 .lib-client { margin-top: 8px; }
@@ -194,6 +207,7 @@ input[type=range] { width: 100%; }
 </head>
 <body>
 <header>
+  <img class="logo" src="/static/brand/enermech-logo-white.png" alt="EnerMech">
   <span class="brand">Purge Simulator</span>
   <span class="scen" id="scenName">No scenario open</span>
   <span class="spacer"></span>

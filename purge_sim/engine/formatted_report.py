@@ -49,10 +49,10 @@ except ImportError:
 # Style — matches company dark-blue / light palette
 # ---------------------------------------------------------------------------
 
-_C_TITLE  = "1F3864"   # dark navy title bar
-_C_HDR    = "2E75B6"   # column headers
-_C_SUB    = "344E6E"   # sub-header / section label
-_C_ZEBRA  = "EBF3FB"   # alternating row
+_C_TITLE  = "00489A"   # EnerMech blue title bar
+_C_HDR    = "128D36"   # EnerMech green column headers
+_C_SUB    = "084766"   # EnerMech teal sub-header / section label
+_C_ZEBRA  = "EAF0F8"   # alternating row (light brand blue)
 _C_WHITE  = "FFFFFF"
 
 _F_TITLE  = Font(name="Calibri", bold=True, color="FFFFFF", size=16)

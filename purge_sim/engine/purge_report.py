@@ -40,13 +40,13 @@ except ImportError:
 # Style constants
 # ---------------------------------------------------------------------------
 
-_C_NAVY    = "1F3864"   # dark navy  — main headers
-_C_BLUE    = "2E75B6"   # mid blue   — section labels
-_C_DKBLUE  = "17375E"   # very dark  — title bar
+_C_NAVY    = "00489A"   # EnerMech blue  — main headers
+_C_BLUE    = "128D36"   # EnerMech green — section labels
+_C_DKBLUE  = "003570"   # dark brand blue — title bar
 _C_RED     = "FF0000"   # violation
 _C_AMBER   = "FFEB9C"   # warning fill
 _C_GREEN   = "E2EFDA"   # ok / safe fill
-_C_ZEBRA_A = "EBF3FB"   # zebra row A
+_C_ZEBRA_A = "EAF0F8"   # zebra row A (light brand blue)
 _C_ZEBRA_B = "FFFFFF"   # zebra row B (white)
 _C_SLACK   = "FF9999"   # slack / overpressure cell
 _C_NEAR    = "FFD966"   # within 100 psi of MOP
