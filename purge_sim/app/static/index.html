@@ -1064,12 +1064,21 @@ $("#routeOk").onclick = async () => {
 function renderExports() {
   const el = $("#tab-exports");
   if (!S.results) { el.innerHTML = `<div class="empty">Run the scenario to export reports.</div>`; return; }
-  el.innerHTML = `<div class="card"><p class="small muted">Each export goes to a new dated folder under PurgeSimOutputs in your home folder, so earlier variants are never overwritten.</p>
-    ${[["formatted", "Client report (FILL REPORT + charts, xlsx)"], ["full", "Full technical report (7 sheets, xlsx)"], ["log", "Run log (txt)"], ["gif", "Profile animation (GIF, slower)"]]
+  el.innerHTML = `<div class="card"><b>Everything for the client</b>
+    <p class="small muted">One zip with the client web page, both xlsx reports, the run log, the profile animation and the scenario file.</p>
+    <div style="margin:8px 0"><button class="primary" data-exp="all">Download all reports (zip)</button> <span class="small muted" id="exp-all"></span></div>
+    <label class="small"><input type="checkbox" id="expGif" checked> Include the profile animation (GIF, slower)</label><br>
+    <label class="small"><input type="checkbox" id="expNotes"> Put the scenario notes on the client web page</label></div>
+    <div class="card"><b>One at a time</b><p class="small muted">Each export goes to a new dated folder under PurgeSimOutputs in your home folder, so earlier variants are never overwritten.</p>
+    ${[["html", "Client web page (html, opens in any browser, works offline)"], ["formatted", "Client report (FILL REPORT + charts, xlsx)"], ["full", "Full technical report (7 sheets, xlsx)"], ["log", "Run log (txt)"], ["gif", "Profile animation (GIF, slower)"]]
       .map(([k, l]) => `<div style="margin:8px 0"><button data-exp="${k}">${l}</button> <span class="small muted" id="exp-${k}"></span></div>`).join("")}</div>`;
   el.querySelectorAll("[data-exp]").forEach(b => b.onclick = async () => {
     const k = b.dataset.exp, note = $("#exp-" + k); b.disabled = true; note.textContent = "Generating…";
-    try { const r = await api("/api/export", {body: {kind: k}}); note.innerHTML = `Saved to ${esc(r.path)} · <a href="${r.url}">download</a>`; }
+    try {
+      const r = await api("/api/export", {body: {kind: k, include_notes: $("#expNotes").checked, include_gif: $("#expGif").checked}});
+      note.innerHTML = `Saved to ${esc(r.path)} · <a href="${r.url}">download</a>`;
+      if (k === "all" || k === "html") location.href = r.url;   // one click: start the download right away
+    }
     catch (e) { note.textContent = e.message; }
     b.disabled = false;
   });

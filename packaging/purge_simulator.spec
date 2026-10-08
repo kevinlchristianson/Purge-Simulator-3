@@ -27,6 +27,7 @@ a = Analysis(
         "purge_sim.engine.animation",
         "purge_sim.engine.log_export",
         "purge_sim.engine.hgl",
+        "purge_sim.app.client_report",
         "purge_sim.data.ili_parser",
         "purge_sim.data.profile_parser",
         "matplotlib.backends.backend_agg",

@@ -141,6 +141,30 @@ def test_save_never_overwrites_without_flag():
         ws._resolve("bundled:../../etc/passwd")
 
 
+def test_client_html_and_all_reports_zip():
+    import zipfile
+    ws = Workspace()
+    ws.load(SHORT)
+    ws.update_meta(notes="internal tender note </script><b>x</b>")
+    ws.run()
+    ws.update_inputs({"target_speed_mph": 2.0})     # edits after the run don't leak into its reports
+    page = open(ws.export("html"), encoding="utf-8").read()
+    assert "__REPORT_" not in page and "tender note" not in page   # notes are opt-in
+    blob = page.split('id="report-data">', 1)[1].split("</script>", 1)[0]
+    data = json.loads(blob)
+    assert data["summary"]["completed"] and len(data["profile"]["frames"]) > 10
+    assert len(data["fill"]["rows"]) == 50 and "<" not in blob
+    assert "target 3 mph" in dict(data["basis"])["Pig speed"]
+    page = open(ws.export("html", include_notes=True), encoding="utf-8").read()
+    assert "</script><b>" not in page and "tender note" in page
+    z = ws.export("all", include_gif=False)
+    names = zipfile.ZipFile(z).namelist()
+    assert z.endswith("_all_reports.zip") and len(names) == 5
+    assert {os.path.splitext(n)[1] for n in names} == {".html", ".xlsx", ".txt", ".json"}
+    with pytest.raises(InputError, match="unknown export kind"):
+        ws.export("pdf")
+
+
 # ---------------------------------------------------------------- assistant (fake client)
 
 def _text(t):
