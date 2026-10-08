@@ -9,7 +9,9 @@
 <style>
 :root {
   --bg: #f4f6f9; --panel: #ffffff; --panel-2: #eef1f5; --border: #dce1e8;
-  --text: #17202c; --muted: #5b6676; --accent: #00489a; --hero: linear-gradient(100deg, #00489a 0%, #084766 55%, #128d36 100%); --hero-text: #ffffff;
+  --text: #17202c; --muted: #5b6676; --accent: var(--brand-primary); --hero-shade: transparent; --hero-text: #ffffff;
+  /* Brand (Settings > Branding): defaults are EnerMech; the page script sets the chosen brand. */
+  --brand-primary: #00489a; --brand-mid: #084766; --brand-secondary: #128d36; --brand-highlight: #23a63d;
   --good: #1a7f37; --warn: #9a6700; --bad: #cf222e;
   --gas: #00489a; --liquid: #1e9638; --mop: #cf222e; --ground: #8c7a5b; --s2: #d4580b; --s4: #8250df;
   --grid: #e6e9ee; --shadow: 0 1px 3px rgba(16,24,40,.08);
@@ -17,7 +19,7 @@
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     --bg: #0f1318; --panel: #161b22; --panel-2: #1c232c; --border: #2d3540;
-    --text: #e6edf3; --muted: #9aa6b4; --accent: #5b9cf0; --hero: linear-gradient(100deg, #003570 0%, #06384f 55%, #0d6a29 100%); --hero-text: #e6edf3;
+    --text: #e6edf3; --muted: #9aa6b4; --accent: #6ea8fe; --hero-shade: rgba(0,0,0,.28); --hero-text: #e6edf3;
     --good: #3fb950; --warn: #d29922; --bad: #f85149;
     --gas: #5b9cf0; --liquid: #3cc35a; --mop: #f85149; --ground: #b3a17e; --s2: #f0883e; --s4: #a371f7;
     --grid: #232a33; --shadow: none;
@@ -25,7 +27,7 @@
 }
 :root[data-theme="dark"] {
   --bg: #0f1318; --panel: #161b22; --panel-2: #1c232c; --border: #2d3540;
-  --text: #e6edf3; --muted: #9aa6b4; --accent: #5b9cf0; --hero: linear-gradient(100deg, #003570 0%, #06384f 55%, #0d6a29 100%); --hero-text: #e6edf3;
+  --text: #e6edf3; --muted: #9aa6b4; --accent: #6ea8fe; --hero-shade: rgba(0,0,0,.28); --hero-text: #e6edf3;
   --good: #3fb950; --warn: #d29922; --bad: #f85149;
   --gas: #5b9cf0; --liquid: #3cc35a; --mop: #f85149; --ground: #b3a17e; --s2: #f0883e; --s4: #a371f7;
   --grid: #232a33; --shadow: none;
@@ -33,9 +35,9 @@
 * { box-sizing: border-box; }
 html, body { margin: 0; }
 body { background: var(--bg); color: var(--text); font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
-.hero { background: var(--hero); color: var(--hero-text); padding: 28px 16px 22px; border-bottom: 4px solid #23a63d; }
-/* EnerMech logo, embedded so the page stays a single offline file (source: static/brand/enermech-logo-white.png) */
-.logo { display: block; width: 120px; height: 54px; margin-bottom: 14px; background: center / contain no-repeat url("data:image/png;base64,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"); }
+.hero { background: linear-gradient(var(--hero-shade), var(--hero-shade)), linear-gradient(100deg, var(--brand-primary) 0%, var(--brand-mid) 55%, var(--brand-secondary) 100%); color: var(--hero-text); padding: 28px 16px 22px; border-bottom: 4px solid var(--brand-highlight); }
+.logo { display: block; height: 54px; max-width: 260px; object-fit: contain; margin-bottom: 14px; }
+.logo.chip { background: #fff; padding: 6px 10px; border-radius: 6px; height: 58px; }
 .wrap { max-width: 1080px; margin: 0 auto; padding: 0 16px; }
 .hero .wrap { padding: 0; }
 .eyebrow { text-transform: uppercase; letter-spacing: .08em; font-size: 12px; opacity: .8; }
@@ -44,7 +46,7 @@ h1 { font-size: 28px; line-height: 1.2; margin: 6px 0 6px; overflow-wrap: anywhe
 nav { position: sticky; top: 0; z-index: 5; background: var(--panel); border-bottom: 1px solid var(--border); }
 nav .wrap { display: flex; gap: 4px; overflow-x: auto; }
 nav a { color: var(--muted); text-decoration: none; padding: 10px 10px; font-size: 14px; white-space: nowrap; border-bottom: 2px solid transparent; }
-nav a:hover { color: var(--text); border-bottom-color: #23a63d; }
+nav a:hover { color: var(--text); border-bottom-color: var(--brand-highlight); }
 section { padding: 22px 0 6px; scroll-margin-top: 44px; }
 h2 { font-size: 19px; margin: 0 0 10px; }
 .card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; box-shadow: var(--shadow); margin-bottom: 14px; }
@@ -102,7 +104,7 @@ footer { color: var(--muted); font-size: 12.5px; padding: 18px 0 34px; }
 </head>
 <body>
 <header class="hero"><div class="wrap">
-  <div class="logo" role="img" aria-label="EnerMech"></div>
+  <img class="logo" id="logo" alt="" hidden>
   <div class="eyebrow">Nitrogen purge simulation</div>
   <h1 id="title"></h1>
   <div class="sub" id="sub"></div>
@@ -145,6 +147,11 @@ const fmt = (v, nd = 0) => v == null || !isFinite(v) ? "—" : Number(v).toLocal
 const S = D.summary || {}, SE = D.series || {}, P = D.profile || {frames: []};
 
 // ---------------------------------------------------------------- header + summary
+// brand (Settings > Branding in the app)
+const B = D.brand || {};
+for (const k of ["primary", "mid", "secondary", "highlight"]) if (B[k]) document.documentElement.style.setProperty("--brand-" + k, B[k]);
+if (B.logo) { const l = $("#logo"); l.src = B.logo; l.alt = B.name || "Logo"; l.classList.toggle("chip", B.logo_on === "light"); l.hidden = false; }
+if (B.name) $(".eyebrow").textContent = B.name + " · Nitrogen purge simulation";
 $("#title").textContent = D.title;
 const route = (D.basis.find(r => r[0] === "Route") || [])[1] || "";
 $("#sub").textContent = [route, "Prepared " + D.date].filter(Boolean).join(" · ");

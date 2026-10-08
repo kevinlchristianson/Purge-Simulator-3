@@ -23,6 +23,7 @@ from typing import List, Optional
 import numpy as np
 
 from .simulator import SimResults, SimConfig
+from ..branding import xlsx_color
 from .purge_report import (_build_rows, _select_n, _mop_at, _elev_interp,
                            _PSIG_PER_FT, _deployed_boosters)
 
@@ -49,10 +50,10 @@ except ImportError:
 # Style — matches company dark-blue / light palette
 # ---------------------------------------------------------------------------
 
-_C_TITLE  = "00489A"   # EnerMech blue title bar
-_C_HDR    = "128D36"   # EnerMech green column headers
-_C_SUB    = "084766"   # EnerMech teal sub-header / section label
-_C_ZEBRA  = "EAF0F8"   # alternating row (light brand blue)
+_C_TITLE  = "brand:primary"     # title bar (the brand chosen in Settings, see purge_sim/branding.py)
+_C_HDR    = "brand:secondary"   # column headers
+_C_SUB    = "brand:mid"         # sub-header / section label
+_C_ZEBRA  = "brand:tint"        # alternating row
 _C_WHITE  = "FFFFFF"
 
 _F_TITLE  = Font(name="Calibri", bold=True, color="FFFFFF", size=16)
@@ -87,7 +88,7 @@ def _border():
 
 
 def _fill(hex_c):
-    return PatternFill("solid", fgColor=hex_c)
+    return PatternFill("solid", fgColor=xlsx_color(hex_c))
 
 
 # ---------------------------------------------------------------------------

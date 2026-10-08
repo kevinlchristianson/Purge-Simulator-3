@@ -365,6 +365,11 @@ name.
 - Exports describe the latest run, using the inputs it was run with, even if you edited
   the scenario since. Check the yellow "Inputs changed" warning is gone before exporting
   if you want your edits in the reports.
+- **Branding:** *Settings > Branding* picks the company shown in the app header, on the
+  client web page and in the xlsx title and header colors: EnerMech (the default), Plain
+  (no logo or company name), or Custom (your company name, three colors and a PNG, JPG or
+  SVG logo). It is saved on this computer and applies to every export from then on; reports
+  already written keep the branding they were made with.
 
 ---
 

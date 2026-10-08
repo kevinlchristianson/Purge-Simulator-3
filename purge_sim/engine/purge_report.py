@@ -26,6 +26,7 @@ import numpy as np
 from .simulator import SimResults, SimConfig, SimStep
 from .hgl import compute_hgl
 from .physics import pipe_area_ft2
+from ..branding import xlsx_color
 
 try:
     import openpyxl
@@ -40,13 +41,13 @@ except ImportError:
 # Style constants
 # ---------------------------------------------------------------------------
 
-_C_NAVY    = "00489A"   # EnerMech blue  — main headers
-_C_BLUE    = "128D36"   # EnerMech green — section labels
-_C_DKBLUE  = "003570"   # dark brand blue — title bar
+_C_NAVY    = "brand:primary"     # main headers (the brand chosen in Settings, see purge_sim/branding.py)
+_C_BLUE    = "brand:secondary"   # section labels
+_C_DKBLUE  = "brand:dark"        # title bar
 _C_RED     = "FF0000"   # violation
 _C_AMBER   = "FFEB9C"   # warning fill
 _C_GREEN   = "E2EFDA"   # ok / safe fill
-_C_ZEBRA_A = "EAF0F8"   # zebra row A (light brand blue)
+_C_ZEBRA_A = "brand:tint"        # zebra row A
 _C_ZEBRA_B = "FFFFFF"   # zebra row B (white)
 _C_SLACK   = "FF9999"   # slack / overpressure cell
 _C_NEAR    = "FFD966"   # within 100 psi of MOP
@@ -68,7 +69,7 @@ def _border(style="thin"):
 
 
 def _fill(hex_color):
-    return PatternFill("solid", fgColor=hex_color)
+    return PatternFill("solid", fgColor=xlsx_color(hex_color))
 
 
 def _col_ltr(n):
