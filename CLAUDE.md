@@ -155,6 +155,10 @@ purge_sim/
                          dual-axis animated profile chart — used by animation.py and the xlsx
                          reports, NOT yet wired into a live results_panel tab, see Open Items)
     scenario_manager.py — directory-backed named-scenario collection, thin wrapper on data/scenario.py
+  branding.py           — company branding (Settings > Branding): EnerMech default, plain, or custom
+                         name/colors/logo, kept in ~/.purge_sim/settings.json. Feeds the app header,
+                         the client html page and the xlsx fills ("brand:<key>" colors). Chart data
+                         colors are not branded. EnerMech logo files in app/static/brand/
 tools/                  — one-off per-client build/sweep/verify scripts (not part of the app)
 app.py                  — standalone app entry point (opens the browser UI)
 main.py                 — Tkinter GUI entry point

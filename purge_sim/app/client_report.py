@@ -24,6 +24,7 @@ import numpy as np
 from ..engine.hgl import compute_hgl, elevation_lookup
 from ..engine.purge_report import _deployed_boosters, purge_report_rows, report_features
 from ..engine.simulator import SimResults
+from .. import branding
 from . import paths
 
 GRID_POINTS = 1000     # milepost grid the profile frames share
@@ -168,6 +169,7 @@ def build_data(res: SimResults, scenario_name: str, inputs=None, notes: str = ""
         "title": scenario_name,
         "date": date or datetime.now().strftime("%Y-%m-%d"),
         "notes": notes or "",
+        "brand": branding.public(),     # company name, colors, logo (Settings > Branding)
         "basis": _basis(res, inputs),
         "facilities": _facilities(res, inputs),
         "summary": results_summary(res),

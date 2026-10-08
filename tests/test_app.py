@@ -288,10 +288,44 @@ def test_sweep_leaves_open_scenario_unchanged():
 def test_settings_never_expose_key(monkeypatch):
     assert settings.public_view()["api_key_set"] is False
     v = settings.update("sk-ant-test-1234", "claude-opus-5-5")
+    assert v.pop("brand")["preset"] == "enermech"
     assert v == {"api_key_set": True, "api_key_source": "settings", "api_key_hint": "…1234",
                  "model": "claude-opus-5-5", "elevation_ask_first": False}
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-env-9999")
     assert settings.api_key() == "sk-env-9999" and settings.public_view()["api_key_source"] == "environment"
+
+
+def test_branding_presets_custom_and_reports(tmp_path):
+    from purge_sim import branding
+    assert branding.current()["name"] == "EnerMech" and branding.public()["logo"].startswith("data:image/png")
+    assert branding.xlsx_color("brand:primary") == "00489A" and branding.xlsx_color("FF0000") == "FF0000"
+    settings.update(brand_value={"preset": "plain"})
+    b = branding.public()
+    assert b["name"] == "" and b["logo"] == "" and branding.xlsx_color("brand:primary") == "1F3864"
+    with pytest.raises(ValueError):
+        settings.update(brand_value={"preset": "custom", "primary": "red"})
+    settings.update(brand_value={"preset": "custom", "name": "Acme Purge", "primary": "#aa0000",
+                                 "secondary": "#000000", "highlight": "#ffcc00", "logo_on": "light"})
+    with pytest.raises(ValueError):
+        branding.save_logo("logo.exe", b"x")
+    branding.save_logo("logo.svg", b"<svg xmlns='http://www.w3.org/2000/svg'/>")
+    b = branding.public()
+    assert (b["name"], b["primary"], b["mid"], b["logo_on"]) == ("Acme Purge", "#AA0000", "#550000", "light")
+    assert b["logo"].startswith("data:image/svg+xml;base64,") and branding.xlsx_color("brand:primary") == "AA0000"
+    ws = Workspace()
+    ws.load(SHORT)
+    ws.run()
+    page = open(ws.export("html"), encoding="utf-8").read()
+    data = json.loads(page.split('id="report-data">', 1)[1].split("</script>", 1)[0])
+    assert data["brand"]["name"] == "Acme Purge" and data["brand"]["logo"] == b["logo"]
+    import openpyxl
+    for kind in ("formatted", "full"):
+        wb = openpyxl.load_workbook(ws.export(kind))
+        fills = {str(c.fill.fgColor.rgb) for sh in wb.worksheets for row in sh.iter_rows(max_row=20)
+                 for c in row if c.fill and c.fill.fill_type}
+        assert any(f.endswith("AA0000") for f in fills) and not any(f.endswith("00489A") for f in fills)
+    branding.remove_logo()
+    assert branding.public()["logo"] == ""
 
 
 # ---------------------------------------------------------------- HTTP API
