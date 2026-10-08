@@ -6,13 +6,23 @@ Assistant. Standard library only. It binds to 127.0.0.1, checks the Host header
 (no DNS rebinding) and requires a per-launch token on every API call, so other
 web pages open in the same browser can't drive the simulator or spend the
 user's Claude API credit.
+
+With phone access on (python app.py --phone) it listens on the local network
+too, so a phone on the same Wi-Fi can open it. The token is then a saved key
+(settings.phone_key) and the page itself is only served with it: the phone opens
+http://<PC address>:<port>/?key=<key>. Only the PC itself, at 127.0.0.1 or
+localhost, gets the page without the key.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import ipaddress
 import secrets
+import shutil
+import socket
+import subprocess
 import tempfile
 import threading
 import traceback
@@ -37,6 +47,7 @@ class App:
         self.assistant = Assistant(self.ws, client_factory=assistant_client_factory)
         self.token = secrets.token_urlsafe(24)
         self.httpd: Optional[ThreadingHTTPServer] = None
+        self.phone = False
 
     # ---- API dispatch -----------------------------------------------------------
 
@@ -106,6 +117,8 @@ class App:
         if route == ("GET", "/api/guide"):
             with open(paths.guide_path(), "r", encoding="utf-8") as f:
                 return 200, {"markdown": f.read()}
+        if route == ("GET", "/api/phone"):
+            return 200, {"enabled": self.phone, "url": self.phone_url, "tailscale_url": self.tailscale_url}
         if route == ("GET", "/api/settings"):
             return 200, settings.public_view()
         if route == ("POST", "/api/settings"):
@@ -190,8 +203,14 @@ class App:
 
     # ---- serving ---------------------------------------------------------------------
 
-    def serve(self, host: str = "127.0.0.1", port: int = 0) -> ThreadingHTTPServer:
+    def serve(self, host: str = "127.0.0.1", port: int = 0, phone: bool = False) -> ThreadingHTTPServer:
+        """phone=True listens on every network interface (for a phone on the same
+        Wi-Fi) and keys the page and API with the saved phone key."""
         app = self
+        if phone:
+            self.phone = True
+            self.token = settings.phone_key()
+            host = "0.0.0.0"
 
         class Handler(BaseHTTPRequestHandler):
             server_version = "PurgeSimulator"
@@ -199,10 +218,15 @@ class App:
             def log_message(self, fmt, *args):   # keep the console quiet
                 pass
 
-            def _host_ok(self) -> bool:
+            def _local_host(self) -> bool:
                 h = (self.headers.get("Host") or "").lower()
                 port_s = str(self.server.server_address[1])
                 return h in (f"127.0.0.1:{port_s}", f"localhost:{port_s}")
+
+            def _host_ok(self) -> bool:
+                # Phone access reaches the PC by its network address, so any Host is
+                # allowed; the page then needs the key (see _dispatch).
+                return app.phone or self._local_host()
 
             def _send(self, code: int, payload: object, ctype="application/json") -> None:
                 data = payload if isinstance(payload, bytes) else json.dumps(payload).encode("utf-8")
@@ -220,6 +244,12 @@ class App:
                 url = urlparse(self.path)
                 query = parse_qs(url.query)
                 if url.path in ("/", "/index.html"):
+                    if not self._local_host():
+                        key = query.get("key", [""])[0] or query.get("token", [""])[0]
+                        if not secrets.compare_digest(key, app.token):
+                            return self._send(403, b"Purge Simulator: open the full phone link, "
+                                              b"including ?key=..., as printed when the app started.",
+                                              "text/plain; charset=utf-8")
                     return self._index()
                 if url.path.startswith("/static/") and method == "GET":
                     return self._static(url.path[len("/static/"):])
@@ -289,6 +319,62 @@ class App:
         assert self.httpd is not None
         return f"http://127.0.0.1:{self.httpd.server_address[1]}/"
 
+    @property
+    def phone_url(self) -> Optional[str]:
+        """The link to open on a phone on the same network, or None when phone access is off."""
+        if not self.phone or self.httpd is None:
+            return None
+        return f"http://{lan_address()}:{self.httpd.server_address[1]}/?key={self.token}"
+
+    @property
+    def tailscale_url(self) -> Optional[str]:
+        """The phone link over Tailscale (works away from home), or None when phone
+        access is off or this computer isn't on a Tailscale network."""
+        ts = tailscale_address() if self.phone and self.httpd is not None else None
+        return f"http://{ts}:{self.httpd.server_address[1]}/?key={self.token}" if ts else None
+
     def shutdown(self) -> None:
         if self.httpd is not None:
             self.httpd.shutdown()
+
+
+def lan_address() -> str:
+    """This computer's address on the local network (the one a phone on the same
+    Wi-Fi would use). Asks the OS which interface routes outward; nothing is sent."""
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(("10.255.255.255", 1))
+        return s.getsockname()[0]
+    except OSError:
+        return "127.0.0.1"
+    finally:
+        s.close()
+
+
+def _is_tailscale(ip: str) -> bool:
+    try:
+        return ipaddress.ip_address(ip) in ipaddress.ip_network("100.64.0.0/10")
+    except ValueError:
+        return False
+
+
+def tailscale_address() -> Optional[str]:
+    """This computer's Tailscale address (100.x.y.z), if Tailscale is running on it.
+    That address reaches the PC from a phone signed in to the same Tailscale account,
+    from any network."""
+    try:
+        for ip in socket.gethostbyname_ex(socket.gethostname())[2]:
+            if _is_tailscale(ip):
+                return ip
+    except OSError:
+        pass
+    exe = shutil.which("tailscale")
+    if exe:
+        try:
+            out = subprocess.run([exe, "ip", "-4"], capture_output=True, text=True, timeout=3).stdout
+            for ip in out.split():
+                if _is_tailscale(ip):
+                    return ip
+        except (OSError, subprocess.SubprocessError):
+            pass
+    return None

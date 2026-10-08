@@ -161,6 +161,7 @@ input[type=range] { width: 100%; }
 @media (max-width: 1100px) {
   main { grid-template-columns: 1fr; height: auto; }
   aside, .chat { border: none; border-bottom: 1px solid var(--border); }
+  aside { max-height: 45vh; overflow-y: auto; }
   .chat { height: 70vh; }
   header .scen { max-width: 100%; }
 }
@@ -225,6 +226,7 @@ input[type=range] { width: 100%; }
   <div class="row"><label for="setKey">Claude API key</label><input id="setKey" type="password" autocomplete="off" placeholder="sk-ant-…"><span class="small muted" id="setKeyState"></span></div>
   <div class="row"><label for="setModel">Model</label><input id="setModel" placeholder="claude-opus-5-5"></div>
   <div class="row"><label><input id="setElevAsk" type="checkbox"> Ask before sending a route to USGS for an elevation lookup</label></div>
+  <div class="row"><label>Phone access</label><span class="small muted" id="setPhone"></span></div>
   <div class="actions"><button id="setClear">Remove saved key</button><span style="flex:1"></span><button id="setCancel">Cancel</button><button class="primary" id="setOk">Save</button></div>
 </dialog>
 
@@ -1024,6 +1026,12 @@ async function openSettings() {
   $("#setKey").value = ""; $("#setModel").value = s.model; $("#setElevAsk").checked = !!s.elevation_ask_first;
   $("#setKeyState").textContent = s.api_key_set ? `A key is set (${s.api_key_source === "environment" ? "from ANTHROPIC_API_KEY" : "saved here"}, ending ${s.api_key_hint}). Leave blank to keep it.` : "No key set yet.";
   $("#setClear").hidden = s.api_key_source !== "settings";
+  const ph = await api("/api/phone").catch(() => ({}));
+  $("#setPhone").innerHTML = ph.url
+    ? `On a phone on the same Wi-Fi, open <a href="${esc(ph.url)}">${esc(ph.url)}</a>` +
+      (ph.tailscale_url ? `<br>Away from home, with Tailscale on the phone: <a href="${esc(ph.tailscale_url)}">${esc(ph.tailscale_url)}</a>`
+                        : "<br>To use it away from home, install Tailscale on this PC and the phone, then restart the app.")
+    : "Off. To use the app from a phone on the same Wi-Fi, start it with <code>python app.py --phone</code>.";
   $("#dlgSettings").showModal();
 }
 $("#btnSettings").onclick = openSettings;

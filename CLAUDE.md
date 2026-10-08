@@ -20,7 +20,7 @@ different constraints (speed-capped, drive-capped, friction-dominated, pump-and-
 jobs). See the memory index for the full list of jobs and what each one taught the engine.
 
 Entry points:
-- `python app.py` — the standalone app: a local server + browser UI with the in-app Claude
+- `python app.py` — the standalone app (`--phone` to open it from a phone on the same Wi-Fi): a local server + browser UI with the in-app Claude
   assistant (`purge_sim/app/`). Packages to a no-Python-needed program with
   `packaging/purge_simulator.spec` (PyInstaller).
 - `python main.py` — launches the Tkinter desktop app
@@ -85,7 +85,10 @@ purge_sim/
                          unstated default reported as an assumption and written into a
                          "Job setup" notes block. Answers persist in meta.intake. The app's
                          Job setup tab and the assistant's set_job_setup both use it
-    server.py          — JSON API + page; 127.0.0.1 only, Host check, per-launch token
+    server.py          — JSON API + page; 127.0.0.1 only, Host check, per-launch token.
+                         `app.py --phone` also listens on the LAN (port 8765) for a phone on
+                         the same Wi-Fi (or over Tailscale, whose 100.x link it also prints); page and
+                         API then need the saved key (settings.phone_key)
     importers.py       — new scenario from ILI / KMZ / TXT / Excel via data/ parsers
     client_report.py   — client web page export: one self-contained .html per run (summary,
                          profile scrubber, charts, job basis, FILL REPORT table), layout in
