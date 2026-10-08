@@ -296,6 +296,17 @@ Also check:
   last edit. Run again before reading them.
 - **Pig speed:** average and minimum against your target and minimum speed.
 - **Booster plan:** which sites were used and why.
+- **Charts tab, elevation:** tick *Show elevation profile on each chart* to add the ground
+  elevation (ft) on a right-hand axis of every chart. On the milepost charts it is the profile
+  along the route; on the time charts it is the ground under the pig at that moment. The
+  pressure chart also gets *HGL at pig face*: the liquid head right at the pig (elevation +
+  face pressure ÷ (0.433 × SG)), on the same feet axis. The box stays ticked between runs.
+- **Charts tab, Hydraulic grade line:** the whole route at one moment of the run, all in feet:
+  ground elevation, the liquid hydraulic grade line ahead of the pig, the N2 pressure behind
+  the pig shown as equivalent liquid head, and the MOP grade line (elevation + MOP as head).
+  Drag the slider to move through the run. Where the HGL comes close to the ground the liquid
+  pressure is low (slack-line risk); where it reaches the MOP line the pipe is at MOP. The
+  head uses the run's fluid SG.
 - **Pipeline profile tab:** scrub through the run and watch the N2 pressure, liquid pressure
   and MOP lines, especially over peaks and near pump stations.
 - **Map tab:** the route on a basemap with the pig's progress. A scenario needs route

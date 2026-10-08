@@ -347,8 +347,14 @@ def results_series(res: SimResults, max_points: int = 1500) -> dict:
     steps = res.steps
     idx = downsample_idx(len(steps), max_points)
     pick = [steps[i] for i in idx]
+    # ground under the pig at each point, from the run's own profile (Charts tab elevation axis)
+    ep = np.asarray(res.config.elevation_profile, dtype=float)
+    pig_elev = (np.interp([s.pig_mp for s in pick], ep[:, 0], ep[:, 1]) if ep.size
+                else [None] * len(pick))
     return {
         "step_index": idx,
+        "fluid_sg": _f(res.config.fluid_sg, 4),
+        "pig_elevation_ft": [_f(v, 1) for v in pig_elev],
         "t_hr": [_f(s.t_hr, 4) for s in pick],
         "pig_mp": [_f(s.pig_mp) for s in pick],
         "pig_speed_mph": [_f(s.pig_speed_mph) for s in pick],
@@ -756,6 +762,7 @@ class Workspace:
             mop_p = [_f(cfg.mop_joints[i].mop_psig, 1) for i in j_idx]
         return {
             "step_index": step_index,
+            "fluid_sg": _f(cfg.fluid_sg, 4),
             "t_hr": _f(step.t_hr, 3),
             "pig_mp": _f(step.pig_mp),
             "pig_speed_mph": _f(step.pig_speed_mph),
