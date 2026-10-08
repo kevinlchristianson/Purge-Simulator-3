@@ -117,7 +117,8 @@ class App:
         if route == ("POST", "/api/export"):
             b = j()
             out = ws.export(b.get("kind", ""), include_notes=bool(b.get("include_notes")),
-                            include_gif=bool(b.get("include_gif", True)))
+                            include_gif=bool(b.get("include_gif", True)),
+                            include_features=bool(b.get("include_features")))
             return 200, {"path": out, "url": f"/api/download?path={quote(out)}&token={self.token}"}
         if route == ("GET", "/api/guide"):
             with open(paths.guide_path(), "r", encoding="utf-8") as f:

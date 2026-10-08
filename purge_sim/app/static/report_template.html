@@ -13,7 +13,7 @@
   /* Brand (Settings > Branding): defaults are EnerMech; the page script sets the chosen brand. */
   --brand-primary: #00489a; --brand-mid: #084766; --brand-secondary: #128d36; --brand-highlight: #23a63d;
   --good: #1a7f37; --warn: #9a6700; --bad: #cf222e;
-  --gas: #00489a; --liquid: #1e9638; --mop: #cf222e; --ground: #8c7a5b; --s2: #d4580b; --s4: #8250df;
+  --gas: #00489a; --liquid: #1e9638; --mop: #cf222e; --ground: #8c7a5b; --hgl: #0e7c86; --s2: #d4580b; --s4: #8250df;
   --grid: #e6e9ee; --shadow: 0 1px 3px rgba(16,24,40,.08);
 }
 @media (prefers-color-scheme: dark) {
@@ -21,7 +21,7 @@
     --bg: #0f1318; --panel: #161b22; --panel-2: #1c232c; --border: #2d3540;
     --text: #e6edf3; --muted: #9aa6b4; --accent: #6ea8fe; --hero-shade: rgba(0,0,0,.28); --hero-text: #e6edf3;
     --good: #3fb950; --warn: #d29922; --bad: #f85149;
-    --gas: #5b9cf0; --liquid: #3cc35a; --mop: #f85149; --ground: #b3a17e; --s2: #f0883e; --s4: #a371f7;
+    --gas: #5b9cf0; --liquid: #3cc35a; --mop: #f85149; --ground: #b3a17e; --hgl: #39c5cf; --s2: #f0883e; --s4: #a371f7;
     --grid: #232a33; --shadow: none;
   }
 }
@@ -29,7 +29,7 @@
   --bg: #0f1318; --panel: #161b22; --panel-2: #1c232c; --border: #2d3540;
   --text: #e6edf3; --muted: #9aa6b4; --accent: #6ea8fe; --hero-shade: rgba(0,0,0,.28); --hero-text: #e6edf3;
   --good: #3fb950; --warn: #d29922; --bad: #f85149;
-  --gas: #5b9cf0; --liquid: #3cc35a; --mop: #f85149; --ground: #b3a17e; --s2: #f0883e; --s4: #a371f7;
+  --gas: #5b9cf0; --liquid: #3cc35a; --mop: #f85149; --ground: #b3a17e; --hgl: #39c5cf; --s2: #f0883e; --s4: #a371f7;
   --grid: #232a33; --shadow: none;
 }
 * { box-sizing: border-box; }
@@ -76,13 +76,15 @@ button:hover { border-color: var(--accent); }
 .readout b { color: var(--text); }
 .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 14px; }
 .scroll { overflow-x: auto; }
+#purge .scroll { max-height: 75vh; overflow: auto; }
 table { border-collapse: collapse; width: 100%; font-size: 13px; }
 th, td { border-bottom: 1px solid var(--border); padding: 5px 8px; text-align: left; vertical-align: top; }
 th { color: var(--muted); font-weight: 600; }
 td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 table.basis th { width: 34%; }
-table.fill thead th { position: sticky; top: 0; background: var(--panel); font-size: 12px; }
-table.fill tbody tr:nth-child(even) td { background: var(--panel-2); }
+table.purge thead th { position: sticky; top: 0; background: var(--panel); font-size: 12px; }
+table.purge tbody tr:nth-child(even) td { background: var(--panel-2); }
+tr.feat td { background: color-mix(in srgb, var(--hgl) 10%, transparent) !important; }
 tr.viol td { color: var(--bad); font-weight: 600; }
 tr.slack td.speed { background: color-mix(in srgb, var(--bad) 22%, transparent) !important; }
 .pill { display: inline-block; font-size: 12px; padding: 1px 8px; border-radius: 10px; border: 1px solid var(--border); }
@@ -98,7 +100,8 @@ footer { color: var(--muted); font-size: 12.5px; padding: 18px 0 34px; }
   .hero { -webkit-print-color-adjust: exact; print-color-adjust: exact; padding: 16px; }
   .card, .kpi, tr { break-inside: avoid; }
   section { padding-top: 10px; }
-  .scroll { overflow: visible; }
+  .scroll, #purge .scroll { overflow: visible; max-height: none; }
+  #featToggle { display: none; }
 }
 </style>
 </head>
@@ -111,13 +114,13 @@ footer { color: var(--muted); font-size: 12.5px; padding: 18px 0 34px; }
 </div></header>
 <nav><div class="wrap">
   <a href="#summary">Summary</a><a href="#profile">Pipeline profile</a><a href="#charts">Charts</a>
-  <a href="#basis">Job basis</a><a href="#fill">Fill report</a><a href="#notes" id="navNotes" hidden>Notes</a>
+  <a href="#basis">Job basis</a><a href="#purge">Purge report</a><a href="#notes" id="navNotes" hidden>Notes</a>
 </div></nav>
 <main class="wrap">
   <section id="summary"><h2>Summary</h2><div id="kpis" class="kpis"></div><div id="flags"></div><div id="boosters"></div></section>
   <section id="profile"><h2>Pipeline profile</h2>
     <div class="card">
-      <p class="small muted" style="margin:0 0 8px">Pressure along the whole line at one moment of the purge: nitrogen behind the pig, liquid ahead of it, with ground elevation on the right-hand axis. Drag the slider or press Play to step through the run.</p>
+      <p class="small muted" style="margin:0 0 8px">Pressure along the whole line at one moment of the purge: nitrogen behind the pig, liquid ahead of it. Ground elevation and the hydraulic grade line (liquid pressure as feet of head above the pipe) are on the right-hand axis. Drag the slider or press Play to step through the run.</p>
       <div class="controls"><button id="play">Play</button><input type="range" id="step" min="0" max="0" value="0" aria-label="Time in the run"></div>
       <div class="readout" id="readout"></div>
       <div class="legend" id="pfLegend"></div>
@@ -130,9 +133,10 @@ footer { color: var(--muted); font-size: 12.5px; padding: 18px 0 34px; }
     <div class="card"><h3>Inputs</h3><table class="basis" id="basisTable"></table></div>
     <div class="card"><h3>Stations and valves</h3><div id="facilities"></div></div>
   </div></section>
-  <section id="fill"><h2>Fill report</h2>
-    <div class="card"><p class="small muted" style="margin:0 0 8px">Evenly spaced points along the run (the same table as the FILL REPORT workbook). Red rows exceed MOP; a shaded speed cell marks slack-line risk.</p>
-    <div class="scroll"><table class="fill" id="fillTable"></table></div></div>
+  <section id="purge"><h2>Purge report</h2>
+    <div class="card"><p class="small muted" style="margin:0 0 8px">One row for every quarter mile the pig travels, counted from 0 at the launch (the same table as the Purge Report workbook). Red rows exceed MOP; a shaded speed cell marks slack-line risk.</p>
+    <div class="small" id="featToggle" hidden style="margin:0 0 8px"><label><input type="checkbox" id="showFeat"> Add stations, valves, markers and crossings to the table</label></div>
+    <div class="scroll"><table class="purge" id="purgeTable"></table></div></div>
   </section>
   <section id="notes" hidden><h2>Notes</h2><div class="card notes" id="notesBody"></div></section>
   <footer id="foot"></footer>
@@ -275,10 +279,14 @@ function drawProfile() {
     {name: "Liquid pressure (ahead of pig)", x: lx, y: ly, color: "var(--liquid)", width: 2.2, unit: "psig"}];
   if (P.mop) series.push({name: "MOP", x: P.mp, y: P.mop, color: "var(--mop)", dash: "6 4", width: 1.3, unit: "psig"});
   series.push({name: "Elevation", x: P.mp, y: P.elev, color: "var(--ground)", axis: "right", width: 1.3, unit: "ft", fill: true});
+  // hydraulic grade line ahead of the pig: ground + liquid pressure as head (0.433 psi/ft x SG)
+  const grad = (P.sg || 1) * 62.4 / 144, hx = [], hy = [];
+  P.mp.forEach((x, i) => { if (x > f.pig && f.p[i] != null && P.elev[i] != null) { hx.push(x); hy.push(P.elev[i] + f.p[i] / grad); } });
+  if (hx.length) series.push({name: "Hydraulic grade line", x: hx, y: hy, color: "var(--hgl)", axis: "right", width: 2, dash: "7 3", unit: "ft"});
   const markers = [{x: f.pig, label: "Pig", color: "var(--text)", solid: true}]
     .concat((f.stations || []).map((s, k) => ({x: s.mp, label: s.name, row: 1 + (k % 2)})));
   $("#pfLegend").innerHTML = legend(series);
-  lineChart($("#pfChart"), {x: P.mp, xLabel: "Milepost", yLabel: "psig", y2Label: "Elevation (ft)", series, markers, title: "Pipeline profile"});
+  lineChart($("#pfChart"), {x: P.mp, xLabel: "Milepost", yLabel: "psig", y2Label: "Elevation / HGL (ft)", series, markers, title: "Pipeline profile"});
   $("#readout").innerHTML = `<b>${fmt(f.t, 1)} hr</b> into the run · pig at <b>MP ${fmt(f.pig, 2)}</b> moving <b>${fmt(f.speed, 2)} mph</b> · N2 drive <b>${fmt(f.face)} psig</b> · exit <b>${fmt(f.exit_psig)} psig</b> at MP ${fmt(f.exit_mp, 2)}`
     + (f.slack ? ` · <span style="color:var(--bad)">slack-line risk</span>` : "");
   $("#pfStations").innerHTML = (f.stations || []).length ? `<table style="margin-top:8px"><thead><tr><th>Pump station</th><th class="n">MP</th><th>Status at this moment</th></tr></thead><tbody>`
@@ -302,10 +310,23 @@ $("#play").onclick = () => {
 $("#basisTable").innerHTML = D.basis.map(([k, v]) => `<tr><th>${esc(k)}</th><td>${esc(v)}</td></tr>`).join("");
 $("#facilities").innerHTML = D.facilities.length
   ? `<table><thead><tr><th>Type</th><th>Name</th><th class="n">MP</th></tr></thead><tbody>${D.facilities.map(f => `<tr><td>${esc(f.type)}</td><td>${esc(f.name)}</td><td class="n">${fmt(f.mp, 2)}</td></tr>`).join("")}</tbody></table>`
-  : `<p class="muted small">No pump stations, check valves or boosters on this route.</p>`;
-const FD = [3, 1, 2, 1, 1, 0, 0, 2];
-$("#fillTable").innerHTML = `<thead><tr>${D.fill.cols.map(c => `<th class="n">${esc(c)}</th>`).join("")}</tr></thead><tbody>`
-  + D.fill.rows.map(r => `<tr class="${r.flag}">${r.v.map((v, i) => `<td class="n${i === 7 ? " speed" : ""}">${fmt(v, FD[i] ?? 0)}</td>`).join("")}</tr>`).join("") + `</tbody>`;
+  : `<p class="muted small">No pump stations, valves or boosters on this route.</p>`;
+const PR = D.purge;
+function drawPurgeTable() {
+  const feat = PR.has_features && $("#showFeat").checked, speedCol = PR.cols.findIndex(c => c.h.startsWith("Pig Speed"));
+  const head = PR.cols.map(c => `<th class="n">${esc(c.h)}</th>`);
+  if (feat) head.splice(1, 0, "<th>Feature</th>");
+  const rows = PR.rows.filter(r => feat || !r.f).map(r => {
+    const cells = r.v.map((v, i) => `<td class="n${i === speedCol ? " speed" : ""}">${fmt(v, PR.cols[i].nd)}</td>`);
+    if (feat) cells.splice(1, 0, `<td style="white-space:nowrap"><b>${esc(r.f)}</b></td>`);
+    return `<tr class="${r.flag}${r.f ? " feat" : ""}">${cells.join("")}</tr>`;
+  });
+  $("#purgeTable").innerHTML = `<thead><tr>${head.join("")}</tr></thead><tbody>${rows.join("")}</tbody>`;
+}
+$("#featToggle").hidden = !PR.has_features;
+$("#showFeat").checked = PR.show_features;
+$("#showFeat").onchange = drawPurgeTable;
+drawPurgeTable();
 if (D.notes) { $("#notes").hidden = false; $("#navNotes").hidden = false; $("#notesBody").textContent = D.notes; }
 $("#foot").innerHTML = `Prepared ${esc(D.date)} with Purge Simulator. Results are simulation estimates based on the job basis listed above.`;
 

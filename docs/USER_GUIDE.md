@@ -308,7 +308,9 @@ Also check:
   pressure is low (slack-line risk); where it reaches the MOP line the pipe is at MOP. The
   head uses the run's fluid SG.
 - **Pipeline profile tab:** scrub through the run and watch the N2 pressure, liquid pressure
-  and MOP lines, especially over peaks and near pump stations.
+  and MOP lines, especially over peaks and near pump stations. The right-hand axis carries
+  the ground elevation and the hydraulic grade line ahead of the pig (dashed, in feet), so
+  you can see where the HGL comes close to the ground.
 - **Map tab:** the route on a basemap with the pig's progress. A scenario needs route
   coordinates for this; the bundled client jobs don't have them yet, so add the job's KMZ
   once from the Map tab and save.
@@ -355,11 +357,18 @@ name.
 - **Client web page (html):** a single file the client opens in any browser, with no
   internet and nothing to install. It shows the headline results and any flags, a pipeline
   profile they can scrub or play through the run (N2 and liquid pressure, MOP, elevation,
-  pump station status), the four charts with hover readouts, the job basis, stations and
-  valves, and the 50-point FILL REPORT table. It prints cleanly (Ctrl+P, or save as PDF).
+  hydraulic grade line, pump station status), the four charts with hover readouts, the job
+  basis, stations and valves (pump stations, check valves, block valves, the BPCV and the
+  boosters that ran), and the Purge Report table. It prints cleanly (Ctrl+P, or save as PDF).
   Your scenario notes are **left off** unless you tick *Put the scenario notes on the client
   web page*, because notes often carry internal tender reasoning.
-- **One at a time:** *Client web page*, *Client report* (FILL REPORT table + charts, xlsx)
+- **Purge Report:** the table in the client xlsx and on the client web page has one row
+  for every quarter mile the pig travels. *Miles* counts from 0 at the launch, not the
+  milepost in the PxP or tally. Tick *Add a row at each valve, AGM, aerial marker, crossing
+  and station* on the Reports tab to slot those in at their own positions, named in a
+  *Feature* column (they come from the ILI or PxP import). On the client web page the
+  client can also show or hide those rows with a checkbox above the table.
+- **One at a time:** *Client web page*, *Client report* (Purge Report table + charts, xlsx)
   for the client, *Full technical report* (7 sheets) for your own record, *Run log*, and the
   *Profile animation* GIF.
 - Exports describe the latest run, using the inputs it was run with, even if you edited

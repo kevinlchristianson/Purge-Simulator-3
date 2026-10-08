@@ -4,15 +4,14 @@ client_report.py  —  self-contained HTML page of one run, for the client.
 One file, no external assets: styles, data and the small chart script are all inline,
 so it opens offline in any browser, prints cleanly, and can be emailed as is.
 
-It reuses the app's own result views (results_summary / results_series), the FILL REPORT
-rows of the xlsx deliverable (purge_report._build_rows) and the engine's HGL
+It reuses the app's own result views (results_summary / results_series), the Purge Report
+rows of the xlsx deliverable (purge_report.purge_report_rows) and the engine's HGL
 (hgl.compute_hgl) rather than recomputing anything. The page layout and chart script live
 in static/report_template.html; this module only fills in the data.
 """
 
 from __future__ import annotations
 
-import bisect
 import json
 import math
 import os
@@ -22,18 +21,17 @@ from typing import List, Optional
 
 import numpy as np
 
-from ..engine.hgl import compute_hgl
-from ..engine.purge_report import _build_rows, _deployed_boosters, _select_n
+from ..engine.hgl import compute_hgl, elevation_lookup
+from ..engine.purge_report import _deployed_boosters, purge_report_rows, report_features
 from ..engine.simulator import SimResults
 from .. import branding
 from . import paths
 
 GRID_POINTS = 1000     # milepost grid the profile frames share
 PROFILE_FRAMES = 60    # pipeline-profile snapshots on the page's time slider
-FILL_ROWS = 50         # same 50-point table as the xlsx FILL REPORT
 
-_FILL = [   # (column, row key, decimals): the xlsx FILL REPORT columns
-    ("Miles", "miles", 3), ("Elevation (ft)", "elevation_ft", 1), ("Elapsed Time (hr)", "elapsed_hr", 2),
+_REPORT = [   # (column, row key, decimals): the xlsx Purge Report columns
+    ("Miles", "miles", 2), ("Elevation (ft)", "elevation_ft", 1), ("Elapsed Time (hr)", "elapsed_hr", 2),
     ("Drive Pressure (psi)", "drive_psi", 1), ("Friction Loss (psi)", "friction_psi", 1),
     ("Injection Rate (SCFM)", "inj_scfm", 0), ("Cumulative N2 (SCF)", "cum_scf", 0),
     ("Pig Speed (mph)", "speed_mph", 2),
@@ -89,44 +87,35 @@ def _basis(res: SimResults, inputs) -> List[list]:
     return rows
 
 
-def _facilities(res: SimResults) -> List[dict]:
+def _facilities(res: SimResults, inputs=None) -> List[dict]:
     cfg = res.config
     out = [{"type": "Pump station", "name": p.name, "mp": _r(p.mp, 2)} for p in cfg.pump_stations]
     out += [{"type": "Check valve", "name": c.name, "mp": _r(c.mp, 2)}
             for c in cfg.check_valves if not c.is_pump_station]
+    if cfg.bpcv is not None:
+        out.append({"type": "Back-pressure control valve", "name": cfg.bpcv.name, "mp": _r(cfg.bpcv.mp, 2)})
     out += [{"type": "N2 booster (ran)", "name": n, "mp": _r(mp, 2)} for n, mp in _deployed_boosters(res)]
+    lo, hi = sorted((cfg.purge_start_mp, cfg.purge_end_mp))
+    out += [{"type": "Block valve", "name": lm.get("name") or "Block valve", "mp": _r(lm.get("mp"), 2)}
+            for lm in (getattr(inputs, "landmarks", None) or [])
+            if lm.get("kind") == "block_valve" and lm.get("mp") is not None and lo <= float(lm["mp"]) <= hi]
     return sorted(out, key=lambda f: f["mp"] if f["mp"] is not None else 0)
 
 
-def _fill_table(res: SimResults) -> dict:
-    rows = _select_n(_build_rows(res), FILL_ROWS)
+def _purge_table(res: SimResults, inputs=None, show_features: bool = False) -> dict:
+    """Purge Report rows every 1/4 mile from the launch, plus a row at every station, valve,
+    marker and crossing (flagged "f"; the page's checkbox shows or hides them)."""
+    feats = report_features(res, getattr(inputs, "landmarks", None))
+    rows = purge_report_rows(res, features=feats)
     boosters = [n for n, _ in _deployed_boosters(res)]
-    cols = [c for c, _, _ in _FILL] + [f"{n} booster flow (SCFM)" for n in boosters]
+    cols = [{"h": c, "nd": nd} for c, _, nd in _REPORT] + [{"h": f"{n} booster flow (SCFM)", "nd": 0} for n in boosters]
     out = []
     for row in rows:
-        vals = [_r(row.get(k), nd) for _, k, nd in _FILL]
+        vals = [_r(row.get(k), nd) for _, k, nd in _REPORT]
         vals += [_r(row.get("booster_flow", {}).get(n, 0.0), 0) for n in boosters]
         flag = "viol" if row.get("mop_viol") else ("slack" if row.get("slack") else "")
-        out.append({"v": vals, "flag": flag})
-    return {"cols": cols, "rows": out}
-
-
-def _elevation_lookup(ep: np.ndarray):
-    """Scalar elevation interpolator for compute_hgl. Same values as its default np.interp
-    lambda, but ~20x faster per call on a 30k-point profile (no array conversion per point),
-    which turns a long-route export from minutes into seconds."""
-    xs, ys = ep[:, 0].tolist(), ep[:, 1].tolist()
-    n = len(xs)
-
-    def at(x: float) -> float:
-        i = bisect.bisect_right(xs, x)
-        if i <= 0:
-            return ys[0]
-        if i >= n:
-            return ys[-1]
-        x0, x1 = xs[i - 1], xs[i]
-        return ys[i - 1] + (ys[i] - ys[i - 1]) * ((x - x0) / (x1 - x0) if x1 > x0 else 0.0)
-    return at
+        out.append({"v": vals, "flag": flag, "f": row.get("feature") or ""})
+    return {"cols": cols, "rows": out, "show_features": bool(show_features and feats), "has_features": bool(feats)}
 
 
 def _profile(res: SimResults) -> dict:
@@ -143,7 +132,7 @@ def _profile(res: SimResults) -> dict:
         jp = np.array([j.mop_psig for j in cfg.mop_joints], dtype=float)
         order = np.argsort(jm)
         mop = [_r(v, 0) for v in np.interp(grid, jm[order], jp[order])]
-    elev_at = _elevation_lookup(ep) if ep.size else None
+    elev_at = elevation_lookup(ep) if ep.size else None
     steps = res.steps
     idx = sorted(set(np.round(np.linspace(0, len(steps) - 1, PROFILE_FRAMES)).astype(int))) if steps else []
     frames = []
@@ -169,11 +158,12 @@ def _profile(res: SimResults) -> dict:
             "stations": [{"name": st.get("name", ""), "mp": _r(st.get("mp"), 2), "status": st.get("status", "")}
                          for st in (s.station_pressures or [])],
         })
-    return {"mp": [_r(v, 3) for v in grid], "elev": [_r(v, 0) for v in elev], "mop": mop, "frames": frames}
+    return {"mp": [_r(v, 3) for v in grid], "elev": [_r(v, 0) for v in elev], "mop": mop,
+            "sg": _r(cfg.fluid_sg, 4), "frames": frames}
 
 
 def build_data(res: SimResults, scenario_name: str, inputs=None, notes: str = "",
-               date: Optional[str] = None) -> dict:
+               date: Optional[str] = None, include_features: bool = False) -> dict:
     from .workspace import results_series, results_summary   # lazy: workspace imports this module
     return {
         "title": scenario_name,
@@ -181,11 +171,11 @@ def build_data(res: SimResults, scenario_name: str, inputs=None, notes: str = ""
         "notes": notes or "",
         "brand": branding.public(),     # company name, colors, logo (Settings > Branding)
         "basis": _basis(res, inputs),
-        "facilities": _facilities(res),
+        "facilities": _facilities(res, inputs),
         "summary": results_summary(res),
         "series": results_series(res, max_points=800),
         "profile": _profile(res),
-        "fill": _fill_table(res),
+        "purge": _purge_table(res, inputs, include_features),
     }
 
 
@@ -201,8 +191,10 @@ def render_html(data: dict) -> str:
 
 
 def export_client_html(res: SimResults, path: str, scenario_name: str, inputs=None,
-                       notes: str = "", date: Optional[str] = None) -> None:
-    html = render_html(build_data(res, scenario_name, inputs=inputs, notes=notes, date=date))
+                       notes: str = "", date: Optional[str] = None,
+                       include_features: bool = False) -> None:
+    html = render_html(build_data(res, scenario_name, inputs=inputs, notes=notes, date=date,
+                                  include_features=include_features))
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         f.write(html)

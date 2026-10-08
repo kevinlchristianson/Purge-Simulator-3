@@ -153,7 +153,10 @@ def test_client_html_and_all_reports_zip():
     blob = page.split('id="report-data">', 1)[1].split("</script>", 1)[0]
     data = json.loads(blob)
     assert data["summary"]["completed"] and len(data["profile"]["frames"]) > 10
-    assert len(data["fill"]["rows"]) == 50 and "<" not in blob
+    rows = data["purge"]["rows"]
+    miles = [r["v"][0] for r in rows]
+    assert miles[0] == 0 and miles[1] == 0.25 and "<" not in blob   # quarter miles from the launch
+    assert all(b > a for a, b in zip(miles, miles[1:])) and not any(r["f"] for r in rows)
     assert "target 3 mph" in dict(data["basis"])["Pig speed"]
     page = open(ws.export("html", include_notes=True), encoding="utf-8").read()
     assert "</script><b>" not in page and "tender note" in page
@@ -163,6 +166,42 @@ def test_client_html_and_all_reports_zip():
     assert {os.path.splitext(n)[1] for n in names} == {".html", ".xlsx", ".txt", ".json"}
     with pytest.raises(InputError, match="unknown export kind"):
         ws.export("pdf")
+
+
+def test_purge_report_quarter_miles_and_features():
+    from purge_sim.engine.purge_report import purge_report_rows, report_features
+    ws = Workspace()
+    ws.load(SHORT)
+    cfg_start = ws.scenario.inputs.purge_start_mp
+    ws.scenario.inputs.landmarks = [
+        {"mp": cfg_start + 0.3, "kind": "block_valve", "name": "Kruse BV"},
+        {"mp": cfg_start + 0.6, "kind": "ground_marker", "name": "AGM 12"},
+        {"mp": cfg_start - 5.0, "kind": "block_valve", "name": "outside the purge"}]
+    ws.run()
+    res = ws.results
+    rows = purge_report_rows(res)
+    assert rows[0]["miles"] == 0 and rows[0]["elapsed_hr"] == 0
+    assert abs(rows[0]["mp"] - cfg_start) < 1e-9 and rows[1]["miles"] == 0.25
+    assert all(b["elapsed_hr"] >= a["elapsed_hr"] and b["cum_scf"] >= a["cum_scf"] - 1e-6
+               for a, b in zip(rows, rows[1:]))
+    feats = report_features(res, ws.scenario.inputs.landmarks)
+    labels = [f["label"] for f in feats]
+    assert "Block valve: Kruse BV" in labels and "Above-ground marker: AGM 12" in labels
+    assert not any("outside" in l for l in labels)
+    with_f = purge_report_rows(res, features=feats)
+    assert len(with_f) == len(rows) + len(feats)
+    bv = next(r for r in with_f if r["feature"] == "Block valve: Kruse BV")
+    assert abs(bv["miles"] - 0.3) < 1e-9
+    # client page: block valves in Stations and valves; feature rows carried, hidden unless asked
+    page = open(ws.export("html", include_features=True), encoding="utf-8").read()
+    data = json.loads(page.split('id="report-data">', 1)[1].split("</script>", 1)[0])
+    assert {"type": "Block valve", "name": "Kruse BV", "mp": round(cfg_start + 0.3, 2)} in data["facilities"]
+    assert data["purge"]["show_features"] and any(r["f"] for r in data["purge"]["rows"])
+    import openpyxl
+    wb = openpyxl.load_workbook(ws.export("formatted", include_features=True))
+    ws_x = wb["Purge Report"]
+    hdr = [c.value for c in ws_x[17]]
+    assert hdr[:2] == ["Miles", "Feature"] and ws_x.cell(row=18, column=1).value == 0
 
 
 # ---------------------------------------------------------------- assistant (fake client)

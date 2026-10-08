@@ -850,11 +850,14 @@ class Workspace:
 
     EXPORT_KINDS = ("formatted", "full", "log", "gif", "html")
 
-    def export(self, kind: str, include_notes: bool = False, include_gif: bool = True) -> str:
+    def export(self, kind: str, include_notes: bool = False, include_gif: bool = True,
+               include_features: bool = False) -> str:
         """Write a deliverable to a fresh, timestamped folder; return its path.
         kind 'all' writes every report, the client HTML page and the scenario JSON, then
         zips them; the zip's path is returned. include_notes puts the scenario notes on the
-        client HTML page (off by default: notes often hold internal tender context)."""
+        client HTML page (off by default: notes often hold internal tender context).
+        include_features adds a Purge Report row at each valve, marker, crossing and station
+        (client xlsx; on the client HTML page it sets the table's checkbox)."""
         res = self.require_results()
         if kind not in self.EXPORT_KINDS + ("all",):
             raise InputError(f"unknown export kind {kind!r}")
@@ -863,8 +866,8 @@ class Workspace:
         out_dir = os.path.join(paths.outputs_dir(), name, stamp)
         os.makedirs(out_dir, exist_ok=True)
         if kind != "all":
-            return self._export_one(kind, res, out_dir, name, include_notes)
-        files = [self._export_one(k, res, out_dir, name, include_notes)
+            return self._export_one(kind, res, out_dir, name, include_notes, include_features)
+        files = [self._export_one(k, res, out_dir, name, include_notes, include_features)
                  for k in self.EXPORT_KINDS if include_gif or k != "gif"]
         if self.results_scenario is not None:
             path = os.path.join(out_dir, f"{name}_scenario.json")
@@ -876,7 +879,8 @@ class Workspace:
                 z.write(f, os.path.basename(f))
         return zpath
 
-    def _export_one(self, kind: str, res: SimResults, out_dir: str, name: str, include_notes: bool) -> str:
+    def _export_one(self, kind: str, res: SimResults, out_dir: str, name: str, include_notes: bool,
+                    include_features: bool = False) -> str:
         sc = self.results_scenario or self.scenario
         notes = sc.meta.notes if sc else ""
         pi = {"project": name, "notes": notes, "date": datetime.now().strftime("%Y-%m-%d")}
@@ -885,7 +889,9 @@ class Workspace:
         if kind == "formatted":
             from ..engine.formatted_report import export_formatted_report
             path = os.path.join(out_dir, f"{name}_formatted.xlsx")
-            export_formatted_report(res, path, scenario_name=name, project_info=pi)
+            export_formatted_report(res, path, scenario_name=name, project_info=pi,
+                                    landmarks=sc.inputs.landmarks if sc else None,
+                                    include_features=include_features)
         elif kind == "full":
             from ..engine.purge_report import export_purge_report
             path = os.path.join(out_dir, f"{name}_report.xlsx")
@@ -903,7 +909,8 @@ class Workspace:
             path = os.path.join(out_dir, f"{name}.html")
             export_client_html(res, path, scenario_name=sc.meta.name if sc else name,
                                inputs=sc.inputs if sc else None,
-                               notes=notes if include_notes else "", date=pi["date"])
+                               notes=notes if include_notes else "", date=pi["date"],
+                               include_features=include_features)
         else:
             raise InputError(f"unknown export kind {kind!r}")
         return path
