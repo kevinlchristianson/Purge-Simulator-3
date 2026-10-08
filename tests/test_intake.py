@@ -94,7 +94,7 @@ def test_example_request_builds_the_scenario():
     assert inp.n2_budget_scf is None
     # what wasn't said is reported, not hidden
     joined = " ".join(r["assumptions"])
-    for word in ("Wall thickness", "Target pig speed", "Delivery pressure", "Specific gravity"):
+    for word in ("Wall thickness", "Target pig speed", "Pressure held at the endpoint", "Specific gravity"):
         assert word in joined
     assert "drive-capped" in r["precheck"]["job_type"]
     notes = ws.scenario.meta.notes
@@ -144,6 +144,49 @@ def test_liquid_exit_past_the_pig_stop():
     assert inp.exit_pressure_run_psig > 50 + 16 * 0.5    # 16 mi of 6" diesel friction at least
     with pytest.raises(InputError, match="before the pig stop"):
         ws.apply_intake({"fluid_exit_mp": 10})
+
+
+def test_hydraulic_endpoint_at_profile_end():
+    ws = _ws(_fresh_kmz_scenario())
+    ws.apply_intake({**EXAMPLE, "purge_end_mp": 20, "fluid_exit_mp": 36})
+    typed = ws.scenario.inputs.exit_pressure_run_psig
+    ws.apply_intake({"fluid_exit_mp": None, "fluid_exit_at_profile_end": True})
+    assert ws.scenario.inputs.exit_pressure_run_psig == typed      # profile ends at MP 36
+    # the tick wins over a typed milepost, and says so
+    r = ws.apply_intake({"fluid_exit_mp": 25})
+    assert ws.scenario.inputs.exit_pressure_run_psig == typed
+    assert any("Profile endpoint is ticked" in w for w in r["warnings"])
+
+
+def test_endpoint_receiver_and_modulating_behavior():
+    ws = _ws(_fresh_kmz_scenario())
+    ws.apply_intake({**EXAMPLE, "exit_type": "pump_station"})
+    assert ws.scenario.meta.intake["answers"]["exit_type"] == "pump_station"
+    v = intake.view(ws.scenario)
+    q = {x["id"]: x for x in v["questions"]}
+    assert not q["exit_min_pressure_psig"]["relevant"] and v["missing"] == []
+    r = ws.apply_intake({"exit_behavior": "modulating"})
+    assert "exit_min_pressure_psig" in r["missing"]
+    r = ws.apply_intake({"exit_min_pressure_psig": 20})
+    # recorded, but the engine still holds the fixed endpoint pressure
+    assert r["missing"] == [] and ws.scenario.inputs.exit_pressure_run_psig == 50
+    assert ws.scenario.inputs.exit_pressure_behavior == "constant_run"
+    assert any("doesn't model a modulating endpoint" in w for w in r["warnings"])
+    with pytest.raises(InputError, match="can't be above"):
+        ws.apply_intake({"exit_min_pressure_psig": 80})
+
+
+def test_pig_speed_defaults():
+    ws = _ws(_fresh_kmz_scenario())
+    ws.apply_intake(EXAMPLE)
+    inp = ws.scenario.inputs
+    assert (inp.target_speed_mph, inp.max_speed_mph, inp.min_speed_mph) == (3.0, 5.0, 1.5)
+    ws.apply_intake({"target_speed_mph": 6})
+    inp = ws.scenario.inputs
+    assert (inp.target_speed_mph, inp.max_speed_mph, inp.min_speed_mph) == (6.0, 6.0, 1.5)
+    ws.apply_intake({"target_speed_mph": 1})
+    inp = ws.scenario.inputs
+    assert (inp.min_speed_mph, inp.max_speed_mph) == (1.0, 5.0)
 
 
 def test_laurel_exit_beyond_pig_stop_is_far_above_delivery():

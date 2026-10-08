@@ -124,6 +124,9 @@ table.t td.n { text-align: right; font-variant-numeric: tabular-nums; }
 .q label { font-size: 13px; }
 .q .hint { grid-column: 1 / -1; font-size: 11px; color: var(--muted); margin-top: -2px; }
 .q input, .q select { width: 100%; }
+.q .stack { display: flex; flex-direction: column; gap: 3px; }
+.q input[type=checkbox] { width: auto; justify-self: start; margin: 0; }
+.q label.inl { display: flex; align-items: center; gap: 5px; }
 .q.missing label { color: var(--bad); font-weight: 600; }
 .q.missing input, .q.missing select { border-color: var(--bad); }
 .src { font-size: 10px; text-transform: uppercase; letter-spacing: .03em; padding: 0 4px; border-radius: 3px; border: 1px solid var(--border); color: var(--muted); margin-left: 4px; }
@@ -164,6 +167,18 @@ input[type=range] { width: 100%; }
   .chat { height: 70vh; }
   header .scen { max-width: 100%; }
 }
+.infra .infra-wrap { max-height: 380px; overflow: auto; border: 1px solid var(--border); border-radius: 6px; margin-top: 6px; }
+.infra-t th { position: sticky; top: 0; background: var(--panel-2); z-index: 1; font-weight: 600; }
+.infra-t td { padding: 2px 4px; }
+.infra-t td.c { text-align: center; }
+.infra-t input.num { width: 7.5em; text-align: right; }
+.infra-t input.txt { width: 100%; min-width: 10em; }
+.infra-t input.bad { border-color: var(--bad); }
+.infra-t button.x { padding: 1px 7px; color: var(--muted); }
+.infra-btns { display: flex; gap: 6px; align-items: center; margin-top: 8px; flex-wrap: wrap; }
+.infra-opt { display: block; margin: 4px 0; }
+.infra-paste textarea { width: 100%; }
+.infra .unsaved { color: var(--warn); font-weight: 400; }
 </style>
 </head>
 <body>
@@ -475,23 +490,53 @@ async function renderSetup() {
     <div style="display:flex;gap:8px;margin-top:8px"><button class="primary" id="setupApply">Apply</button><button id="setupCheck">Pre-run check</button></div></div><div id="setupReport"></div>`;
   const sections = [];
   for (const q of v.questions) { let g = sections.find(x => x[0] === q.section); if (!g) sections.push(g = [q.section, []]); g[1].push(q); }
-  html += `<div class="grid2">` + sections.map(([sec, qs]) => `<details class="group" open><summary>${esc(sec)}</summary>` + qs.map(q => {
+  const control = q => {
     const ph = q.default == null ? (q.required ? "required" : "") : "default: " + shown(q.default);
     const ans = q.answer;
-    let ctl;
-    if (q.kind === "select") ctl = `<select data-q="${q.id}"><option value="">${esc(q.default == null ? (q.required ? "— required —" : "—") : "default: " + (q.options.find(o => o.value === String(q.default)) || {label: shown(q.default)}).label)}</option>${q.options.map(o => `<option value="${esc(o.value)}" ${ans != null && String(ans) === o.value ? "selected" : ""}>${esc(o.label)}</option>`).join("")}</select>`;
-    else if (q.kind === "bool") ctl = `<select data-q="${q.id}"><option value="">default: ${q.default ? "yes" : "no"}</option><option value="true" ${ans === true ? "selected" : ""}>yes</option><option value="false" ${ans === false ? "selected" : ""}>no</option></select>`;
-    else ctl = `<input data-q="${q.id}" inputmode="decimal" value="${ans == null ? "" : esc(shown(ans))}" placeholder="${esc(ph)}">`;
-    const src = ans == null && q.default != null && q.default_source === "assumed" ? `<span class="src assumed">assumed</span>` : "";
+    if (q.kind === "select") return `<select data-q="${q.id}"><option value="">${esc(q.default == null ? (q.required ? "— required —" : "—") : "default: " + (q.options.find(o => o.value === String(q.default)) || {label: shown(q.default)}).label)}</option>${q.options.map(o => `<option value="${esc(o.value)}" ${ans != null && String(ans) === o.value ? "selected" : ""}>${esc(o.label)}</option>`).join("")}</select>`;
+    if (q.kind === "bool") return `<input type="checkbox" data-q="${q.id}" ${(ans == null ? q.default : ans) ? "checked" : ""}>`;
+    return `<input data-q="${q.id}" inputmode="decimal" value="${ans == null ? "" : esc(shown(ans))}" placeholder="${esc(ph)}">`;
+  };
+  const inline = v.questions.filter(q => q.inline_with);
+  html += `<div class="grid2">` + sections.map(([sec, qs]) => `<details class="group" open><summary>${esc(sec)}</summary>` + qs.filter(q => !q.inline_with).map(q => {
+    const src = q.answer == null && q.default != null && q.default_source === "assumed" ? `<span class="src assumed">assumed</span>` : "";
+    const extra = inline.filter(x => x.inline_with === q.id).map(x => `<label class="small inl" title="${esc(x.help || x.id)}">${control(x)} ${esc(x.label)}</label>`).join("");
+    const ctl = extra ? `<div class="stack">${control(q)}${extra}</div>` : control(q);
     return `<div class="q ${q.status === "missing" ? "missing" : ""}" ${q.relevant ? "" : "hidden"} data-row="${q.id}"><label title="${esc(q.id)}">${esc(q.label)}${q.unit ? ` <span class="muted small">(${esc(q.unit)})</span>` : ""}${src}</label>${ctl}${q.help ? `<div class="hint">${esc(q.help)}</div>` : ""}</div>`;
   }).join("") + `</details>`).join("") + `</div>`;
   el.innerHTML = html;
   if (S.setupReport) $("#setupReport").innerHTML = setupReportHtml(S.setupReport);
+  // live follow-ups: the fields that depend on another answer update as it changes
+  const qc = id => el.querySelector(`[data-q="${id}"]`), qd = id => v.questions.find(x => x.id === id);
+  const row = id => el.querySelector(`[data-row="${id}"]`);
+  const setPh = (id, val, fallback) => { const c = qc(id); if (c) c.placeholder = val == null ? fallback : "default: " + shown(val); };
+  const followFluid = () => {
+    const key = qc("fluid").value, f = v.fluids[key], api = Number(qc("api_gravity").value);
+    if (row("api_gravity")) row("api_gravity").hidden = !(key || qd("fluid").default || "").includes("crude");
+    if (!key) {   // back to the scenario's own default
+      setPh("fluid_sg", qd("fluid_sg").default, ""); setPh("fluid_viscosity_cst", qd("fluid_viscosity_cst").default, "");
+    } else {
+      setPh("fluid_sg", api > 0 ? Math.round(141.5 / (api + 131.5) * 1e4) / 1e4 : f.sg, "");
+      setPh("fluid_viscosity_cst", f.viscosity_cst, "");
+    }
+  };
+  qc("fluid").onchange = followFluid;
+  qc("api_gravity").oninput = followFluid;
+  const followEndpoint = () => {
+    const tick = qc("fluid_exit_at_profile_end"), mp = qc("fluid_exit_mp");
+    if (tick && mp) mp.disabled = tick.checked;
+    const mod = (qc("exit_behavior").value || qd("exit_behavior").default) === "modulating";
+    if (row("exit_min_pressure_psig")) row("exit_min_pressure_psig").hidden = !mod;
+  };
+  if (qc("fluid_exit_at_profile_end")) qc("fluid_exit_at_profile_end").onchange = followEndpoint;
+  qc("exit_behavior").onchange = followEndpoint;
+  followEndpoint();
   $("#setupApply").onclick = async () => {
     const answers = {};
     el.querySelectorAll("[data-q]").forEach(c => {
-      const q = v.questions.find(x => x.id === c.dataset.q), raw = c.value.trim();
-      answers[q.id] = raw === "" ? null : q.kind === "number" ? Number(raw) : q.kind === "bool" ? raw === "true" : raw;
+      const q = qd(c.dataset.q), raw = c.value.trim();
+      if (q.kind === "bool") answers[q.id] = q.answer == null && c.checked === !!q.default ? null : c.checked;
+      else answers[q.id] = raw === "" ? null : q.kind === "number" ? Number(raw) : raw;
     });
     $("#setupApply").disabled = true;
     try { S.setupReport = await api("/api/intake", {body: {answers}}); toast("Job setup applied. Review it, then save."); await poll(true); }
@@ -537,8 +582,6 @@ const GROUPS = [
   ["Booster spreads", ["n_spreads", "mob_time_hr", "spread_discharge_psig", "spread_suction_min_psig", "spread_max_flow_scfm"]],
   ["Simulation", ["dt_hr", "adaptive_dt"]],
 ];
-const LISTS = [["pipe_segments", "Pipe segments"], ["check_valves", "Check valves"], ["pump_stations", "Pump stations"],
-               ["booster_stations", "Booster stations"], ["deployed_booster_mps", "Pinned booster deployment (null = optimizer)"], ["bpcv", "BPCV (null = none)"]];
 const EXIT_OPTS = ["taper_last_n_miles", "step_last_n_miles", "linear_ramp", "constant_run", "constant_end"];
 function renderInputs() {
   const el = $("#tab-inputs");
@@ -555,14 +598,7 @@ function renderInputs() {
       return `<div class="field"><label title="${k}">${k.replace(/_/g, " ")}</label>${ctl}</div>`;
     }).join("") + `</details>`;
   }
-  html += `</div><h2>Infrastructure</h2><p class="small muted">Edit as JSON and apply. Elevation profile and MOP joints come from data import.</p>`;
-  for (const [k, label] of LISTS) {
-    const v = S.scenario[k];
-    const rows = Array.isArray(v) ? Math.min(12, Math.max(3, v.length + 1)) : 3;
-    html += `<details class="group"><summary>${label} <span class="muted small">${Array.isArray(v) ? `(${v.length})` : (v ? "" : "(none)")}</span></summary>
-      <textarea rows="${rows}" data-list="${k}">${esc(JSON.stringify(v, null, 1))}</textarea>
-      <div style="margin-top:6px"><button data-apply="${k}">Apply</button></div></details>`;
-  }
+  html += `</div>` + infraHtml();
   el.innerHTML = html;
   el.querySelectorAll("[data-k]").forEach(inp => inp.onchange = async () => {
     const k = inp.dataset.k; let v = inp.value.trim();
@@ -572,12 +608,232 @@ function renderInputs() {
     try { await api("/api/scenario/update", {body: {changes: {[k]: v}}}); await poll(); }
     catch (e) { inp.parentElement.classList.add("err"); toast(e.message); }
   });
-  el.querySelectorAll("[data-apply]").forEach(b => b.onclick = async () => {
-    const k = b.dataset.apply, ta = el.querySelector(`[data-list="${k}"]`);
-    let v; try { v = JSON.parse(ta.value); } catch (e) { toast("Not valid JSON: " + e.message); return; }
-    try { await api("/api/scenario/update", {body: {changes: {[k]: v}}}); toast("Applied"); await poll(); }
-    catch (e) { toast(e.message); }
+  wireInfra(el);
+}
+
+// ---------------------------------------------------------------- infrastructure editor (Inputs tab)
+// Editable tables over the same lists the scenario stores (pump_stations, check_valves,
+// booster_stations + deployed_booster_mps, bpcv, pipe_segments). Edits stay a local draft
+// until Save, which sends the whole list through /api/scenario/update (the same validation
+// as every other edit). Keys a table doesn't show are kept on their row as they were.
+const COL_NAME = {k: "name", h: "Name", type: "text", req: true};
+const COL_MP = {k: "mp", h: "MP", type: "num", req: true};
+const INFRA = [
+  {k: "pump_stations", label: "Pump stations", mpKey: "mp",
+   hint: "Stations that hold the liquid ahead of the pig until they are no longer needed. Suction is the inlet pressure the station needs while it pumps.",
+   cols: [COL_NAME, COL_MP, {k: "suction_psig", h: "Suction (psig)", type: "num", req: true, def: 30}]},
+  {k: "check_valves", label: "Check valves", mpKey: "mp",
+   hint: "Mainline check valves. Each one splits the N2 behind the pig into its own section.",
+   cols: [COL_NAME, COL_MP, {k: "is_pump_station", h: "At a pump station", type: "bool"}]},
+  {k: "booster_stations", label: "Booster stations", mpKey: "mp",
+   hint: "Sites where a booster spread can set up. Leave a pressure or flow blank to use the Booster spreads settings above.",
+   cols: [COL_NAME, COL_MP, {k: "discharge_psig", h: "Discharge (psig)", type: "num", ph: "spread"},
+          {k: "suction_min_psig", h: "Min suction (psig)", type: "num", ph: "spread"},
+          {k: "max_flow_scfm", h: "Max flow (scfm)", type: "num", ph: "spread"}, {k: "run_at_max", h: "Run at max", type: "bool"}]},
+  {k: "bpcv", label: "BPCV", single: true,
+   hint: "Back pressure control valve. It can only hold pressure back, never add head. Elevation is the ground elevation at the valve.",
+   cols: [{k: "name", h: "Name", type: "text", def: "BPCV"}, COL_MP, {k: "elevation_ft", h: "Elevation (ft)", type: "num", req: true}]},
+  {k: "pipe_segments", label: "Pipe segments", mpKey: "start_mp",
+   hint: "Pipe size by milepost range: outside diameter and wall thickness in inches.",
+   cols: [{k: "start_mp", h: "From MP", type: "num", req: true}, {k: "end_mp", h: "To MP", type: "num", req: true},
+          {k: "od_in", h: "OD (in)", type: "num", req: true}, {k: "wt_in", h: "Wall (in)", type: "num", req: true}]},
+];
+const infraSpec = k => INFRA.find(s => s.k === k);
+function infraServer(k) {
+  const sc = S.scenario;
+  return k === "booster_stations" ? {b: sc.booster_stations, d: sc.deployed_booster_mps} : sc[k];
+}
+function infraFresh(k) {
+  const v = infraServer(k), copy = x => JSON.parse(JSON.stringify(x ?? null));
+  const d = {base: JSON.stringify(v), dirty: false};
+  if (k === "bpcv") d.rows = v ? [copy(v)] : [];
+  else if (k === "booster_stations") {
+    d.rows = copy(v.b) || [];
+    d.pin = v.d != null;
+    d.tick = d.rows.map(() => false);
+    // the engine snaps each pinned MP to the nearest booster site; tick that site
+    for (const m of v.d || []) {
+      let bi = -1, bd = Infinity; d.rows.forEach((r, i) => { const q = Math.abs(r.mp - m); if (q < bd) { bd = q; bi = i; } });
+      if (bi >= 0) d.tick[bi] = true;
+    }
+  } else d.rows = copy(v) || [];
+  return d;
+}
+function infraState() {
+  const sid = S.state && S.state.scenario_id;
+  if (!S.infra || S.infra.sid !== sid) S.infra = {sid, drafts: {}, open: new Set()};
+  return S.infra;
+}
+const infraView = k => infraState().drafts[k] || infraFresh(k);
+function infraDraft(k) {
+  const st = infraState();
+  if (!st.drafts[k]) st.drafts[k] = infraFresh(k);
+  st.drafts[k].dirty = true;
+  return st.drafts[k];
+}
+function infraCell(c, r, i) {
+  const v = r[c.k];
+  if (c.type === "bool") return `<td class="c"><input type="checkbox" data-c="${c.k}" ${v ? "checked" : ""}></td>`;
+  const bad = (c.type === "num" && typeof v === "string") || (c.req && (v == null || v === ""));
+  return `<td><input data-c="${c.k}" class="${c.type === "num" ? "num" : "txt"}${bad ? " bad" : ""}" value="${esc(v ?? "")}" placeholder="${esc(c.ph || "")}" ${c.type === "num" ? 'inputmode="decimal"' : ""}></td>`;
+}
+function infraSectionHtml(k) {
+  const spec = infraSpec(k), d = infraView(k), open = infraState().open.has(k);
+  const pin = k === "booster_stations" && d.pin;
+  const count = spec.single ? (d.rows.length ? `MP ${esc(d.rows[0].mp ?? "?")}` : "none") : `${d.rows.length}`;
+  const stale = d.dirty && d.base !== JSON.stringify(infraServer(k));
+  let h = `<details class="group infra" data-sec="${k}" ${open ? "open" : ""}><summary>${spec.label} <span class="muted small">(${count})</span>${d.dirty ? ` <span class="unsaved small">unsaved changes</span>` : ""}</summary>
+    <p class="small muted">${spec.hint}</p>`;
+  if (stale) h += `<div class="flag warn small">This list changed (for example by the assistant) since you started editing. Discard to see the current version, or Save to replace it with yours.</div>`;
+  if (spec.single) h += `<label class="small infra-opt"><input type="checkbox" data-has ${d.rows.length ? "checked" : ""}> This line has a BPCV</label>`;
+  if (k === "booster_stations") h += `<label class="small infra-opt">Which boosters run: <select data-pin>
+      <option value="0" ${pin ? "" : "selected"}>the optimizer decides</option><option value="1" ${pin ? "selected" : ""}>only the ticked ones</option></select></label>`;
+  if (!spec.single || d.rows.length) {
+    h += `<div class="infra-wrap"><table class="t infra-t"><tr>${spec.single ? "" : "<th>#</th>"}${pin ? "<th>Run</th>" : ""}${spec.cols.map(c => `<th>${c.h}</th>`).join("")}${spec.single ? "" : "<th></th>"}</tr>`;
+    d.rows.forEach((r, i) => {
+      h += `<tr data-row="${i}">${spec.single ? "" : `<td class="muted">${i + 1}</td>`}${pin ? `<td class="c"><input type="checkbox" data-tick ${d.tick[i] ? "checked" : ""}></td>` : ""}` +
+        spec.cols.map(c => infraCell(c, r, i)).join("") + (spec.single ? "" : `<td><button class="x" data-del title="Remove this row">✕</button></td>`) + `</tr>`;
+    });
+    if (!d.rows.length) h += `<tr><td colspan="${spec.cols.length + 3}" class="muted">None. Add a row, or paste rows from a spreadsheet.</td></tr>`;
+    h += `</table></div>`;
+  }
+  if (k === "bpcv" && d.rows.length) h += `<div class="small" style="margin-top:4px"><button data-elev>Elevation from profile</button> <span class="muted">reads the ground elevation at the BPCV milepost</span></div>`;
+  h += `<div class="infra-btns">`;
+  if (!spec.single) h += `<button data-add>+ Add row</button> <button data-sort>Sort by MP</button> <button data-pastebtn>Paste rows…</button>`;
+  h += `<span style="flex:1"></span><button data-discard ${d.dirty ? "" : "disabled"}>Discard</button> <button class="primary" data-save ${d.dirty ? "" : "disabled"}>Save</button></div>`;
+  if (!spec.single) h += `<div class="infra-paste" hidden><p class="small muted">Copy rows from Excel (or type them, one per line) in this column order: <b>${spec.cols.map(c => c.h).join(", ")}</b>. Tabs or commas between values. A header row is skipped.</p>
+      <textarea rows="5" data-pastetxt></textarea>
+      <div class="infra-btns"><label class="small"><input type="checkbox" data-replace> Replace all rows</label><span style="flex:1"></span><button data-pasteadd>Add these rows</button></div></div>`;
+  return h + `</details>`;
+}
+function infraHtml() {
+  if (!S.scenario) return "";
+  return `<h2>Infrastructure</h2><p class="small muted">Edit in the tables, then Save each list. The elevation profile and MOP joints come from data import.</p>` +
+    INFRA.map(s => infraSectionHtml(s.k)).join("");
+}
+function infraRerender(k) {
+  const el = $("#tab-inputs").querySelector(`details[data-sec="${k}"]`);
+  if (el) el.outerHTML = infraSectionHtml(k);
+}
+function infraParse(c, raw) {
+  if (c.type === "text") return raw;
+  const t = String(raw).trim();
+  if (t === "") return undefined;
+  const n = Number(t.replace(/,/g, ""));
+  return Number.isFinite(n) ? n : t;   // a string left in a number column marks it invalid
+}
+function infraBlank(spec) { const r = {}; for (const c of spec.cols) if (c.def !== undefined) r[c.k] = c.def; return r; }
+function infraClean(spec, rows) {
+  const errs = [];
+  const out = rows.map((r, i) => {
+    const o = {...r};
+    for (const c of spec.cols) {
+      const v = o[c.k], where = spec.single ? c.h : `Row ${i + 1}, ${c.h}`;
+      if (v === undefined || v === null || v === "") {
+        if (c.req) errs.push(`${where} is required`);
+        delete o[c.k];
+      } else if (c.type === "num" && typeof v !== "number") errs.push(`${where}: "${v}" is not a number`);
+    }
+    return o;
   });
+  return {out, errs};
+}
+async function infraSave(k) {
+  const spec = infraSpec(k), d = infraView(k);
+  const {out, errs} = infraClean(spec, d.rows);
+  if (errs.length) { toast(errs.slice(0, 3).join(" · ") + (errs.length > 3 ? ` (+${errs.length - 3} more)` : "")); return; }
+  const changes = {};
+  if (k === "bpcv") changes.bpcv = out.length ? out[0] : null;
+  else changes[k] = out;
+  if (k === "booster_stations") changes.deployed_booster_mps = d.pin ? out.filter((r, i) => d.tick[i]).map(r => r.mp) : null;
+  try {
+    await api("/api/scenario/update", {body: {changes}});
+    delete infraState().drafts[k];
+    toast(`${spec.label} saved`);
+    await poll(true);
+  } catch (e) { toast(e.message); }
+}
+function infraPaste(spec, d, text, replace) {
+  const rows = [];
+  for (const ln of text.split(/\r?\n/)) {
+    if (!ln.trim()) continue;
+    const parts = ln.includes("\t") ? ln.split("\t") : ln.split(",");
+    const r = infraBlank(spec);
+    spec.cols.forEach((c, j) => {
+      const raw = (parts[j] ?? "").trim();
+      if (c.type === "bool") { if (raw) r[c.k] = /^(1|y|yes|true|x)$/i.test(raw); }
+      else if (raw !== "") r[c.k] = infraParse(c, raw);
+    });
+    // skip a header row: every number column came in as text
+    const nums = spec.cols.filter(c => c.type === "num");
+    if (!rows.length && nums.length && nums.every(c => typeof r[c.k] === "string")) continue;
+    rows.push(r);
+  }
+  if (!rows.length) { toast("No rows found in the pasted text"); return false; }
+  if (replace) { d.rows = []; if (d.tick) d.tick = []; }
+  d.rows.push(...rows); if (d.tick) d.tick.push(...rows.map(() => false));
+  toast(`${rows.length} row${rows.length > 1 ? "s" : ""} added. Check them, then Save.`);
+  return true;
+}
+function wireInfra(el) {
+  const sec = t => { const s = t.closest("details[data-sec]"); return s && s.dataset.sec; };
+  const rowOf = t => { const tr = t.closest("tr[data-row]"); return tr ? +tr.dataset.row : -1; };
+  const mark = k => { const s = el.querySelector(`details[data-sec="${k}"]`); if (s && !s.querySelector(".unsaved")) {
+    s.querySelector("summary").insertAdjacentHTML("beforeend", ` <span class="unsaved small">unsaved changes</span>`);
+    s.querySelectorAll("[data-save],[data-discard]").forEach(b => b.disabled = false); } };
+  el.querySelectorAll("details[data-sec]").forEach(s => s.addEventListener("toggle", () => {
+    const st = infraState(); if (s.open) st.open.add(s.dataset.sec); else st.open.delete(s.dataset.sec);
+  }));
+  el.oninput = e => {
+    const t = e.target, k = sec(t); if (!k || !t.dataset.c || t.type === "checkbox") return;
+    const spec = infraSpec(k), c = spec.cols.find(c => c.k === t.dataset.c), i = rowOf(t), d = infraDraft(k);
+    const v = infraParse(c, t.value);
+    if (v === undefined) delete d.rows[i][c.k]; else d.rows[i][c.k] = v;
+    t.classList.toggle("bad", !!((c.type === "num" && typeof v === "string") || (c.req && (v === undefined || v === ""))));
+    mark(k);
+  };
+  el.onchange = e => {
+    const t = e.target, k = sec(t); if (!k) return;
+    if (t.dataset.c && t.type === "checkbox") { infraDraft(k).rows[rowOf(t)][t.dataset.c] = t.checked; mark(k); }
+    else if (t.hasAttribute("data-tick")) { infraDraft(k).tick[rowOf(t)] = t.checked; mark(k); }
+    else if (t.hasAttribute("data-pin")) { infraDraft(k).pin = t.value === "1"; infraRerender(k); }
+    else if (t.hasAttribute("data-has")) { const d = infraDraft(k); d.rows = t.checked ? [infraBlank(infraSpec(k))] : []; infraRerender(k); }
+  };
+  el.onclick = async e => {
+    const t = e.target.closest("button"); if (!t) return;
+    const k = sec(t); if (!k) return;
+    const spec = infraSpec(k);
+    if (t.hasAttribute("data-add")) {
+      const d = infraDraft(k); d.rows.push(infraBlank(spec)); if (d.tick) d.tick.push(false); infraRerender(k);
+      const rows = el.querySelectorAll(`details[data-sec="${k}"] tr[data-row]`); const last = rows[rows.length - 1];
+      if (last) { last.scrollIntoView({block: "nearest"}); const f = last.querySelector("input[data-c]"); if (f) f.focus(); }
+    } else if (t.hasAttribute("data-del")) {
+      const d = infraDraft(k), i = rowOf(t); d.rows.splice(i, 1); if (d.tick) d.tick.splice(i, 1); infraRerender(k);
+    } else if (t.hasAttribute("data-sort")) {
+      const d = infraDraft(k), key = spec.mpKey, idx = d.rows.map((_, i) => i);
+      const mpv = r => typeof r[key] === "number" ? r[key] : Infinity;
+      idx.sort((a, b) => mpv(d.rows[a]) - mpv(d.rows[b]));
+      d.rows = idx.map(i => d.rows[i]); if (d.tick) d.tick = idx.map(i => d.tick[i]); infraRerender(k);
+    } else if (t.hasAttribute("data-discard")) {
+      delete infraState().drafts[k]; infraRerender(k);
+    } else if (t.hasAttribute("data-save")) {
+      await infraSave(k);
+    } else if (t.hasAttribute("data-pastebtn")) {
+      const p = t.closest("details").querySelector(".infra-paste"); p.hidden = !p.hidden; if (!p.hidden) p.querySelector("textarea").focus();
+    } else if (t.hasAttribute("data-pasteadd")) {
+      const s = t.closest("details"), txt = s.querySelector("[data-pastetxt]").value, rep = s.querySelector("[data-replace]").checked;
+      const st = infraState(), had = !!st.drafts[k], d = infraDraft(k);
+      if (infraPaste(spec, d, txt, rep)) infraRerender(k); else if (!had) delete st.drafts[k];
+    } else if (t.hasAttribute("data-elev")) {
+      const d = infraDraft(k), r = d.rows[0];
+      if (typeof r.mp !== "number") { toast("Enter the BPCV milepost first"); return; }
+      try {
+        const pr = await api("/api/elevation?max_points=20000");
+        if (!pr.mp.length || r.mp < pr.mp[0] - 0.01 || r.mp > pr.mp[pr.mp.length - 1] + 0.01) { toast("That milepost is outside the purge's elevation profile; enter the elevation by hand"); return; }
+        r.elevation_ft = Math.round(interp(pr.mp, pr.elevation_ft, r.mp)); infraRerender(k);
+      } catch (e2) { toast(e2.message); }
+    }
+  };
 }
 
 // ---------------------------------------------------------------- charts (SVG)
@@ -949,12 +1205,21 @@ $("#routeOk").onclick = async () => {
 function renderExports() {
   const el = $("#tab-exports");
   if (!S.results) { el.innerHTML = `<div class="empty">Run the scenario to export reports.</div>`; return; }
-  el.innerHTML = `<div class="card"><p class="small muted">Each export goes to a new dated folder under PurgeSimOutputs in your home folder, so earlier variants are never overwritten.</p>
-    ${[["formatted", "Client report (FILL REPORT + charts, xlsx)"], ["full", "Full technical report (7 sheets, xlsx)"], ["log", "Run log (txt)"], ["gif", "Profile animation (GIF, slower)"]]
+  el.innerHTML = `<div class="card"><b>Everything for the client</b>
+    <p class="small muted">One zip with the client web page, both xlsx reports, the run log, the profile animation and the scenario file.</p>
+    <div style="margin:8px 0"><button class="primary" data-exp="all">Download all reports (zip)</button> <span class="small muted" id="exp-all"></span></div>
+    <label class="small"><input type="checkbox" id="expGif" checked> Include the profile animation (GIF, slower)</label><br>
+    <label class="small"><input type="checkbox" id="expNotes"> Put the scenario notes on the client web page</label></div>
+    <div class="card"><b>One at a time</b><p class="small muted">Each export goes to a new dated folder under PurgeSimOutputs in your home folder, so earlier variants are never overwritten.</p>
+    ${[["html", "Client web page (html, opens in any browser, works offline)"], ["formatted", "Client report (FILL REPORT + charts, xlsx)"], ["full", "Full technical report (7 sheets, xlsx)"], ["log", "Run log (txt)"], ["gif", "Profile animation (GIF, slower)"]]
       .map(([k, l]) => `<div style="margin:8px 0"><button data-exp="${k}">${l}</button> <span class="small muted" id="exp-${k}"></span></div>`).join("")}</div>`;
   el.querySelectorAll("[data-exp]").forEach(b => b.onclick = async () => {
     const k = b.dataset.exp, note = $("#exp-" + k); b.disabled = true; note.textContent = "Generating…";
-    try { const r = await api("/api/export", {body: {kind: k}}); note.innerHTML = `Saved to ${esc(r.path)} · <a href="${r.url}">download</a>`; }
+    try {
+      const r = await api("/api/export", {body: {kind: k, include_notes: $("#expNotes").checked, include_gif: $("#expGif").checked}});
+      note.innerHTML = `Saved to ${esc(r.path)} · <a href="${r.url}">download</a>`;
+      if (k === "all" || k === "html") location.href = r.url;   // one click: start the download right away
+    }
     catch (e) { note.textContent = e.message; }
     b.disabled = false;
   });
