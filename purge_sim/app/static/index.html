@@ -96,8 +96,11 @@ section { padding: 10px 16px 30px; }
 .lib-item { position: relative; }
 .lib-dl { position: absolute; right: 6px; top: 5px; font-size: 11px; color: var(--muted); text-decoration: none; padding: 1px 5px; border-radius: 4px; visibility: hidden; }
 .lib-item:hover .lib-dl, .lib-item.on .lib-dl { visibility: visible; }
-.lib-item > div:first-of-type { padding-right: 52px; overflow-wrap: anywhere; }
+.lib-item > div:first-of-type { padding-right: 84px; overflow-wrap: anywhere; }
 .lib-dl:hover { color: var(--accent); background: var(--panel); }
+.lib-del { right: 62px; border: 0; background: none; cursor: pointer; font: inherit; font-size: 11px; }
+.lib-del:hover { color: var(--bad); background: var(--panel); }
+.lib-hidden { margin-top: 10px; padding: 0 8px; font-size: 11px; }
 
 .field { display: grid; grid-template-columns: 1fr 110px; gap: 6px; align-items: center; padding: 2px 0; }
 .field label { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; }
@@ -359,7 +362,7 @@ document.querySelectorAll("#tabs button").forEach(b => b.onclick = () => {
 // ---------------------------------------------------------------- library
 async function loadLibrary() {
   const d = await api("/api/scenarios");
-  S.scenarios = d.scenarios; S.userDir = d.user_dir;
+  S.scenarios = d.scenarios; S.userDir = d.user_dir; S.libHidden = d.hidden || 0;
   renderLibrary();
 }
 // Client > Pipeline > Scenario. Which groups are open is remembered in this browser.
@@ -376,6 +379,7 @@ function renderLibrary() {
   const curItem = S.scenarios.find(s => s.id === cur);
   const isOpen = key => f || S.libOpen.has(key) || (curItem && (key === curItem.client || key === curItem.client + "|" + curItem.pipeline));
   const item = s => `<div class="lib-item ${s.id === cur ? "on" : ""}" data-id="${esc(s.id)}" title="${esc(s.notes)}">
+         <button class="lib-dl lib-del" data-del="${esc(s.id)}" title="Delete this scenario from the library">✕ Delete</button>
          <a class="lib-dl" href="/api/scenario/download?id=${encodeURIComponent(s.id)}&token=${TOKEN}" download title="Download ${esc(s.file.split("/").pop())}">⤓ JSON</a>
          <div>${esc(s.name)}${s.origin === "user" ? `<span class="lib-mine" title="Saved in ${esc(S.userDir || "your scenarios folder")}">mine</span>` : ""}</div>
          <div class="meta">${s.details ? esc(s.details) + "<br>" : ""}${fmt(s.span_mi, 1)} mi · ${esc(s.fluid || "")}</div></div>`;
@@ -386,12 +390,18 @@ function renderLibrary() {
         `<details class="lib-pipe" data-key="${esc(c + "|" + p)}" ${isOpen(c + "|" + p) ? "open" : ""}><summary>${esc(p)} <span class="lib-count">${pipes[p].length}</span></summary>` +
         pipes[p].map(item).join("") + `</details>`).join("") + `</details>`;
   }).join("") || `<p class="muted small">No scenarios found.</p>`;
+  if (S.libHidden) $("#lib").innerHTML += `<div class="lib-hidden muted">${S.libHidden} built-in scenario${S.libHidden > 1 ? "s" : ""} deleted · <a href="#" id="libRestore">show again</a></div>`;
   document.querySelectorAll("#lib details").forEach(d => d.ontoggle = () => {
     if (f) return;   // a filter opens everything; don't remember that
     if (d.open) S.libOpen.add(d.dataset.key); else S.libOpen.delete(d.dataset.key);
     try { localStorage.setItem("purge.libOpen", JSON.stringify([...S.libOpen])); } catch (e) {}
   });
   document.querySelectorAll(".lib-dl").forEach(a => a.onclick = e => e.stopPropagation());
+  document.querySelectorAll(".lib-del").forEach(b => b.onclick = e => { e.stopPropagation(); deleteScenario(b.dataset.del); });
+  if ($("#libRestore")) $("#libRestore").onclick = async e => {
+    e.preventDefault();
+    try { await api("/api/scenario/restore_hidden", {body: {}}); await loadLibrary(); } catch (err) { toast(err.message); }
+  };
   document.querySelectorAll(".lib-item").forEach(el => el.onclick = async () => {
     if (el.dataset.id === cur) return;
     if (unsaved() && !confirm("The open scenario has unsaved changes. Open another one anyway?")) return;
@@ -399,6 +409,19 @@ function renderLibrary() {
     catch (e) { toast(e.message); }
   });
   fillDatalists();
+}
+// Your own saved scenarios move to a ".deleted" folder in your scenarios folder; built-in ones
+// (shipped with the app) are only hidden, and "show again" under the library brings them back.
+async function deleteScenario(id) {
+  const s = S.scenarios.find(x => x.id === id); if (!s) return;
+  const open = S.state && S.state.scenario_id === id;
+  const msg = `Delete "${s.name}" (${s.client} > ${s.pipeline}) from the library?\n\n`
+    + (s.origin === "user" ? `The file is moved to the .deleted folder in ${S.userDir || "your scenarios folder"}.`
+                           : "This is a built-in scenario: it is hidden from the library, and you can show it again from the bottom of the library.")
+    + (open ? "\n\nIt is open now and stays open as an unsaved scenario until you open another one." : "");
+  if (!confirm(msg)) return;
+  try { await api("/api/scenario/delete", {body: {id}}); toast(`Deleted "${s.name}"`); await loadLibrary(); await poll(true); }
+  catch (e) { toast(e.message); }
 }
 // Client and pipeline suggestions for the Overview and Save as fields.
 function fillDatalists(client) {

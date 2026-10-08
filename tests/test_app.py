@@ -141,6 +141,25 @@ def test_save_never_overwrites_without_flag():
         ws._resolve("bundled:../../etc/passwd")
 
 
+def test_delete_scenarios_from_library():
+    ws = Workspace()
+    ws.load(SHORT)
+    saved = ws.save_as("Mine", client="Acme", pipeline="Line 1")["id"]
+    assert saved in {s["id"] for s in ws.list_scenarios()}
+    out = ws.delete_scenario(saved)                  # the user's own file goes to .deleted/
+    assert os.path.isfile(out["moved_to"]) and ".deleted" in out["moved_to"]
+    assert saved not in {s["id"] for s in ws.list_scenarios()}
+    assert ws.scenario is not None and ws.scenario_id is None and ws.dirty   # stays open, unsaved
+    ws.delete_scenario(SHORT)                        # a bundled one is only hidden
+    assert SHORT not in {s["id"] for s in ws.list_scenarios()}
+    assert os.path.isfile(ws._roots()["bundled"] + "/" + SHORT.split(":", 1)[1])
+    assert any(s["id"] == SHORT and s["hidden"] for s in ws.list_scenarios(include_hidden=True))
+    assert ws.restore_hidden_scenarios() == {"restored": 1}
+    assert SHORT in {s["id"] for s in ws.list_scenarios()}
+    with pytest.raises(InputError):
+        ws.delete_scenario("user:../outside.json")
+
+
 def test_client_html_and_all_reports_zip():
     import zipfile
     ws = Workspace()
