@@ -87,7 +87,8 @@ purge_sim/
                          Job setup tab and the assistant's set_job_setup both use it
     server.py          — JSON API + page; 127.0.0.1 only, Host check, per-launch token.
                          `app.py --phone` also listens on the LAN (port 8765) for a phone on
-                         the same Wi-Fi; page and API then need the saved key (settings.phone_key)
+                         the same Wi-Fi (or over Tailscale, whose 100.x link it also prints); page and
+                         API then need the saved key (settings.phone_key)
     importers.py       — new scenario from ILI / KMZ / TXT / Excel via data/ parsers
     gis.py             — Map tab geometry: milepost per route vertex (route_latlon scaled to the
                          profile's milepost span), stations/CVs/boosters/BPCV placed on it, and

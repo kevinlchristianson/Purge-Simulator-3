@@ -244,9 +244,19 @@ def test_http_phone_access_needs_key_off_the_pc():
         assert _call(app, "/api/state", token=False, host=lan)[0] == 403
         code, ph = _call(app, "/api/phone")
         assert code == 200 and ph["enabled"] and ph["url"].endswith(f":{port}/?key={app.token}")
+        assert _call(app, "/api/state", host=f"100.101.102.103:{port}")[0] == 200   # via Tailscale
     finally:
         app.shutdown()
         httpd.server_close()
+
+
+def test_tailscale_address_detection(monkeypatch):
+    from purge_sim.app import server as srv
+    monkeypatch.setattr(srv.socket, "gethostbyname_ex", lambda h: (h, [], ["192.168.1.20", "100.88.1.2"]))
+    assert srv.tailscale_address() == "100.88.1.2"
+    monkeypatch.setattr(srv.socket, "gethostbyname_ex", lambda h: (h, [], ["192.168.1.20", "100.200.0.1"]))
+    monkeypatch.setattr(srv.shutil, "which", lambda name: None)
+    assert srv.tailscale_address() is None                # 100.200.x is outside Tailscale's range
 
 
 def test_http_guide_tab_serves_user_guide(server):

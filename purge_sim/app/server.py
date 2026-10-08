@@ -18,8 +18,11 @@ from __future__ import annotations
 
 import json
 import os
+import ipaddress
 import secrets
+import shutil
 import socket
+import subprocess
 import tempfile
 import threading
 import traceback
@@ -113,7 +116,7 @@ class App:
             with open(paths.guide_path(), "r", encoding="utf-8") as f:
                 return 200, {"markdown": f.read()}
         if route == ("GET", "/api/phone"):
-            return 200, {"enabled": self.phone, "url": self.phone_url}
+            return 200, {"enabled": self.phone, "url": self.phone_url, "tailscale_url": self.tailscale_url}
         if route == ("GET", "/api/settings"):
             return 200, settings.public_view()
         if route == ("POST", "/api/settings"):
@@ -321,6 +324,13 @@ class App:
             return None
         return f"http://{lan_address()}:{self.httpd.server_address[1]}/?key={self.token}"
 
+    @property
+    def tailscale_url(self) -> Optional[str]:
+        """The phone link over Tailscale (works away from home), or None when phone
+        access is off or this computer isn't on a Tailscale network."""
+        ts = tailscale_address() if self.phone and self.httpd is not None else None
+        return f"http://{ts}:{self.httpd.server_address[1]}/?key={self.token}" if ts else None
+
     def shutdown(self) -> None:
         if self.httpd is not None:
             self.httpd.shutdown()
@@ -337,3 +347,32 @@ def lan_address() -> str:
         return "127.0.0.1"
     finally:
         s.close()
+
+
+def _is_tailscale(ip: str) -> bool:
+    try:
+        return ipaddress.ip_address(ip) in ipaddress.ip_network("100.64.0.0/10")
+    except ValueError:
+        return False
+
+
+def tailscale_address() -> Optional[str]:
+    """This computer's Tailscale address (100.x.y.z), if Tailscale is running on it.
+    That address reaches the PC from a phone signed in to the same Tailscale account,
+    from any network."""
+    try:
+        for ip in socket.gethostbyname_ex(socket.gethostname())[2]:
+            if _is_tailscale(ip):
+                return ip
+    except OSError:
+        pass
+    exe = shutil.which("tailscale")
+    if exe:
+        try:
+            out = subprocess.run([exe, "ip", "-4"], capture_output=True, text=True, timeout=3).stdout
+            for ip in out.split():
+                if _is_tailscale(ip):
+                    return ip
+        except (OSError, subprocess.SubprocessError):
+            pass
+    return None

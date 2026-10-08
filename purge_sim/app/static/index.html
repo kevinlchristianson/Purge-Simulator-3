@@ -1019,7 +1019,9 @@ async function openSettings() {
   $("#setClear").hidden = s.api_key_source !== "settings";
   const ph = await api("/api/phone").catch(() => ({}));
   $("#setPhone").innerHTML = ph.url
-    ? `On a phone on the same Wi-Fi, open <a href="${esc(ph.url)}">${esc(ph.url)}</a>`
+    ? `On a phone on the same Wi-Fi, open <a href="${esc(ph.url)}">${esc(ph.url)}</a>` +
+      (ph.tailscale_url ? `<br>Away from home, with Tailscale on the phone: <a href="${esc(ph.tailscale_url)}">${esc(ph.tailscale_url)}</a>`
+                        : "<br>To use it away from home, install Tailscale on this PC and the phone, then restart the app.")
     : "Off. To use the app from a phone on the same Wi-Fi, start it with <code>python app.py --phone</code>.";
   $("#dlgSettings").showModal();
 }

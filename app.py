@@ -46,9 +46,15 @@ def main() -> None:
         print()
         print("Phone access is on. On a phone connected to the same Wi-Fi, open:")
         print(f"    {app.phone_url}")
+        ts = app.tailscale_url
+        if ts:
+            print("Away from home, with Tailscale on the phone, open:")
+            print(f"    {ts}")
         print("The link stays the same from one launch to the next, so you can bookmark it.")
         print("If Windows asks whether to allow Python on networks, allow Private networks.")
         print("Anyone on this Wi-Fi with the link can use the app; only turn this on on a network you trust.")
+        if not ts:
+            print("To use it away from home, install Tailscale on this PC and the phone, then restart the app.")
         print()
     print("Close it with the Quit button in the app, or Ctrl+C here.")
     if not args.no_browser:
