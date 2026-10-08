@@ -198,6 +198,23 @@ Use the **Inputs** tab for:
   you.
 - **The BPCV and booster stations.**
 
+The **Infrastructure** lists (pump stations, check valves, booster stations, BPCV, pipe
+segments) are editable tables. Click a list's name to open it, then:
+
+- Type straight into a cell. A cell outlined in red is missing or not a number.
+- **+ Add row** adds a blank row at the bottom; **✕** removes a row; **Sort by MP** puts the
+  rows in milepost order.
+- **Paste rows…** takes rows copied from Excel (or typed, one per line, values separated by
+  tabs or commas) in the table's column order. Tick **Replace all rows** to swap the whole
+  list, for example a pipe-size list from a spreadsheet.
+- Nothing changes until you click that list's **Save**; **Discard** throws the edits away.
+  The list shows "unsaved changes" until then.
+- **Booster stations:** a blank discharge, suction or flow uses the Booster spreads settings
+  above. "Which boosters run" is either *the optimizer decides* or *only the ticked ones*,
+  which adds a **Run** column to tick.
+- **BPCV:** untick "This line has a BPCV" and Save to remove it. **Elevation from profile**
+  fills in the ground elevation at the BPCV milepost from the scenario's profile.
+
 > **Watch out:** clicking **Apply** on the Job setup tab again rebuilds the inputs from the
 > answers. If you have split the pipe into several sizes on the Inputs tab, Apply puts it
 > back to one uniform size (it warns you when it does). So finish the Job setup first, then
