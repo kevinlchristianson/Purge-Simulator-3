@@ -217,6 +217,38 @@ def test_http_requires_token_and_local_host(server):
     assert server.token in html and "__APP_TOKEN__" not in html
 
 
+def test_http_phone_access_needs_key_off_the_pc():
+    app = App(assistant_client_factory=lambda: FakeClient([([_text("hi")], "end_turn")]))
+    httpd = app.serve(port=0, phone=True)
+    import threading
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    try:
+        assert app.token == settings.phone_key()          # same key on every launch
+        port = httpd.server_address[1]
+        lan = f"192.168.1.20:{port}"                      # how a phone names the PC
+
+        def get(path, host):
+            req = urllib.request.Request(app.url.rstrip("/") + path, headers={"Host": host})
+            try:
+                with urllib.request.urlopen(req, timeout=10) as r:
+                    return r.status, r.read().decode()
+            except urllib.error.HTTPError as e:
+                return e.code, e.read().decode()
+
+        assert get("/", lan)[0] == 403
+        assert get("/?key=wrong", lan)[0] == 403
+        code, html = get(f"/?key={app.token}", lan)
+        assert code == 200 and app.token in html
+        assert get("/", f"127.0.0.1:{port}")[0] == 200   # the PC's own browser needs no key
+        assert _call(app, "/api/state", host=lan)[0] == 200
+        assert _call(app, "/api/state", token=False, host=lan)[0] == 403
+        code, ph = _call(app, "/api/phone")
+        assert code == 200 and ph["enabled"] and ph["url"].endswith(f":{port}/?key={app.token}")
+    finally:
+        app.shutdown()
+        httpd.server_close()
+
+
 def test_http_guide_tab_serves_user_guide(server):
     code, g = _call(server, "/api/guide")
     assert code == 200 and g["markdown"].startswith("# Purge Simulator")

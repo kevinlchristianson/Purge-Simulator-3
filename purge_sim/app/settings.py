@@ -62,6 +62,19 @@ def elevation_ask_first() -> bool:
     return bool(_read().get("elevation_ask_first", False))
 
 
+def phone_key() -> str:
+    """The key in the phone link (python app.py --phone). Made once and kept, so a
+    bookmark on the phone keeps working from one launch to the next."""
+    data = _read()
+    key = data.get("phone_key")
+    if not isinstance(key, str) or len(key) < 20:
+        import secrets
+        key = secrets.token_urlsafe(18)
+        data["phone_key"] = key
+        _write(data)
+    return key
+
+
 def public_view() -> dict:
     """Settings as shown to the UI: never includes the key itself."""
     key = api_key()
