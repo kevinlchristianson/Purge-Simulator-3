@@ -87,6 +87,9 @@ purge_sim/
                          Job setup tab and the assistant's set_job_setup both use it
     server.py          — JSON API + page; 127.0.0.1 only, Host check, per-launch token
     importers.py       — new scenario from ILI / KMZ / TXT / Excel via data/ parsers
+    client_report.py   — client web page export: one self-contained .html per run (summary,
+                         profile scrubber, charts, job basis, FILL REPORT table), layout in
+                         static/report_template.html. Reports tab also zips every deliverable
     gis.py             — Map tab geometry: milepost per route vertex (route_latlon scaled to the
                          profile's milepost span), stations/CVs/boosters/BPCV placed on it, and
                          route_from_file() to add a KMZ route to a scenario without one (direction

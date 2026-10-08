@@ -297,11 +297,23 @@ Also check:
 - Saved scenarios go to `PurgeSimScenarios` in your home folder (shared with the older
   desktop app). Reports go to a new dated folder under `PurgeSimOutputs` every time, so
   earlier variants are never overwritten.
-- **Reports tab:** *Client report* (FILL REPORT table + charts, xlsx) for the client,
-  *Full technical report* (7 sheets) for your own record, *Run log*, and the *Profile
-  animation* GIF (slowest to make).
-- Exports describe the latest run. Check the yellow "Inputs changed" warning is gone before
-  exporting.
+- **Reports tab, Download all reports (zip):** one click writes every deliverable for the
+  run and downloads them as one zip: the client web page, both xlsx reports, the run log,
+  the profile animation GIF and the scenario file that produced the run. Untick *Include
+  the profile animation* when you want it fast (the GIF is the slowest part).
+- **Client web page (html):** a single file the client opens in any browser, with no
+  internet and nothing to install. It shows the headline results and any flags, a pipeline
+  profile they can scrub or play through the run (N2 and liquid pressure, MOP, elevation,
+  pump station status), the four charts with hover readouts, the job basis, stations and
+  valves, and the 50-point FILL REPORT table. It prints cleanly (Ctrl+P, or save as PDF).
+  Your scenario notes are **left off** unless you tick *Put the scenario notes on the client
+  web page*, because notes often carry internal tender reasoning.
+- **One at a time:** *Client web page*, *Client report* (FILL REPORT table + charts, xlsx)
+  for the client, *Full technical report* (7 sheets) for your own record, *Run log*, and the
+  *Profile animation* GIF.
+- Exports describe the latest run, using the inputs it was run with, even if you edited
+  the scenario since. Check the yellow "Inputs changed" warning is gone before exporting
+  if you want your edits in the reports.
 
 ---
 
