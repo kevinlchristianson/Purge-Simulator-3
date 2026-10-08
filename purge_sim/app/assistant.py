@@ -97,7 +97,11 @@ of it. Use the user's words only: leave a question out rather than guess, so its
 documented default applies and is reported as an assumption. "MOP 900 at all points" is \
 mop_basis flat + mop_psig 900; "drive capped at 500" is max_drive_psig 500; "to tankage \
 at the endpoint" is exit_type tankage with the pig stop as the exit; a pig that stops \
-short of where the product leaves is fluid_exit_mp.
+short of where the product leaves sets the hydraulic endpoint, fluid_exit_mp (or \
+fluid_exit_at_profile_end true when it's the end of the profile). Product delivered into \
+a downstream pump station's suction is exit_type pump_station. An endpoint that lets its \
+pressure float down is exit_behavior modulating with exit_min_pressure_psig; the engine \
+doesn't model that yet and still holds exit_pressure_psig, so say so.
 2. Never invent an answer to a required question (pipe size, product, MOP). If one is \
 missing, ask for it.
 3. Reply with the setup in two or three lines, then the assumptions it reported as one \
