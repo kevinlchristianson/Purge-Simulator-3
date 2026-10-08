@@ -10,6 +10,7 @@ hard-rule checks apply to both.
 
 from __future__ import annotations
 
+import copy
 import dataclasses
 import glob
 import json
@@ -17,6 +18,7 @@ import os
 import re
 import threading
 import time
+import zipfile
 import traceback
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional
@@ -390,6 +392,7 @@ class Workspace:
         self.results: Optional[SimResults] = None
         self.results_for: Optional[str] = None   # scenario name the results belong to
         self.results_stale = False
+        self.results_scenario: Optional[Scenario] = None   # the inputs that produced self.results
         self.job = {"state": "idle", "progress": 0.0, "message": "", "error": None, "started": None}
         self.revision = 0   # bumps on every change, so the UI knows to refresh
 
@@ -638,6 +641,7 @@ class Workspace:
                 raise InputError("a simulation is already running")
             cfg = build_sim_config(sc.inputs)
             name = sc.meta.name
+            snapshot = copy.deepcopy(sc)   # what the reports describe, even if edited later
             self.job = {"state": "running", "progress": 0.0, "message": f"Simulating {name}",
                         "error": None, "started": time.time()}
             self.revision += 1
@@ -657,6 +661,7 @@ class Workspace:
             raise
         with self.lock:
             self.results, self.results_for, self.results_stale = res, name, False
+            self.results_scenario = snapshot
             self.job.update(state="done", progress=1.0,
                             message="Complete" if res.completed else f"Aborted: {res.abort_reason}")
             self.revision += 1
@@ -781,16 +786,40 @@ class Workspace:
 
     # ---- exports ------------------------------------------------------------------
 
-    def export(self, kind: str) -> str:
-        """Write a deliverable to a fresh, timestamped folder; return its path."""
+    EXPORT_KINDS = ("formatted", "full", "log", "gif", "html")
+
+    def export(self, kind: str, include_notes: bool = False, include_gif: bool = True) -> str:
+        """Write a deliverable to a fresh, timestamped folder; return its path.
+        kind 'all' writes every report, the client HTML page and the scenario JSON, then
+        zips them; the zip's path is returned. include_notes puts the scenario notes on the
+        client HTML page (off by default: notes often hold internal tender context)."""
         res = self.require_results()
+        if kind not in self.EXPORT_KINDS + ("all",):
+            raise InputError(f"unknown export kind {kind!r}")
         name = safe_name(self.results_for or "run")
         stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
         out_dir = os.path.join(paths.outputs_dir(), name, stamp)
         os.makedirs(out_dir, exist_ok=True)
-        sc = self.scenario
-        pi = {"project": name, "notes": sc.meta.notes if sc else "",
-              "date": datetime.now().strftime("%Y-%m-%d")}
+        if kind != "all":
+            return self._export_one(kind, res, out_dir, name, include_notes)
+        files = [self._export_one(k, res, out_dir, name, include_notes)
+                 for k in self.EXPORT_KINDS if include_gif or k != "gif"]
+        if self.results_scenario is not None:
+            path = os.path.join(out_dir, f"{name}_scenario.json")
+            save_scenario(self.results_scenario, path)
+            files.append(path)
+        zpath = os.path.join(out_dir, f"{name}_all_reports.zip")
+        with zipfile.ZipFile(zpath, "w", zipfile.ZIP_DEFLATED) as z:
+            for f in files:
+                z.write(f, os.path.basename(f))
+        return zpath
+
+    def _export_one(self, kind: str, res: SimResults, out_dir: str, name: str, include_notes: bool) -> str:
+        sc = self.results_scenario or self.scenario
+        notes = sc.meta.notes if sc else ""
+        pi = {"project": name, "notes": notes, "date": datetime.now().strftime("%Y-%m-%d")}
+        if sc and sc.inputs.fluid_name:
+            pi["fluid_name"] = sc.inputs.fluid_name
         if kind == "formatted":
             from ..engine.formatted_report import export_formatted_report
             path = os.path.join(out_dir, f"{name}_formatted.xlsx")
@@ -807,6 +836,12 @@ class Workspace:
             from ..engine.animation import generate_animation
             path = os.path.join(out_dir, f"{name}_profile.gif")
             generate_animation(res, res.config, out_gif=path, out_mp4=None, scenario_name=name)
+        elif kind == "html":
+            from .client_report import export_client_html
+            path = os.path.join(out_dir, f"{name}.html")
+            export_client_html(res, path, scenario_name=sc.meta.name if sc else name,
+                               inputs=sc.inputs if sc else None,
+                               notes=notes if include_notes else "", date=pi["date"])
         else:
             raise InputError(f"unknown export kind {kind!r}")
         return path
