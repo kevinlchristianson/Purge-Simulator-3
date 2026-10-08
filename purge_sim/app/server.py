@@ -28,6 +28,7 @@ from .importers import ElevationConfirmNeeded
 from .workspace import InputError, Workspace, inputs_summary, results_series, results_summary
 
 MAX_UPLOAD_BYTES = 200 * 1024 * 1024
+PLAY_FRAMES = 240     # Pipeline profile / Map slider positions, evenly spaced in elapsed time
 STATIC_TYPES = {".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8",
                 ".png": "image/png", ".svg": "image/svg+xml", ".txt": "text/plain; charset=utf-8"}
 
@@ -116,7 +117,8 @@ class App:
             return 200, {"ok": True}
         if route == ("GET", "/api/results"):
             res = ws.require_results()
-            return 200, {"summary": results_summary(res), "series": results_series(res)}
+            return 200, {"summary": results_summary(res), "series": results_series(res),
+                         "play_steps": res.time_frame_indices(PLAY_FRAMES)}
         if route == ("GET", "/api/results/profile"):
             return 200, ws.profile_at(int(q.get("step", 0)))
         if route == ("POST", "/api/export"):

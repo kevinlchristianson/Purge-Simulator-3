@@ -309,6 +309,30 @@ class SimResults:
     def pig_face_pressure_history(self) -> List[float]:
         return [s.pig_face_psig for s in self.steps]
 
+    def time_frame_indices(self, n_frames: int) -> List[int]:
+        """Step indices for an animation with frames evenly spaced in elapsed time.
+
+        Steps are not even in time (sub-second at launch, up to 5 min later), so picking
+        every k-th step spends most of the playback on the first minutes. This picks the
+        step nearest each of n_frames evenly spaced times; first and last step always in.
+        """
+        return time_frame_indices([s.t_hr for s in self.steps], n_frames)
+
+
+def time_frame_indices(times_hr: List[float], n_frames: int) -> List[int]:
+    """Indices into times_hr (ascending) nearest n_frames evenly spaced times, deduplicated."""
+    n = len(times_hr)
+    if n == 0:
+        return []
+    if n <= n_frames:
+        return list(range(n))
+    t = np.asarray(times_hr, dtype=float)
+    tgt = np.linspace(t[0], t[-1], max(2, n_frames))
+    hi = np.clip(np.searchsorted(t, tgt), 1, n - 1)
+    lo = hi - 1
+    idx = np.where(np.abs(t[lo] - tgt) <= np.abs(t[hi] - tgt), lo, hi)
+    return sorted(set(int(i) for i in idx) | {0, n - 1})
+
 
 # ---------------------------------------------------------------------------
 # Main simulator

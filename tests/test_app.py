@@ -160,6 +160,17 @@ def test_delete_scenarios_from_library():
         ws.delete_scenario("user:../outside.json")
 
 
+def test_time_frame_indices_even_in_time():
+    from purge_sim.engine.simulator import time_frame_indices
+    # 100 tiny launch steps then 10 one-hour steps: by step index 90% of frames would be
+    # the first hundredth of an hour; by time they spread across the run
+    t = [i * 1e-4 for i in range(100)] + [0.01 + h for h in range(1, 11)]
+    idx = time_frame_indices(t, 11)
+    assert idx[0] == 0 and idx[-1] == len(t) - 1
+    assert sum(1 for i in idx if t[i] < 0.5) <= 2 and len(idx) >= 10
+    assert time_frame_indices(t[:5], 11) == [0, 1, 2, 3, 4] and time_frame_indices([], 5) == []
+
+
 def test_client_html_and_all_reports_zip():
     import zipfile
     ws = Workspace()
@@ -400,6 +411,8 @@ def test_http_load_edit_run_export_chat(server):
     assert st["job"]["state"] == "done" and st["has_results"]
     code, res = _call(server, "/api/results")
     assert code == 200 and res["summary"]["completed"] and len(res["series"]["pig_mp"]) > 10
+    ps = res["play_steps"]                     # Play/slider frames: even in elapsed time
+    assert ps[0] == 0 and ps[-1] == res["summary"]["steps"] - 1 and ps == sorted(set(ps))
     code, exp = _call(server, "/api/export", {"kind": "log"})
     assert code == 200 and os.path.isfile(exp["path"])
     assert _call(server, "/api/chat", {"message": "hello"})[0] == 200
