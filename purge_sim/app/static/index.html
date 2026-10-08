@@ -1073,7 +1073,6 @@ function renderCharts() {
   // elevation under the pig: along the route on the milepost charts, over time on the time charts
   const elev = name => showElev && hasElev ? [{name, y: pigElev, color: "var(--ground)", axis: "elev", width: 1.2, fill: true}] : [];
   const faceHgl = s.pig_face_psig.map((p, i) => p == null || pigElev[i] == null ? null : pigElev[i] + p / grad);
-  const n = S.results.summary.steps;
   el.innerHTML =
     `<div class="card" style="display:flex;gap:16px;align-items:center;flex-wrap:wrap">
        <label class="small"><input type="checkbox" id="chElev" ${showElev ? "checked" : ""} ${hasElev ? "" : "disabled"}> Show elevation profile on each chart (right axis, ft)</label>
@@ -1090,11 +1089,11 @@ function renderCharts() {
      <div class="card"><b>Pig position over time</b>${lineChart({x: s.t_hr, xLabel: "Hours", yLabel: "Milepost",
        series: [{name: "Pig MP", y: s.pig_mp, color: "var(--s1)"}, ...elev("Elevation under pig (ft)")]})}</div>
      ${hasElev ? `<div class="card"><b>Hydraulic grade line</b>
-       <div style="display:flex;gap:10px;align-items:center"><input type="range" id="chHglStep" min="0" max="${n - 1}" value="${S.profileStep}" style="flex:1"></div>
+       <div style="display:flex;gap:10px;align-items:center"><input type="range" id="chHglStep" min="0" max="${playSteps().length - 1}" value="${playFrame()}" style="flex:1"></div>
        <div class="small muted" id="chHglInfo"></div><div id="chHgl"></div></div>` : ""}`;
   $("#chElev").onchange = () => { setChartPref("elev", $("#chElev").checked ? "1" : "0"); renderCharts(); };
   if (!hasElev) return;
-  $("#chHglStep").oninput = () => { S.profileStep = +$("#chHglStep").value; clearTimeout(profileTimer); profileTimer = setTimeout(drawChartHgl, 60); };
+  $("#chHglStep").oninput = () => { S.profileStep = playSteps()[+$("#chHglStep").value]; clearTimeout(profileTimer); profileTimer = setTimeout(drawChartHgl, 60); };
   drawChartHgl();
 }
 async function drawChartHgl() {
@@ -1118,25 +1117,40 @@ function hglHeadChart(p) {
 
 // ---------------------------------------------------------------- profile (live HGL scrubber)
 let profileTimer;
+// The profile, map and HGL sliders move over play_steps: run steps evenly spaced in elapsed
+// time. Steps themselves are not (sub-second at launch, minutes later), so stepping by step
+// index would spend most of Play on the first minutes of a lean run.
+function playSteps() {
+  const ps = S.results && S.results.play_steps;
+  return ps && ps.length ? ps : Array.from({length: S.results ? S.results.summary.steps : 1}, (_, i) => i);
+}
+function playFrame() {   // slider position nearest the current step
+  const ps = playSteps(); let k = 0;
+  for (let i = 1; i < ps.length; i++) if (Math.abs(ps[i] - S.profileStep) < Math.abs(ps[k] - S.profileStep)) k = i;
+  return k;
+}
+function bindPlay(btnSel, sliderSel, tab, draw) {
+  $(sliderSel).oninput = () => { S.profileStep = playSteps()[+$(sliderSel).value]; clearTimeout(profileTimer); profileTimer = setTimeout(draw, 60); };
+  let playing = null;
+  $(btnSel).onclick = () => {
+    if (playing) { clearInterval(playing); playing = null; $(btnSel).textContent = "Play"; return; }
+    const ps = playSteps(), stride = Math.max(1, Math.round(ps.length / 120));
+    let k = playFrame(); if (k >= ps.length - 1) k = 0;
+    $(btnSel).textContent = "Pause";
+    playing = setInterval(async () => {
+      if (S.tab !== tab || !$(sliderSel)) { clearInterval(playing); return; }
+      k = Math.min(ps.length - 1, k + stride); S.profileStep = ps[k]; $(sliderSel).value = k; await draw();
+      if (k >= ps.length - 1) { clearInterval(playing); playing = null; $(btnSel).textContent = "Play"; }
+    }, 250);
+  };
+}
 function renderProfile() {
   const el = $("#tab-profile");
   if (!S.results) { el.innerHTML = `<div class="empty">Run the scenario to scrub through the pipeline profile.</div>`; return; }
-  const n = S.results.summary.steps;
   el.innerHTML = `<div class="card"><div style="display:flex;gap:10px;align-items:center">
-      <button id="pfPlay">Play</button><input type="range" id="pfStep" min="0" max="${n - 1}" value="${S.profileStep}"></div>
+      <button id="pfPlay">Play</button><input type="range" id="pfStep" min="0" max="${playSteps().length - 1}" value="${playFrame()}"></div>
       <div class="small muted" id="pfInfo"></div><div id="pfChart"></div><div id="pfStations" class="small"></div></div>`;
-  $("#pfStep").oninput = () => { S.profileStep = +$("#pfStep").value; clearTimeout(profileTimer); profileTimer = setTimeout(drawProfile, 60); };
-  let playing = null;
-  $("#pfPlay").onclick = () => {
-    if (playing) { clearInterval(playing); playing = null; $("#pfPlay").textContent = "Play"; return; }
-    $("#pfPlay").textContent = "Pause";
-    const stride = Math.max(1, Math.round(n / 120));
-    playing = setInterval(async () => {
-      if (S.tab !== "profile" || !$("#pfStep")) { clearInterval(playing); return; }
-      S.profileStep = Math.min(n - 1, S.profileStep + stride); $("#pfStep").value = S.profileStep; await drawProfile();
-      if (S.profileStep >= n - 1) { clearInterval(playing); playing = null; $("#pfPlay").textContent = "Play"; }
-    }, 250);
-  };
+  bindPlay("#pfPlay", "#pfStep", "profile", drawProfile);
   drawProfile();
 }
 async function drawProfile() {
@@ -1213,7 +1227,7 @@ async function renderMap() {
   if (M.geomKey !== geomKey) { M.map.fitBounds(d.bounds, {padding: [24, 24]}); M.geomKey = geomKey; }
   M.key = key;
   $("#mapScrub").hidden = !S.results;
-  if (S.results) { $("#mpStep").max = S.results.summary.steps - 1; $("#mpStep").value = S.profileStep; }
+  if (S.results) { $("#mpStep").max = playSteps().length - 1; $("#mpStep").value = playFrame(); }
   await drawMapStep();
 }
 function mapWarnings() { return (M.data.warnings || []).map(w => `<div class="flag warn small">${esc(w)}</div>`).join(""); }
@@ -1249,19 +1263,7 @@ function buildMap(el) {
   $("#mapColor").onchange = () => { setPref("color", $("#mapColor").value); drawMapStep(); };
   $("#mapBase").onchange = () => { setPref("base", $("#mapBase").value); setBasemap($("#mapBase").value); };
   $("#mapFit").onclick = () => M.map.fitBounds(M.data.bounds, {padding: [24, 24]});
-  $("#mpStep").oninput = () => { S.profileStep = +$("#mpStep").value; clearTimeout(profileTimer); profileTimer = setTimeout(drawMapStep, 60); };
-  let playing = null;
-  $("#mpPlay").onclick = () => {
-    if (playing) { clearInterval(playing); playing = null; $("#mpPlay").textContent = "Play"; return; }
-    const n = S.results.summary.steps, stride = Math.max(1, Math.round(n / 120));
-    if (S.profileStep >= n - 1) S.profileStep = 0;
-    $("#mpPlay").textContent = "Pause";
-    playing = setInterval(async () => {
-      if (S.tab !== "map" || !$("#mpStep")) { clearInterval(playing); return; }
-      S.profileStep = Math.min(n - 1, S.profileStep + stride); $("#mpStep").value = S.profileStep; await drawMapStep();
-      if (S.profileStep >= n - 1) { clearInterval(playing); playing = null; $("#mpPlay").textContent = "Play"; }
-    }, 250);
-  };
+  bindPlay("#mpPlay", "#mpStep", "map", drawMapStep);
 }
 
 function setBasemap(k) {

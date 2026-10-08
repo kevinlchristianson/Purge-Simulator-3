@@ -151,6 +151,7 @@ def generate_animation(
     out_mp4: Optional[str] = None,
     phases: Optional[List[Tuple[float, float, str]]] = None,
     mp_step: float = 3.0,
+    n_frames: Optional[int] = None,
     figsize: Tuple[float, float] = (12, 7),
     dpi: int = 96,
     frame_ms: int = 450,
@@ -174,7 +175,8 @@ def generate_animation(
         out_gif:       Output .gif path — purge-section view (always produced)
         out_mp4:       Optional .mp4 path; skipped silently if no encoder available
         phases:        [(start_mp, end_mp, annotation), ...]; auto-detected if None
-        mp_step:       Miles between animation frames
+        mp_step:       Route miles per frame; sets the frame count when n_frames is None
+        n_frames:      Number of frames, evenly spaced in elapsed time
         figsize:       matplotlib figure size in inches (width, height)
         dpi:           Render resolution
         frame_ms:      Display time per GIF frame in milliseconds
@@ -219,18 +221,13 @@ def generate_animation(
     if phases is None:
         phases = _auto_phases(results, cfg)
 
-    # --- Sample steps at mp_step intervals ----------------------------------
-    tgts = list(np.arange(cfg.purge_start_mp, cfg.purge_end_mp + mp_step, mp_step))
-    if not tgts or abs(tgts[-1] - cfg.purge_end_mp) > 0.01:
-        tgts.append(cfg.purge_end_mp)
-
-    seen: set = set()
-    sample: list = []
-    for t in tgts:
-        st = min(results.steps, key=lambda s, _t=t: abs(s.pig_mp - _t))
-        if id(st) not in seen:
-            seen.add(id(st))
-            sample.append(st)
+    # --- Sample steps evenly in elapsed time ---------------------------------
+    # One frame per mp_step miles of route sets the frame count; the frames themselves
+    # are evenly spaced in time, so playback runs at a constant hours-per-second instead
+    # of rushing through slow stretches (or, sampled by step, stalling on the launch).
+    if n_frames is None:
+        n_frames = int(np.ceil((cfg.purge_end_mp - cfg.purge_start_mp) / mp_step)) + 1
+    sample = [results.steps[i] for i in results.time_frame_indices(max(2, n_frames))]
 
     # --- Detect partial purge (elevation data wider than purge section) -----
     ep_mp = np.asarray(cfg.elevation_profile, dtype=float)[:, 0]

@@ -134,7 +134,7 @@ def _profile(res: SimResults) -> dict:
         mop = [_r(v, 0) for v in np.interp(grid, jm[order], jp[order])]
     elev_at = elevation_lookup(ep) if ep.size else None
     steps = res.steps
-    idx = sorted(set(np.round(np.linspace(0, len(steps) - 1, PROFILE_FRAMES)).astype(int))) if steps else []
+    idx = res.time_frame_indices(PROFILE_FRAMES)   # evenly spaced in elapsed time
     frames = []
     for i in idx:
         s = steps[i]
