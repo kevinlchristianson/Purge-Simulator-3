@@ -1,0 +1,308 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>__REPORT_TITLE__ · Nitrogen purge simulation</title>
+<!-- Client report written by Purge Simulator (purge_sim/app/client_report.py fills in the data).
+     Self-contained: no external files, works offline, prints on letter/A4. -->
+<style>
+:root {
+  --bg: #f4f6f9; --panel: #ffffff; --panel-2: #eef1f5; --border: #dce1e8;
+  --text: #17202c; --muted: #5b6676; --accent: #1f4e8c; --hero: #16325c; --hero-text: #ffffff;
+  --good: #1a7f37; --warn: #9a6700; --bad: #cf222e;
+  --gas: #1f6feb; --liquid: #1a7f37; --mop: #cf222e; --ground: #8c7a5b; --s2: #d4580b; --s4: #8250df;
+  --grid: #e6e9ee; --shadow: 0 1px 3px rgba(16,24,40,.08);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f1318; --panel: #161b22; --panel-2: #1c232c; --border: #2d3540;
+    --text: #e6edf3; --muted: #9aa6b4; --accent: #6ea8fe; --hero: #0f2747; --hero-text: #e6edf3;
+    --good: #3fb950; --warn: #d29922; --bad: #f85149;
+    --gas: #4493f8; --liquid: #3fb950; --mop: #f85149; --ground: #b3a17e; --s2: #f0883e; --s4: #a371f7;
+    --grid: #232a33; --shadow: none;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f1318; --panel: #161b22; --panel-2: #1c232c; --border: #2d3540;
+  --text: #e6edf3; --muted: #9aa6b4; --accent: #6ea8fe; --hero: #0f2747; --hero-text: #e6edf3;
+  --good: #3fb950; --warn: #d29922; --bad: #f85149;
+  --gas: #4493f8; --liquid: #3fb950; --mop: #f85149; --ground: #b3a17e; --s2: #f0883e; --s4: #a371f7;
+  --grid: #232a33; --shadow: none;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: var(--bg); color: var(--text); font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+.hero { background: var(--hero); color: var(--hero-text); padding: 28px 16px 22px; }
+.wrap { max-width: 1080px; margin: 0 auto; padding: 0 16px; }
+.hero .wrap { padding: 0; }
+.eyebrow { text-transform: uppercase; letter-spacing: .08em; font-size: 12px; opacity: .8; }
+h1 { font-size: 28px; line-height: 1.2; margin: 6px 0 6px; overflow-wrap: anywhere; }
+.hero .sub { opacity: .85; font-size: 14px; }
+nav { position: sticky; top: 0; z-index: 5; background: var(--panel); border-bottom: 1px solid var(--border); }
+nav .wrap { display: flex; gap: 4px; overflow-x: auto; }
+nav a { color: var(--muted); text-decoration: none; padding: 10px 10px; font-size: 14px; white-space: nowrap; border-bottom: 2px solid transparent; }
+nav a:hover { color: var(--text); border-bottom-color: var(--accent); }
+section { padding: 22px 0 6px; scroll-margin-top: 44px; }
+h2 { font-size: 19px; margin: 0 0 10px; }
+.card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; box-shadow: var(--shadow); margin-bottom: 14px; }
+.card h3 { font-size: 15px; margin: 0 0 6px; }
+.muted { color: var(--muted); } .small { font-size: 13px; }
+.kpis { display: grid; grid-template-columns: repeat(auto-fill, minmax(165px, 1fr)); gap: 10px; margin-bottom: 12px; }
+.kpi { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 11px 13px; box-shadow: var(--shadow); }
+.kpi .v { font-size: 22px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.kpi .l { font-size: 12.5px; color: var(--muted); }
+.flag { padding: 9px 12px; border-radius: 8px; margin: 6px 0; border: 1px solid; font-size: 14px; }
+.flag.bad { border-color: var(--bad); color: var(--bad); }
+.flag.good { border-color: var(--good); color: var(--good); }
+.flag.warn { border-color: var(--warn); color: var(--warn); }
+.legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 13px; color: var(--muted); margin: 2px 0 4px; }
+.legend i { display: inline-block; width: 14px; height: 3px; vertical-align: middle; margin-right: 6px; border-radius: 2px; }
+.legend i.dash { background: repeating-linear-gradient(90deg, currentColor 0 5px, transparent 5px 8px) !important; }
+.chart { position: relative; }
+.chart svg { display: block; width: 100%; height: auto; }
+.chart text { fill: var(--muted); font-size: 11px; font-family: inherit; }
+.tip { position: absolute; pointer-events: none; background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px; font-size: 12px; box-shadow: 0 2px 8px rgba(0,0,0,.15); white-space: nowrap; display: none; z-index: 2; }
+.tip b { font-variant-numeric: tabular-nums; }
+.controls { display: flex; gap: 10px; align-items: center; margin-bottom: 6px; }
+.controls input[type=range] { flex: 1; min-width: 0; accent-color: var(--accent); }
+button { font: inherit; color: var(--text); background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px; padding: 5px 14px; cursor: pointer; }
+button:hover { border-color: var(--accent); }
+.readout { font-size: 13.5px; color: var(--muted); min-height: 20px; font-variant-numeric: tabular-nums; }
+.readout b { color: var(--text); }
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 14px; }
+.scroll { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: 13px; }
+th, td { border-bottom: 1px solid var(--border); padding: 5px 8px; text-align: left; vertical-align: top; }
+th { color: var(--muted); font-weight: 600; }
+td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+table.basis th { width: 34%; }
+table.fill thead th { position: sticky; top: 0; background: var(--panel); font-size: 12px; }
+table.fill tbody tr:nth-child(even) td { background: var(--panel-2); }
+tr.viol td { color: var(--bad); font-weight: 600; }
+tr.slack td.speed { background: color-mix(in srgb, var(--bad) 22%, transparent) !important; }
+.pill { display: inline-block; font-size: 12px; padding: 1px 8px; border-radius: 10px; border: 1px solid var(--border); }
+.pill.running { border-color: var(--liquid); color: var(--liquid); }
+.pill.shutdown { color: var(--muted); }
+.notes { white-space: pre-wrap; font-size: 14px; }
+footer { color: var(--muted); font-size: 12.5px; padding: 18px 0 34px; }
+@media (max-width: 600px) { h1 { font-size: 22px; } .kpi .v { font-size: 19px; } }
+@media print {
+  :root { --bg: #fff; --panel: #fff; --shadow: none; }
+  body { font-size: 12px; }
+  nav, .controls, .noprint { display: none !important; }
+  .hero { -webkit-print-color-adjust: exact; print-color-adjust: exact; padding: 16px; }
+  .card, .kpi, tr { break-inside: avoid; }
+  section { padding-top: 10px; }
+  .scroll { overflow: visible; }
+}
+</style>
+</head>
+<body>
+<header class="hero"><div class="wrap">
+  <div class="eyebrow">Nitrogen purge simulation</div>
+  <h1 id="title"></h1>
+  <div class="sub" id="sub"></div>
+</div></header>
+<nav><div class="wrap">
+  <a href="#summary">Summary</a><a href="#profile">Pipeline profile</a><a href="#charts">Charts</a>
+  <a href="#basis">Job basis</a><a href="#fill">Fill report</a><a href="#notes" id="navNotes" hidden>Notes</a>
+</div></nav>
+<main class="wrap">
+  <section id="summary"><h2>Summary</h2><div id="kpis" class="kpis"></div><div id="flags"></div><div id="boosters"></div></section>
+  <section id="profile"><h2>Pipeline profile</h2>
+    <div class="card">
+      <p class="small muted" style="margin:0 0 8px">Pressure along the whole line at one moment of the purge: nitrogen behind the pig, liquid ahead of it, with ground elevation on the right-hand axis. Drag the slider or press Play to step through the run.</p>
+      <div class="controls"><button id="play">Play</button><input type="range" id="step" min="0" max="0" value="0" aria-label="Time in the run"></div>
+      <div class="readout" id="readout"></div>
+      <div class="legend" id="pfLegend"></div>
+      <div class="chart" id="pfChart"></div>
+      <div id="pfStations" class="scroll"></div>
+    </div>
+  </section>
+  <section id="charts"><h2>Charts</h2><div id="chartList"></div></section>
+  <section id="basis"><h2>Job basis</h2><div class="grid2">
+    <div class="card"><h3>Inputs</h3><table class="basis" id="basisTable"></table></div>
+    <div class="card"><h3>Stations and valves</h3><div id="facilities"></div></div>
+  </div></section>
+  <section id="fill"><h2>Fill report</h2>
+    <div class="card"><p class="small muted" style="margin:0 0 8px">Evenly spaced points along the run (the same table as the FILL REPORT workbook). Red rows exceed MOP; a shaded speed cell marks slack-line risk.</p>
+    <div class="scroll"><table class="fill" id="fillTable"></table></div></div>
+  </section>
+  <section id="notes" hidden><h2>Notes</h2><div class="card notes" id="notesBody"></div></section>
+  <footer id="foot"></footer>
+</main>
+<script type="application/json" id="report-data">__REPORT_DATA__</script>
+<script>
+"use strict";
+const D = JSON.parse(document.getElementById("report-data").textContent);
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
+const fmt = (v, nd = 0) => v == null || !isFinite(v) ? "—" : Number(v).toLocaleString("en-US", {minimumFractionDigits: nd, maximumFractionDigits: nd});
+const S = D.summary || {}, SE = D.series || {}, P = D.profile || {frames: []};
+
+// ---------------------------------------------------------------- header + summary
+$("#title").textContent = D.title;
+const route = (D.basis.find(r => r[0] === "Route") || [])[1] || "";
+$("#sub").textContent = [route, "Prepared " + D.date].filter(Boolean).join(" · ");
+const kpi = (v, l) => `<div class="kpi"><div class="v">${v}</div><div class="l">${esc(l)}</div></div>`;
+$("#kpis").innerHTML = [
+  kpi(fmt(S.n2_total_fresh_scf), "Total N2 (SCF)"),
+  kpi(fmt(S.duration_hr, 1), "Duration (hours)"),
+  kpi(fmt(S.pig_speed_mph && S.pig_speed_mph.avg, 2), "Average pig speed (mph)"),
+  kpi(`${fmt(S.pig_speed_mph && S.pig_speed_mph.min, 2)} – ${fmt(S.pig_speed_mph && S.pig_speed_mph.max, 2)}`, "Pig speed range (mph)"),
+  kpi(fmt(S.pig_face_psig && S.pig_face_psig.max), "Peak N2 drive (psig)"),
+  kpi(fmt(S.injection_psig_max), "Peak injection (psig)"),
+  kpi(S.worst_mop_margin_psig == null ? "—" : fmt(S.worst_mop_margin_psig), "Smallest MOP margin (psi)"),
+  kpi(fmt(S.n2_vented_scf), "N2 vented (SCF)"),
+].join("");
+const flags = S.flags || [];
+$("#flags").innerHTML = flags.length ? flags.map(f => `<div class="flag bad">${esc(f)}</div>`).join("")
+  : `<div class="flag good">The run completed to MP ${fmt(S.final_mp, 2)} with no N2 venting, no slack-line risk and no MOP exceedance.</div>`;
+if (S.booster_plan && S.booster_plan.sites_mp.length)
+  $("#boosters").innerHTML = `<div class="card"><h3>N2 booster plan</h3><div class="small">${S.booster_plan.sites_mp.map(m => "MP " + fmt(m, 2)
+    + (S.booster_plan.reasons[String(m)] ? ": " + esc(S.booster_plan.reasons[String(m)]) : "")).join("<br>")}</div></div>`;
+
+// ---------------------------------------------------------------- charts (inline SVG)
+function niceTicks(lo, hi, n) {
+  if (!(hi > lo)) hi = lo + 1;
+  const step0 = (hi - lo) / n, mag = Math.pow(10, Math.floor(Math.log10(step0)));
+  const step = [1, 2, 2.5, 5, 10].map(m => m * mag).find(s => s >= step0) || step0;
+  const out = []; for (let v = Math.ceil(lo / step) * step; v <= hi + step * 1e-9; v += step) out.push(+v.toFixed(10));
+  return out;
+}
+const tickFmt = t => fmt(t, Math.abs(t) < 10 && t % 1 ? 1 : 0);
+const css = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+
+// opts: {x, series: [{name, y, color, axis, dash, width, nd, unit}], xLabel, yLabel, y2Label, zeroBase, markers, height}
+function lineChart(el, opts) {
+  const W = Math.max(320, el.clientWidth || 900), H = opts.height || Math.round(Math.min(320, Math.max(220, W * 0.36)));
+  const right = opts.series.some(s => s.axis === "right");
+  const m = {l: 60, r: right ? 60 : 16, t: 14, b: 38};
+  const xs = opts.x.filter(v => v != null);
+  if (!xs.length) { el.innerHTML = `<p class="muted small">No data</p>`; return; }
+  const xlo = Math.min(...xs), xhi = Math.max(...xs);
+  const range = axis => {
+    let lo = Infinity, hi = -Infinity;
+    for (const s of opts.series) if ((s.axis || "left") === axis) for (const v of s.y) if (v != null) { lo = Math.min(lo, v); hi = Math.max(hi, v); }
+    if (!isFinite(lo)) return null; if (hi === lo) { hi += 1; lo -= 1; }
+    const pad = (hi - lo) * 0.06; return [opts.zeroBase && lo >= 0 ? 0 : lo - pad, hi + pad];
+  };
+  const L = range("left"), R = range("right");
+  const sx = v => m.l + (v - xlo) / ((xhi - xlo) || 1) * (W - m.l - m.r);
+  const sy = (v, r) => H - m.b - (v - r[0]) / (r[1] - r[0]) * (H - m.t - m.b);
+  let g = "";
+  for (const t of niceTicks(xlo, xhi, Math.max(4, Math.round(W / 110)))) g += `<line x1="${sx(t)}" x2="${sx(t)}" y1="${m.t}" y2="${H - m.b}" stroke="var(--grid)"/><text x="${sx(t)}" y="${H - m.b + 16}" text-anchor="middle">${tickFmt(t)}</text>`;
+  if (L) for (const t of niceTicks(L[0], L[1], 5)) g += `<line x1="${m.l}" x2="${W - m.r}" y1="${sy(t, L)}" y2="${sy(t, L)}" stroke="var(--grid)"/><text x="${m.l - 7}" y="${sy(t, L) + 4}" text-anchor="end">${tickFmt(t)}</text>`;
+  if (R) for (const t of niceTicks(R[0], R[1], 5)) g += `<text x="${W - m.r + 7}" y="${sy(t, R) + 4}">${tickFmt(t)}</text>`;
+  g += `<line x1="${m.l}" x2="${W - m.r}" y1="${H - m.b}" y2="${H - m.b}" stroke="var(--border)"/>`;
+  g += `<text x="${(m.l + W - m.r) / 2}" y="${H - 5}" text-anchor="middle">${esc(opts.xLabel || "")}</text>`;
+  if (opts.yLabel) g += `<text transform="translate(14 ${(H - m.b + m.t) / 2}) rotate(-90)" text-anchor="middle">${esc(opts.yLabel)}</text>`;
+  if (opts.y2Label) g += `<text transform="translate(${W - 8} ${(H - m.b + m.t) / 2}) rotate(90)" text-anchor="middle">${esc(opts.y2Label)}</text>`;
+  for (const s of opts.series) {
+    const r = (s.axis || "left") === "right" ? R : L; if (!r) continue;
+    const xv = s.x || opts.x;
+    let d = "", pen = false;
+    xv.forEach((x, i) => { const y = s.y[i]; if (x == null || y == null) { pen = false; return; } d += (pen ? "L" : "M") + sx(x).toFixed(1) + " " + sy(y, r).toFixed(1); pen = true; });
+    if (s.fill) d && (g += `<path d="${d} L${sx(xv[xv.length - 1]).toFixed(1)} ${H - m.b} L${sx(xv[0]).toFixed(1)} ${H - m.b} Z" fill="${s.color}" fill-opacity=".12" stroke="none"/>`);
+    g += `<path d="${d}" fill="none" stroke="${s.color}" stroke-width="${s.width || 1.8}" ${s.dash ? `stroke-dasharray="${s.dash}"` : ""} stroke-linejoin="round" stroke-linecap="round"/>`;
+  }
+  for (const mk of opts.markers || []) {
+    const c = mk.color || "var(--muted)";
+    g += `<line x1="${sx(mk.x)}" x2="${sx(mk.x)}" y1="${m.t}" y2="${H - m.b}" stroke="${c}" stroke-dasharray="${mk.solid ? "" : "3 3"}" stroke-width="${mk.solid ? 2 : 1}"/>`;
+    if (mk.label) g += `<text x="${sx(mk.x) + 4}" y="${m.t + 11 + (mk.row || 0) * 12}" style="fill:${c}">${esc(mk.label)}</text>`;
+  }
+  g += `<line class="hair" x1="0" x2="0" y1="${m.t}" y2="${H - m.b}" stroke="var(--muted)" visibility="hidden"/>`;
+  el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="${esc(opts.title || "")}">${g}</svg><div class="tip"></div>`;
+  // hover readout: values of every series at the nearest x
+  const svg = el.querySelector("svg"), tip = el.querySelector(".tip"), hair = el.querySelector(".hair");
+  const near = (arr, x) => { let lo = 0, hi = arr.length - 1; while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (arr[mid] <= x) lo = mid; else hi = mid; } return Math.abs(arr[lo] - x) <= Math.abs(arr[hi] - x) ? lo : hi; };
+  svg.onmousemove = e => {
+    const b = svg.getBoundingClientRect(), px = (e.clientX - b.left) * W / b.width;
+    if (px < m.l || px > W - m.r) { tip.style.display = "none"; hair.setAttribute("visibility", "hidden"); return; }
+    const x = xlo + (px - m.l) / (W - m.l - m.r) * (xhi - xlo);
+    const rows = opts.series.filter(s => s.name).map(s => { const xv = s.x || opts.x; const i = near(xv, x); const y = s.y[i];
+      return y == null || Math.abs(xv[i] - x) > (xhi - xlo) / 20 ? "" : `<div><i style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${s.color};margin-right:5px"></i>${esc(s.name)}: <b>${fmt(y, s.nd ?? 0)}</b>${s.unit ? " " + esc(s.unit) : ""}</div>`; }).join("");
+    hair.setAttribute("x1", px); hair.setAttribute("x2", px); hair.setAttribute("visibility", "visible");
+    tip.innerHTML = `<div class="muted">${esc(opts.xLabel)} ${fmt(x, opts.xnd ?? 2)}</div>${rows}`;
+    tip.style.display = "block";
+    const left = (px / W) * b.width; tip.style.left = (left > b.width * 0.6 ? left - tip.offsetWidth - 12 : left + 12) + "px"; tip.style.top = "8px";
+  };
+  svg.onmouseleave = () => { tip.style.display = "none"; hair.setAttribute("visibility", "hidden"); };
+}
+const legend = items => items.map(s => `<span><i class="${s.dash ? "dash" : ""}" style="background:${s.color};color:${s.color}"></i>${esc(s.name)}</span>`).join("");
+
+const CHARTS = [
+  {title: "Pressures along the route", note: "N2 drive at the pig face, N2 injection pressure, and pressure where the liquid leaves the line, plotted against pig position.",
+   opts: () => ({x: SE.pig_mp, xLabel: "Pig milepost", yLabel: "psig", series: [
+     {name: "Injection", y: SE.injection_psig, color: "var(--s2)", width: 3, unit: "psig"},
+     {name: "Pig face (N2 drive)", y: SE.pig_face_psig, color: "var(--gas)", unit: "psig"},
+     {name: "Exit", y: SE.exit_psig, color: "var(--liquid)", dash: "5 4", unit: "psig"}]})},
+  {title: "Pig speed along the route",
+   opts: () => ({x: SE.pig_mp, xLabel: "Pig milepost", yLabel: "mph", series: [{name: "Pig speed", y: SE.pig_speed_mph, color: "var(--gas)", nd: 2, unit: "mph"}]})},
+  {title: "Nitrogen over time", note: "N2 in the line (left axis) and the injection rate (right axis).",
+   opts: () => ({x: SE.t_hr, xLabel: "Hours", xnd: 1, yLabel: "SCF in line", y2Label: "Injection SCFM", zeroBase: true, series: [
+     {name: "N2 in line", y: SE.total_scf, color: "var(--s4)", unit: "SCF", fill: true},
+     {name: "Injection rate", y: SE.injection_scfm, color: "var(--s2)", axis: "right", unit: "SCFM"}]})},
+  {title: "Pig position over time",
+   opts: () => ({x: SE.t_hr, xLabel: "Hours", xnd: 1, yLabel: "Milepost", series: [{name: "Pig milepost", y: SE.pig_mp, color: "var(--gas)", nd: 2}]})},
+];
+$("#chartList").innerHTML = CHARTS.map((c, i) => `<div class="card"><h3>${esc(c.title)}</h3>${c.note ? `<div class="small muted">${esc(c.note)}</div>` : ""}<div class="legend" id="lg${i}"></div><div class="chart" id="ch${i}"></div></div>`).join("");
+function drawCharts() {
+  CHARTS.forEach((c, i) => { const o = c.opts(); o.title = c.title; $("#lg" + i).innerHTML = legend(o.series); lineChart($("#ch" + i), o); });
+}
+
+// ---------------------------------------------------------------- pipeline profile
+let frame = Math.max(0, Math.floor((P.frames.length - 1) / 2));
+function drawProfile() {
+  const f = P.frames[frame]; if (!f) { $("#pfChart").innerHTML = `<p class="muted small">No profile data</p>`; return; }
+  const gx = [], gy = [], lx = [], ly = [];
+  P.mp.forEach((x, i) => { if (x <= f.pig) { gx.push(x); gy.push(f.p[i]); } else { lx.push(x); ly.push(f.p[i]); } });
+  if (f.gas_end != null) { gx.push(f.pig); gy.push(f.gas_end); }
+  if (f.liq_start != null) { lx.unshift(f.pig); ly.unshift(f.liq_start); }
+  const series = [
+    {name: "N2 pressure (behind pig)", x: gx, y: gy, color: "var(--gas)", width: 2.2, unit: "psig"},
+    {name: "Liquid pressure (ahead of pig)", x: lx, y: ly, color: "var(--liquid)", width: 2.2, unit: "psig"}];
+  if (P.mop) series.push({name: "MOP", x: P.mp, y: P.mop, color: "var(--mop)", dash: "6 4", width: 1.3, unit: "psig"});
+  series.push({name: "Elevation", x: P.mp, y: P.elev, color: "var(--ground)", axis: "right", width: 1.3, unit: "ft", fill: true});
+  const markers = [{x: f.pig, label: "Pig", color: "var(--text)", solid: true}]
+    .concat((f.stations || []).map((s, k) => ({x: s.mp, label: s.name, row: 1 + (k % 2)})));
+  $("#pfLegend").innerHTML = legend(series);
+  lineChart($("#pfChart"), {x: P.mp, xLabel: "Milepost", yLabel: "psig", y2Label: "Elevation (ft)", series, markers, title: "Pipeline profile"});
+  $("#readout").innerHTML = `<b>${fmt(f.t, 1)} hr</b> into the run · pig at <b>MP ${fmt(f.pig, 2)}</b> moving <b>${fmt(f.speed, 2)} mph</b> · N2 drive <b>${fmt(f.face)} psig</b> · exit <b>${fmt(f.exit_psig)} psig</b> at MP ${fmt(f.exit_mp, 2)}`
+    + (f.slack ? ` · <span style="color:var(--bad)">slack-line risk</span>` : "");
+  $("#pfStations").innerHTML = (f.stations || []).length ? `<table style="margin-top:8px"><thead><tr><th>Pump station</th><th class="n">MP</th><th>Status at this moment</th></tr></thead><tbody>`
+    + f.stations.map(s => `<tr><td>${esc(s.name)}</td><td class="n">${fmt(s.mp, 2)}</td><td><span class="pill ${esc(s.status)}">${esc(s.status)}</span></td></tr>`).join("") + `</tbody></table>` : "";
+}
+const slider = $("#step");
+slider.max = Math.max(0, P.frames.length - 1); slider.value = frame;
+slider.oninput = () => { frame = +slider.value; drawProfile(); };
+let playing = null;
+$("#play").onclick = () => {
+  if (playing) { clearInterval(playing); playing = null; $("#play").textContent = "Play"; return; }
+  if (frame >= P.frames.length - 1) frame = 0;
+  $("#play").textContent = "Pause";
+  playing = setInterval(() => {
+    frame = Math.min(P.frames.length - 1, frame + 1); slider.value = frame; drawProfile();
+    if (frame >= P.frames.length - 1) { clearInterval(playing); playing = null; $("#play").textContent = "Play"; }
+  }, 220);
+};
+
+// ---------------------------------------------------------------- tables
+$("#basisTable").innerHTML = D.basis.map(([k, v]) => `<tr><th>${esc(k)}</th><td>${esc(v)}</td></tr>`).join("");
+$("#facilities").innerHTML = D.facilities.length
+  ? `<table><thead><tr><th>Type</th><th>Name</th><th class="n">MP</th></tr></thead><tbody>${D.facilities.map(f => `<tr><td>${esc(f.type)}</td><td>${esc(f.name)}</td><td class="n">${fmt(f.mp, 2)}</td></tr>`).join("")}</tbody></table>`
+  : `<p class="muted small">No pump stations, check valves or boosters on this route.</p>`;
+const FD = [3, 1, 2, 1, 1, 0, 0, 2];
+$("#fillTable").innerHTML = `<thead><tr>${D.fill.cols.map(c => `<th class="n">${esc(c)}</th>`).join("")}</tr></thead><tbody>`
+  + D.fill.rows.map(r => `<tr class="${r.flag}">${r.v.map((v, i) => `<td class="n${i === 7 ? " speed" : ""}">${fmt(v, FD[i] ?? 0)}</td>`).join("")}</tr>`).join("") + `</tbody>`;
+if (D.notes) { $("#notes").hidden = false; $("#navNotes").hidden = false; $("#notesBody").textContent = D.notes; }
+$("#foot").innerHTML = `Prepared ${esc(D.date)} with Purge Simulator. Results are simulation estimates based on the job basis listed above.`;
+
+function drawAll() { drawCharts(); drawProfile(); }
+drawAll();
+let rz; addEventListener("resize", () => { clearTimeout(rz); rz = setTimeout(drawAll, 120); });
+addEventListener("beforeprint", drawAll);
+</script>
+</body>
+</html>

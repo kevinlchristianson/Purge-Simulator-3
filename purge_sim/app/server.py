@@ -99,7 +99,9 @@ class App:
         if route == ("GET", "/api/results/profile"):
             return 200, ws.profile_at(int(q.get("step", 0)))
         if route == ("POST", "/api/export"):
-            out = ws.export(j().get("kind", ""))
+            b = j()
+            out = ws.export(b.get("kind", ""), include_notes=bool(b.get("include_notes")),
+                            include_gif=bool(b.get("include_gif", True)))
             return 200, {"path": out, "url": f"/api/download?path={quote(out)}&token={self.token}"}
         if route == ("GET", "/api/guide"):
             with open(paths.guide_path(), "r", encoding="utf-8") as f:
