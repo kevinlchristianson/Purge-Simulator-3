@@ -1,6 +1,8 @@
 {
   "meta": {
     "name": "Bridger THUNDERBIRD 10.75in - Pack-and-Coast (600psi pack, 3.5M budget), 3.5 mph cap",
+    "client": "Bridger Pipeline",
+    "pipeline": "Thunderbird 10in",
     "created_at": "2026-07-29T10:11:36",
     "modified_at": "2026-07-29T10:11:36",
     "notes": "Bridger THUNDERBIRD nitrogen purge. 10.75\" OD x 0.219\" WT, entire length (60.07 mi, Powder River Basin WY). Fluid: light sweet crude (ASSUMED API ~40, SG 0.82, 3.5 cSt - CONFIRM). Endpoint tankage, 50 psig min outlet (raised via meter valve to hold pig <=3.5 mph HARD cap). MOP envelope = 750 psig client max allowable drive (no grade/hydro/PxP given; real Barlow X52 ~1500 psi). STRATEGY: PACK-AND-COAST. Pack to 600 psig (80%% of 750 - highest flat drive that keeps the whole line <=750; at 675 the downhill crest static head overpressures downstream joints ~45 psi). Inject a 3.5 MMscf budget (~cut at MP 26), then shut off N2 and COAST on the stored compressed column to tankage. Pig holds the 3.5 mph cap through the entire coast (face decays ~590->255 psig, still well above the drive floor). Result: 3.5 MMscf, ~21.2 hr, avg 3.10 / min 2.07 / max 3.5 mph, 0 MOP viol, 0 vent - identical speed to a continuous 600-psig drive but leanest budget with no speed penalty - min speed 2.07 mph is set by the drive-limited pack-phase start, not the coast; the coast bottoms at 2.21 mph. Budgets 3.5-5M all share the same 2.07 min, so >3.5M is wasted N2. Below 3.5M the coast dips (3.0M->1.61, 2.5M->0.67 at the MP45 low point). Single drive, no boosters/stations/BPCV.",

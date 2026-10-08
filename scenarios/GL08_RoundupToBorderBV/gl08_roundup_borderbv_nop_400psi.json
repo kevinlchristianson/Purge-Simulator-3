@@ -1,6 +1,8 @@
 {
  "meta": {
   "name": "GL-08 Roundup to Border BV - NOP as MOP - 400 psig drive",
+  "client": "Phillips 66",
+  "pipeline": "GL-08 Roundup to Border BV 10in",
   "created_at": "2026-07-16T09:53:02",
   "modified_at": "2026-07-16T09:53:02",
   "notes": "Re-run of Feb 2026 tender purge (EM-US-Q-21116, P66 Glacier GL-08) in v30 engine. Profile + MOP envelope = NOP gradient (col CD, Prep_MOP_pt_by_pt macro: operating gradient interpolated Roundup 1390 -> Billings 760 psig) from client file \"GL-08 Roundup to Billings 10 inch Crude Point by Point MOP Profile (ACTIVE) (3).xlsm\" Purge Roundup (MP 0) -> Border BV (MP 25.326), fluid exit Billings receiver trap (MP 53.209). Variant: 400 psig max injection/drive (was 499), 1.69 MMscf budget, 100 psig exit. Station MOPs (setpoint sheet): Roundup 1390 / Billings 760 psig. maop_psig removed: NOP joints (col CD) are the sole MOP in the model.",

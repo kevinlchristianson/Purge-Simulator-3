@@ -44,7 +44,8 @@ Things to know:
   app runs. Anything worth keeping should go into the scenario's notes and be saved (see
   section 7). Refreshing the browser tab is fine; only Quit or closing PowerShell loses it.
 - **Unsaved scenarios are lost on Quit too.** A freshly imported scenario is not saved until
-  you click **Save as…**.
+  you click **Save** on the Overview tab (or **Save as…**). The header says "unsaved changes"
+  while anything is unsaved.
 - If `git pull` complains about local changes, don't force anything. Copy the message and
   ask in the project.
 
@@ -305,15 +306,37 @@ Also check:
 
 ## 7. Saving, variants and reports
 
-- **Save as… with a name that says what changed**, e.g. `GL09 12in diesel 500psi cap 3mph`.
-  Saving never overwrites: a name that already exists is refused. The bundled client-job
-  scenarios are never written to.
+**The library** on the left is filed as **Client › Pipeline › Scenario**. Click a client to
+open its pipelines, and a pipeline to see its scenarios; the app remembers which ones you
+left open. Typing in **Filter** opens every group with a match. Scenarios you saved yourself
+carry a small *mine* tag. Anything without a client or pipeline sits under **Unfiled**
+(older saved files keep loading as they are; give them a client and pipeline and save to
+file them).
+
+**Name, client, pipeline, details and notes are edited at the top of the Overview tab.**
+*Details* is the one line shown under the name in the library (for example
+`500 psig cap, 3 mph`). Edits stay in the form until you click **Save** (or press
+**Ctrl+S** anywhere in the app); **Revert** throws them away. What Save does is written next
+to the button:
+
+- **One of your own scenarios** is saved over its own file, even if you renamed it or moved
+  it to another client or pipeline.
+- **A built-in client-job scenario is never changed.** Save makes your own copy, filed under
+  the client and pipeline in the form. If you already have a copy with that name there, the
+  app asks before replacing it.
+- **A freshly imported scenario** is saved as a new file the same way.
+
+Use **Save as…** in the header to keep the current version and start a variant under a new
+name.
+
+- **Name variants by what changed**, e.g. `GL09 12in diesel 500psi cap 3mph`, and put the
+  short version in Details.
 - **Write the "why" into the notes** when you save: why that drive pressure, why that MOP
   basis, who confirmed the assumptions. The Job setup block in the notes is kept up to date
   automatically; your own reasoning is not.
 - Saved scenarios go to `PurgeSimScenarios` in your home folder (shared with the older
-  desktop app). Reports go to a new dated folder under `PurgeSimOutputs` every time, so
-  earlier variants are never overwritten.
+  desktop app), in a `Client\Pipeline` subfolder. Reports go to a new dated folder under
+  `PurgeSimOutputs` every time, so earlier variants are never overwritten.
 - **Reports tab, Download all reports (zip):** one click writes every deliverable for the
   run and downloads them as one zip: the client web page, both xlsx reports, the run log,
   the profile animation GIF and the scenario file that produced the run. Untick *Include

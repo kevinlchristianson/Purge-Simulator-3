@@ -64,6 +64,17 @@ section { padding: 10px 16px 30px; }
 .tabs button.on { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
 
 .lib-job { margin-top: 10px; font-weight: 600; font-size: 12px; color: var(--muted); }
+.lib-client { margin-top: 8px; }
+.lib-client > summary { font-weight: 600; font-size: 13px; cursor: pointer; padding: 2px 0; }
+.lib-pipe { margin: 2px 0 4px 12px; }
+.lib-pipe > summary { font-size: 12px; color: var(--muted); cursor: pointer; padding: 2px 0; }
+.lib-count { font-weight: 400; color: var(--muted); font-size: 11px; }
+.lib-mine { font-size: 10px; border: 1px solid var(--border); border-radius: 4px; padding: 0 4px; margin-left: 4px; }
+.meta-grid { display: grid; grid-template-columns: 80px minmax(0, 1fr); gap: 6px 10px; align-items: center; }
+.meta-grid label { font-size: 12px; color: var(--muted); }
+.meta-grid input { width: 100%; }
+.meta-edit textarea { font-family: inherit; font-size: 13px; margin-top: 4px; }
+.meta-edit .actions { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
 .lib-item { padding: 5px 8px; border-radius: 6px; cursor: pointer; border: 1px solid transparent; }
 .lib-item:hover { background: var(--panel-2); }
 .lib-item.on { border-color: var(--accent); background: var(--panel-2); }
@@ -243,10 +254,13 @@ input[type=range] { width: 100%; }
   <div class="actions"><button id="setClear">Remove saved key</button><span style="flex:1"></span><button id="setCancel">Cancel</button><button class="primary" id="setOk">Save</button></div>
 </dialog>
 
+<datalist id="dlClients"></datalist><datalist id="dlPipes"></datalist>
 <dialog id="dlgSave">
   <h3 style="margin-top:0">Save scenario</h3>
   <p class="small muted" id="saveWhere"></p>
   <div class="row"><label for="saveName">Name</label><input id="saveName"></div>
+  <div class="row"><label for="saveClient">Client</label><input id="saveClient" list="dlClients" placeholder="Unfiled"></div>
+  <div class="row"><label for="savePipe">Pipeline</label><input id="savePipe" list="dlPipes" placeholder="Unfiled"></div>
   <div class="row"><label for="saveNotes">Notes (why these inputs)</label><textarea id="saveNotes" rows="5" style="font-family:inherit;font-size:13px"></textarea></div>
   <div class="actions"><button id="saveCancel">Cancel</button><button class="primary" id="saveOk">Save</button></div>
 </dialog>
@@ -317,27 +331,50 @@ async function loadLibrary() {
   S.scenarios = d.scenarios; S.userDir = d.user_dir;
   renderLibrary();
 }
+// Client > Pipeline > Scenario. Which groups are open is remembered in this browser.
+S.libOpen = new Set((() => { try { return JSON.parse(localStorage.getItem("purge.libOpen") || "[]"); } catch (e) { return []; } })());
+const byName = (a, b) => (a === "Unfiled") - (b === "Unfiled") || a.localeCompare(b, undefined, {numeric: true, sensitivity: "base"});
 function renderLibrary() {
   const f = $("#libFilter").value.toLowerCase();
-  const groups = {};
+  const tree = {};
   for (const s of S.scenarios) {
-    if (f && !(s.name + " " + s.job + " " + s.notes).toLowerCase().includes(f)) continue;
-    const g = s.origin === "user" ? "My scenarios" : (s.job || "Other");
-    (groups[g] = groups[g] || []).push(s);
+    if (f && !(s.name + " " + s.client + " " + s.pipeline + " " + s.details + " " + s.job + " " + s.notes).toLowerCase().includes(f)) continue;
+    ((tree[s.client] = tree[s.client] || {})[s.pipeline] = tree[s.client][s.pipeline] || []).push(s);
   }
   const cur = S.state && S.state.scenario_id;
-  $("#lib").innerHTML = Object.entries(groups).map(([g, items]) =>
-    `<div class="lib-job">${esc(g)}</div>` + items.map(s =>
-      `<div class="lib-item ${s.id === cur ? "on" : ""}" data-id="${esc(s.id)}" title="${esc(s.notes)}">
+  const curItem = S.scenarios.find(s => s.id === cur);
+  const isOpen = key => f || S.libOpen.has(key) || (curItem && (key === curItem.client || key === curItem.client + "|" + curItem.pipeline));
+  const item = s => `<div class="lib-item ${s.id === cur ? "on" : ""}" data-id="${esc(s.id)}" title="${esc(s.notes)}">
          <a class="lib-dl" href="/api/scenario/download?id=${encodeURIComponent(s.id)}&token=${TOKEN}" download title="Download ${esc(s.file.split("/").pop())}">⤓ JSON</a>
-         <div>${esc(s.name)}</div><div class="meta">${fmt(s.span_mi, 1)} mi · ${esc(s.fluid || "")}</div></div>`).join("")
-  ).join("") || `<p class="muted small">No scenarios found.</p>`;
+         <div>${esc(s.name)}${s.origin === "user" ? `<span class="lib-mine" title="Saved in ${esc(S.userDir || "your scenarios folder")}">mine</span>` : ""}</div>
+         <div class="meta">${s.details ? esc(s.details) + "<br>" : ""}${fmt(s.span_mi, 1)} mi · ${esc(s.fluid || "")}</div></div>`;
+  $("#lib").innerHTML = Object.keys(tree).sort(byName).map(c => {
+    const pipes = tree[c], n = Object.values(pipes).reduce((a, x) => a + x.length, 0);
+    return `<details class="lib-client" data-key="${esc(c)}" ${isOpen(c) ? "open" : ""}><summary>${esc(c)} <span class="lib-count">${n}</span></summary>` +
+      Object.keys(pipes).sort(byName).map(p =>
+        `<details class="lib-pipe" data-key="${esc(c + "|" + p)}" ${isOpen(c + "|" + p) ? "open" : ""}><summary>${esc(p)} <span class="lib-count">${pipes[p].length}</span></summary>` +
+        pipes[p].map(item).join("") + `</details>`).join("") + `</details>`;
+  }).join("") || `<p class="muted small">No scenarios found.</p>`;
+  document.querySelectorAll("#lib details").forEach(d => d.ontoggle = () => {
+    if (f) return;   // a filter opens everything; don't remember that
+    if (d.open) S.libOpen.add(d.dataset.key); else S.libOpen.delete(d.dataset.key);
+    try { localStorage.setItem("purge.libOpen", JSON.stringify([...S.libOpen])); } catch (e) {}
+  });
   document.querySelectorAll(".lib-dl").forEach(a => a.onclick = e => e.stopPropagation());
   document.querySelectorAll(".lib-item").forEach(el => el.onclick = async () => {
-    if (S.state && S.state.dirty && !confirm("The open scenario has unsaved changes. Open another one anyway?")) return;
-    try { await api("/api/scenario/load", {body: {id: el.dataset.id}}); await poll(true); }
+    if (el.dataset.id === cur) return;
+    if (unsaved() && !confirm("The open scenario has unsaved changes. Open another one anyway?")) return;
+    try { await api("/api/scenario/load", {body: {id: el.dataset.id}}); S.metaDraft = null; await poll(true); }
     catch (e) { toast(e.message); }
   });
+  fillDatalists();
+}
+// Client and pipeline suggestions for the Overview and Save as fields.
+function fillDatalists(client) {
+  const uniq = a => [...new Set(a.filter(x => x && x !== "Unfiled"))].sort(byName);
+  $("#dlClients").innerHTML = uniq(S.scenarios.map(s => s.client)).map(c => `<option value="${esc(c)}">`).join("");
+  const c = (client ?? (S.metaDraft ? S.metaDraft.client : S.scenario && S.scenario.meta.client) ?? "").trim().toLowerCase();
+  $("#dlPipes").innerHTML = uniq(S.scenarios.filter(s => !c || s.client.toLowerCase() === c).map(s => s.pipeline)).map(p => `<option value="${esc(p)}">`).join("");
 }
 $("#libFilter").oninput = renderLibrary;
 
@@ -351,7 +388,7 @@ async function poll(force = false) {
   $("#jobMsg").textContent = running ? st.job.message + "…" : (st.job.state === "error" ? "Run failed: " + st.job.error : "");
   $("#btnRun").disabled = !st.scenario_name || running;
   $("#btnSave").disabled = !st.scenario_name;
-  $("#scenName").textContent = st.scenario_name ? st.scenario_name + (st.dirty ? " • unsaved changes" : "") : "No scenario open";
+  $("#scenName").textContent = st.scenario_name ? st.scenario_name + (unsaved() ? " • unsaved changes" : "") : "No scenario open";
   if (force || st.revision !== prevRev) {
     S.revision = st.revision;
     S.scenario = st.scenario_name ? await api("/api/scenario").catch(() => null) : null;
@@ -419,13 +456,13 @@ function renderOverview() {
       <p>Then run it, or ask the assistant on the right.</p></div>`;
     return;
   }
+  if (!$("#ovMeta")) el.innerHTML = `<div id="ovMeta"></div><div id="ovBody"></div>`;
+  renderMeta();
   const sc = S.scenario, x = sc.scalars, ep = sc.elevation_profile, mj = sc.mop_joints;
-  let html = `<div class="card"><b>${esc(sc.meta.name)}</b>
-    <div class="small muted">MP ${fmt(x.purge_start_mp, 2)} → ${fmt(x.purge_end_mp, 2)} (${fmt(x.purge_end_mp - x.purge_start_mp, 1)} mi) · ${esc(x.fluid_name)} SG ${x.fluid_sg} · target ${x.target_speed_mph} mph ·
+  let html = `<div class="card"><div class="small muted">MP ${fmt(x.purge_start_mp, 2)} → ${fmt(x.purge_end_mp, 2)} (${fmt(x.purge_end_mp - x.purge_start_mp, 1)} mi) · ${esc(x.fluid_name)} SG ${x.fluid_sg} · target ${x.target_speed_mph} mph ·
     max drive ${x.max_drive_psig ?? "—"} psig · ${sc.pump_stations.length} pump stations · ${sc.check_valves.length} check valves · ${sc.booster_stations.length} booster sites${sc.bpcv ? " · BPCV" : ""}
     · ${fmt(ep.points)} profile pts · ${fmt(mj.joints)} MOP joints${mj.joints ? ` (min ${fmt(mj.mop_min_psig)} psig @ MP ${fmt(mj.mop_min_mp, 2)})` : ""}</div>
-    ${elevLine(sc)}
-    ${sc.meta.notes ? `<details style="margin-top:6px"><summary class="small">Notes</summary><div class="small" style="white-space:pre-wrap">${esc(sc.meta.notes)}</div></details>` : ""}</div>`;
+    ${elevLine(sc)}</div>`;
   const r = S.results;
   if (!r) {
     html += `<div class="empty">No results yet. Press <b>Run</b>.</div>`;
@@ -450,8 +487,86 @@ function renderOverview() {
       ${s.booster_plan.notes.length ? `<div class="small muted">${s.booster_plan.notes.map(esc).join("<br>")}</div>` : ""}</div>`;
     if (s.roadmap_report) html += `<details class="card"><summary><b>Pressure roadmap</b></summary><pre>${esc(s.roadmap_report)}</pre></details>`;
   }
-  el.innerHTML = html;
+  $("#ovBody").innerHTML = html;
 }
+
+// ---------------------------------------------------------------- scenario name, filing and notes
+// Edits stay in this form (S.metaDraft) until Save, so typing is never interrupted by a refresh.
+const META_KEYS = ["name", "client", "pipeline", "details", "notes"];
+const metaOf = sc => Object.fromEntries(META_KEYS.map(k => [k, (sc && sc.meta[k]) || ""]));
+function metaDirty() {
+  if (!S.metaDraft || !S.scenario || S.metaDraft.sid !== (S.state && S.state.scenario_id)) return false;
+  const m = metaOf(S.scenario);
+  return META_KEYS.some(k => S.metaDraft.fields[k] !== m[k]);
+}
+function unsaved() { return !!(S.state && (S.state.dirty || metaDirty())); }
+function saveTarget() {
+  const sid = (S.state && S.state.scenario_id) || "";
+  const d = S.metaDraft ? S.metaDraft.fields : metaOf(S.scenario);
+  const where = `${d.client.trim() || "Unfiled"} › ${d.pipeline.trim() || "Unfiled"}`;
+  if (sid.startsWith("user:")) return `Saves over your file ${sid.slice(5)} (listed under ${where}).`;
+  if (sid.startsWith("bundled:")) return `Built-in scenario, never changed: Save makes your own copy under ${where}.`;
+  return `Saves to your scenarios folder under ${where}.`;
+}
+function renderMeta() {
+  const box = $("#ovMeta"), sid = S.state && S.state.scenario_id, m = metaOf(S.scenario);
+  const key = sid + "\n" + JSON.stringify(m);
+  if (S.metaDraft && S.metaDraft.sid !== sid) S.metaDraft = null;
+  const dirty = metaDirty();
+  if ($("#mName") && box.dataset.key === key) { metaButtons(); return; }
+  if ($("#mName") && dirty) {   // the saved meta changed under an edit in progress (job setup or the assistant)
+    box.dataset.key = key;
+    $("#mConflict").hidden = false;
+    metaButtons(); return;
+  }
+  box.dataset.key = key;
+  if (!dirty) S.metaDraft = {sid, fields: {...m}};
+  box.innerHTML = `<div class="card meta-edit">
+    <div class="meta-grid">
+      <label for="mName">Name</label><input id="mName" data-k="name" style="font-weight:600">
+      <label for="mClient">Client</label><input id="mClient" data-k="client" list="dlClients" placeholder="Unfiled">
+      <label for="mPipe">Pipeline</label><input id="mPipe" data-k="pipeline" list="dlPipes" placeholder="Unfiled">
+      <label for="mDetails">Details</label><input id="mDetails" data-k="details" placeholder="One line shown under the name in the library, e.g. 500 psig cap, 3 mph">
+    </div>
+    <details id="mNotesBox" ${S.notesOpen ? "open" : ""} style="margin-top:8px"><summary class="small">Notes <span class="muted">(why these inputs; the assistant reads them)</span></summary>
+      <textarea id="mNotes" data-k="notes" rows="10"></textarea></details>
+    <div class="flag warn small" id="mConflict" hidden>The saved notes or name changed while you were editing (job setup or the assistant). Save keeps your version; Revert shows theirs.</div>
+    <div class="actions"><span class="small muted" id="mWhere" style="flex:1"></span>
+      <button id="mRevert">Revert</button><button class="primary" id="mSave" title="Ctrl+S">Save</button></div></div>`;
+  box.querySelectorAll("[data-k]").forEach(i => {
+    i.value = S.metaDraft.fields[i.dataset.k];
+    i.oninput = () => { S.metaDraft.fields[i.dataset.k] = i.value; if (i.dataset.k === "client") fillDatalists(i.value); metaButtons(); };
+  });
+  $("#mNotesBox").ontoggle = () => { S.notesOpen = $("#mNotesBox").open; };
+  $("#mRevert").onclick = () => { S.metaDraft = null; box.dataset.key = ""; renderMeta(); };
+  $("#mSave").onclick = () => saveCurrent();
+  metaButtons();
+}
+function metaButtons() {
+  if (!$("#mSave")) return;
+  const changed = unsaved();
+  $("#mSave").disabled = !changed && (S.state.scenario_id || "").startsWith("user:");
+  $("#mRevert").disabled = !metaDirty();
+  $("#mWhere").textContent = saveTarget();
+  $("#scenName").textContent = S.state.scenario_name + (changed ? " • unsaved changes" : "");
+}
+async function saveCurrent() {
+  if (!S.scenario) return;
+  const body = S.metaDraft ? {...S.metaDraft.fields} : metaOf(S.scenario);
+  if (!body.name.trim()) { toast("Give the scenario a name first"); return; }
+  let r;
+  try { r = await api("/api/scenario/save_current", {body}); }
+  catch (e) {
+    if (!/already exists/.test(e.message) || !confirm(e.message.replace("; pick a new name", "") + ". Replace it?")) { toast(e.message); return; }
+    try { r = await api("/api/scenario/save_current", {body: {...body, overwrite: true}}); } catch (e2) { toast(e2.message); return; }
+  }
+  S.metaDraft = null;
+  toast(`Saved under ${body.client.trim() || "Unfiled"} › ${body.pipeline.trim() || "Unfiled"}`);
+  await loadLibrary(); poll(true);
+}
+document.addEventListener("keydown", e => {
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") { e.preventDefault(); if (S.scenario) saveCurrent(); }
+});
 function elevLine(sc) {
   const src = sc.elevation_source || {}, flags = src.flags || [];
   let line;
@@ -1233,19 +1348,24 @@ $("#btnQuit").onclick = async () => {
   document.body.innerHTML = `<div class="empty"><h3>Purge Simulator has stopped.</h3><p>You can close this tab.</p></div>`;
 };
 $("#btnSave").onclick = () => {
-  $("#saveName").value = (S.scenario && S.scenario.meta.name) || "";
-  $("#saveNotes").value = (S.scenario && S.scenario.meta.notes) || "";
+  const d = S.metaDraft && metaDirty() ? S.metaDraft.fields : metaOf(S.scenario);
+  $("#saveName").value = d.name; $("#saveClient").value = d.client; $("#savePipe").value = d.pipeline;
+  $("#saveNotes").value = d.notes;
   $("#saveWhere").textContent = "Saved to " + (S.userDir || "your scenarios folder") + ". Bundled client-job scenarios are never modified.";
   $("#dlgSave").showModal();
 };
+$("#saveClient").oninput = () => fillDatalists($("#saveClient").value);
 $("#saveCancel").onclick = () => $("#dlgSave").close();
 $("#saveOk").onclick = async () => {
-  const body = {name: $("#saveName").value, notes: $("#saveNotes").value};
+  const d = S.metaDraft && metaDirty() ? S.metaDraft.fields : metaOf(S.scenario);
+  const body = {name: $("#saveName").value, client: $("#saveClient").value, pipeline: $("#savePipe").value,
+                details: d.details, notes: $("#saveNotes").value};
   try { await api("/api/scenario/save", {body}); }
   catch (e) {
     if (!/already exists/.test(e.message) || !confirm(e.message.replace("; pick a new name", "") + ". Replace it?")) { toast(e.message); return; }
     try { await api("/api/scenario/save", {body: {...body, overwrite: true}}); } catch (e2) { toast(e2.message); return; }
   }
+  S.metaDraft = null;
   $("#dlgSave").close(); toast("Saved"); await loadLibrary(); poll(true);
 };
 $("#btnImport").onclick = () => $("#dlgImport").showModal();
@@ -1343,7 +1463,7 @@ $("#chatFile").onchange = () => {
   if (chatFile) $("#attachClear").onclick = () => { chatFile = null; $("#chatFile").value = ""; $("#attachInfo").hidden = true; };
 };
 async function importChatFile(f) {
-  if (S.state && S.state.dirty && !confirm("The open scenario has unsaved changes. Import the attached file as a new scenario anyway?")) return false;
+  if (unsaved() && !confirm("The open scenario has unsaved changes. Import the attached file as a new scenario anyway?")) return false;
   // the server works out whether it's an ILI tally, a PxP sheet or a profile
   const kinds = ["auto"];
   const raw = await f.arrayBuffer();

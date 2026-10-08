@@ -24,6 +24,10 @@ from typing import Any, List, Optional
 @dataclass
 class ScenarioMeta:
     name: str
+    # Library filing (app: Client > Pipeline > Scenario). Blank = "Unfiled".
+    client: str = ""
+    pipeline: str = ""
+    details: str = ""          # one-line description shown under the name
     created_at: str = ""
     modified_at: str = ""
     notes: str = ""

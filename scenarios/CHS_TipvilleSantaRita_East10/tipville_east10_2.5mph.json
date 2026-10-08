@@ -1,6 +1,8 @@
 {
   "meta": {
     "name": "Tipville BV to Santa Rita - East 10in Crude Purge",
+    "client": "CHS",
+    "pipeline": "Tipville to Santa Rita East 10in",
     "created_at": "2026-07-08T00:00:00",
     "modified_at": "2026-07-08T00:00:00",
     "notes": "Customer: CHS Pipeline. N2 displacement of crude oil, East 10-inch line, Tipville BV (purge start, MP 0) south to Santa Rita tankage (MP 10.118). Route from 'CANADA BORDER TO SANTA RITA 10IN A 1984' KMZ, inverted so MP increases southbound in the direction of pig travel; purge start pin at 10.12 mi from the Santa Rita end (13.95 mi south of the Canada border). Elevations USGS 3DEP. Crude 325 cSt / SG 0.93 (heavy, laminar flow at run speed). 10.75 x 0.250 WT (assumed, 1984 vintage). MOP 1000 psig. Target speed 2.5 mph, delivery floor 50 psig at tankage. Crest 4,166 ft at MP 2.72, then downhill run to 3,782 ft; friction exceeds gravity assist at 2.5 mph so no slack-line concern. Pig stop = fluid delivery (tankage).",

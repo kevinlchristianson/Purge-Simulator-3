@@ -123,7 +123,7 @@ touch the analysis.
 TOOLS: List[dict] = [
     {
         "name": "list_scenarios",
-        "description": "List every scenario in the library: bundled client-job scenarios and the user's own saved ones. Returns id, job folder, name, span, fluid and the start of each scenario's notes.",
+        "description": "List every scenario in the library: bundled client-job scenarios and the user's own saved ones. Returns id, client, pipeline, name, details, span, fluid and the start of each scenario's notes.",
         "input_schema": {"type": "object", "properties": {}, "additionalProperties": False},
     },
     {
@@ -247,9 +247,12 @@ TOOLS: List[dict] = [
     },
     {
         "name": "save_scenario_as",
-        "description": "Save the open scenario to the user's scenarios folder under a new name, with notes recording the rationale. Never overwrites an existing file. Only do this when the user asks.",
+        "description": "Save the open scenario to the user's scenarios folder under a new name, with notes recording the rationale. The library files scenarios as Client > Pipeline > Scenario; client and pipeline default to the open scenario's. Never overwrites an existing file. Only do this when the user asks.",
         "input_schema": {"type": "object", "properties": {
-            "name": {"type": "string"}, "notes": {"type": "string"}},
+            "name": {"type": "string"}, "notes": {"type": "string"},
+            "client": {"type": "string", "description": "Client / operator, e.g. 'Phillips 66'"},
+            "pipeline": {"type": "string", "description": "Pipeline or line segment, e.g. 'GL-09 12in'"},
+            "details": {"type": "string", "description": "One-line description shown under the name"}},
             "required": ["name"], "additionalProperties": False},
     },
 ]
@@ -372,7 +375,8 @@ def execute_tool(ws: Workspace, name: str, args: Dict[str, Any]) -> Any:
     if name == "pipe_lookup":
         return _pipe_lookup(args)
     if name == "save_scenario_as":
-        return ws.save_as(args["name"], args.get("notes"), overwrite=False)
+        return ws.save_as(args["name"], args.get("notes"), overwrite=False, client=args.get("client"),
+                          pipeline=args.get("pipeline"), details=args.get("details"))
     raise InputError(f"unknown tool {name!r}")
 
 

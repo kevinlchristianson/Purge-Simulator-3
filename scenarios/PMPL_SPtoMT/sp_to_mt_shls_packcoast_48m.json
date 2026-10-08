@@ -1,6 +1,8 @@
 {
   "meta": {
     "name": "SP to MT - SH+LS smooth pack-and-coast 48M (90% MOP)",
+    "client": "Portland Montreal Pipe Line",
+    "pipeline": "South Portland to Montreal 24in",
     "created_at": "2026-06-26T09:21:26",
     "modified_at": "2026-07-06T10:22:12.596490",
     "notes": "Field-manageable injection: cram SP at 20k SCFM holding drive a hard 10% below MOP (drive_ceiling_fraction 0.90), inject 48 MMscf, then a single cut and coast to MT. One rate step-down vs 31 on/off cycles in the lean controller. Boosters SH+LS, 45-psi suction. LS runs flat-out to the MOP ceiling (run_at_max) to pre-build drive over the Sutton foot climb and eliminate the marginal-drive pin (no extra N2).",
