@@ -30,12 +30,15 @@ from typing import List, Optional
 import numpy as np
 
 from ..data.scenario import ScenarioInputs
-from .physics import (liquid_friction_loss_psi, mph_to_fts, pipe_area_ft2, required_drive_to_clear,
-                      scf_from_pressure_volume)
+from .physics import (fts_to_bph, liquid_friction_loss_psi, mph_to_fts, pipe_area_ft2,
+                      pressure_psia_from_scf, required_drive_to_clear, scf_from_pressure_volume)
 from .segment_model import PipeGeometry
 
 MAX_GRID = 400
 GRAVITY_WINDOW_MI = 0.5
+# The lowest the liquid at the pig face may go before the run flags slack-line risk
+# (pig_solver.solve_pig_speed slack_margin_psi). The N2 face can never usefully be lower.
+SLACK_FLOOR_PSIG = 25.0
 
 
 def _geometry(inp: ScenarioInputs) -> PipeGeometry:
@@ -268,6 +271,45 @@ def precheck(inp: ScenarioInputs, min_liquid_psig: Optional[float] = None) -> di
                             f"{_r(float(flowing[j]))} psig while flowing at {inp.target_speed_mph:g} mph; raise the "
                             f"exit pressure. The simulator's own slack check only holds 25 psig at peaks.")
 
+    # ---- endpoint control: can the exit hold the pig at max speed?
+    # The exit (running pump suction, BPCV or tank inlet downstream of the pig) holds a minimum
+    # inlet pressure and, when modulating, raises it to hold the pig at max_speed_mph
+    # (pig_solver). Two things the terrain and the plan fix in advance push the pig past max
+    # speed: a descent steeper than friction (the column runs away even with the N2 face down
+    # at the slack floor) and, on pack-and-coast, the packed column itself. The exit must add
+    # (face - drive needed at max speed) and can add at most (its maximum - its minimum). What
+    # a lean run's N2 column adds on top (it can't shed pressure the moment a descent starts)
+    # only the run itself shows.
+    hold = None
+    try:
+        hold = _endpoint_hold(inp, grid, elev_at, tm, te, geom, exit_for, stations, bpcv_mp, end,
+                              exit_psig, caps_grid, vol_behind)
+    except Exception:   # an estimate; never let it stop the check
+        hold = None
+    if hold is not None:
+        if not hold["ok"]:
+            tags.append("overspeed risk")
+            if hold["fixed"]:
+                findings.append(f"Fixed endpoint: at MP {hold['at_mp']:.2f} the {hold['exit']} would have to rise by "
+                                f"{hold['needed_psi']} psi over its {hold['exit_min_psig']} psig to hold the pig at "
+                                f"{inp.max_speed_mph:g} mph ({hold['cause']}); it holds its pressure instead, so expect the "
+                                f"pig to run about {hold['overspeed_mph']:.2f} mph there, flagged as overspeed in the run.")
+            else:
+                findings.append(f"At MP {hold['at_mp']:.2f} the {hold['exit']} would have to add {hold['needed_psi']} psi "
+                                f"to its {hold['exit_min_psig']} psig minimum to hold the pig at {inp.max_speed_mph:g} mph "
+                                f"({hold['cause']}), but it can add at most {hold['room_psi']} psi ({hold['exit_max_psig']} "
+                                f"psig); expect the pig to run about {hold['overspeed_mph']:.2f} mph there, flagged as "
+                                f"overspeed in the run.")
+        elif hold["needed_psi"] > 0:
+            findings.append(f"Holding {inp.max_speed_mph:g} mph needs the {hold['exit']} to add up to {hold['needed_psi']} psi "
+                            f"to its {hold['exit_min_psig']} psig minimum (at MP {hold['at_mp']:.2f}, {hold['cause']}); it can "
+                            f"add {hold['room_psi']} psi, so the pig stays at or under max speed.")
+        elif gravity_spans or inp.n2_budget_scf:
+            findings.append(f"Terrain alone never pushes the pig past {inp.max_speed_mph:g} mph with the exit at its "
+                            f"minimum. What the N2 column's own pressure adds (a lean run can't shed pressure the moment "
+                            f"a descent starts) shows up in the run as the exit holding pressure or, past what it can "
+                            f"hold, as over-max-speed steps.")
+
     # Pack-and-coast needs room to pack above what the line needs to keep moving.
     pack_ok = bool(pack_limit and pack_limit > float(req[0]))
     if pack_ok:
@@ -301,9 +343,111 @@ def precheck(inp: ScenarioInputs, min_liquid_psig: Optional[float] = None) -> di
         "n2_budget_binds_at_mp": round(float(grid[i_bind]), 2),
         "n2_fill_at_exit_pressure_scf": _r(end_scf, -3),
         "vapor_check": vapor,
+        "endpoint_hold": hold,
         "job_type": tags,
         "pack_and_coast_possible": pack_ok,
         "findings": findings,
+    }
+
+
+def _endpoint_hold(inp, grid, elev_at, tm, te, geom, exit_for, stations, bpcv_mp, end, exit_psig,
+                   caps_grid, vol_behind) -> Optional[dict]:
+    """Back-pressure the exit must add to hold the pig at max speed, against what it can add.
+
+    For each pig position x: face(x) is the lowest N2 face the pig can have there (the slack
+    floor, or on pack-and-coast the packed column's pressure as it expands behind the pig);
+    required(x, v_max) is the drive that holds max speed with the exit at its minimum. The
+    exit must add the difference and can add (maximum - minimum): a typed exit_max_pressure_psig
+    or the MOP at the pig stop for the tank, max_suction_psig or the MOP at the station for a
+    pump, the downstream-MOP set point for the BPCV (bpcv.compute_bpcv_set_point). Fixed
+    behavior adds nothing. Where the room runs out the pig runs faster than max speed; the
+    speed it settles at is solved with the exit at its maximum."""
+    sg, visc, rough = inp.fluid_sg, inp.fluid_viscosity_cst, inp.fluid_roughness_ft
+    v_max = mph_to_fts(inp.max_speed_mph)
+    fixed = getattr(inp, "exit_behavior", "modulating") == "fixed"
+    typed_max = getattr(inp, "exit_max_pressure_psig", None)
+    st_max = {float(p["mp"]): p.get("max_suction_psig") for p in inp.pump_stations}
+
+    def mop1(x):
+        m = float(mop_at(inp, x)[0])
+        return m if math.isfinite(m) else None
+
+    # the BPCV's own window, the way the engine sizes it (flow at max speed)
+    bpcv_cfg = None
+    bpcv_max = None
+    if bpcv_mp is not None:
+        from .bpcv import BCPVDownstreamJoint, BPCVConfig, compute_bpcv_set_point
+        od_b, wt_b = geom.od_wt_at(min(bpcv_mp, end))
+        joints = [BCPVDownstreamJoint(mp=float(j["mp"]), mop_psig=float(j["mop_psig"]),
+                                      elevation_ft=float(j.get("elevation_ft", elev_at(float(j["mp"])))))
+                  for j in inp.mop_joints if float(j["mp"]) > bpcv_mp]
+        bpcv_cfg = BPCVConfig(mp=bpcv_mp, elevation_ft=float(elev_at(bpcv_mp)), downstream_joints=joints,
+                              downstream_od_in=od_b, downstream_wt_in=wt_b, downstream_sg=sg,
+                              downstream_viscosity_cst=visc, downstream_roughness_ft=rough)
+        flow = fts_to_bph(v_max, pipe_area_ft2(od_b, wt_b))
+        smax = compute_bpcv_set_point(bpcv_cfg, flow, sg, visc) if joints else 0.0
+        bpcv_max = float(smax) if smax and math.isfinite(smax) and smax > 0 else mop1(bpcv_mp)
+
+    def window(x):
+        """(exit_mp, exit_min, exit_max or None, kind) for the pig at x."""
+        xm, xp = exit_for(x)
+        if any(abs(xm - mp) < 1e-9 for mp, _ in stations):
+            mx = st_max.get(xm)
+            return xm, xp, (float(mx) if mx is not None else mop1(xm)), "pump station"
+        if bpcv_mp is not None and abs(xm - bpcv_mp) < 1e-9:
+            from .bpcv import compute_bpcv_upstream_min_set_point
+            prof = np.asarray(inp.elevation_profile, dtype=float)
+            od_x, wt_x = geom.od_wt_at(x)
+            smin = compute_bpcv_upstream_min_set_point(bpcv_cfg, x, prof, fts_to_bph(v_max, pipe_area_ft2(od_x, wt_x)),
+                                                       sg, visc, od_x, wt_x, rough)
+            return xm, max(xp, float(smin)), bpcv_max, "BPCV"
+        return xm, xp, (float(typed_max) if typed_max is not None else mop1(end)), "tank inlet"
+
+    def required_at(x, v, xm, xp):
+        return required_drive_to_clear(x, float(elev_at(x)), xm, xp, float(elev_at(xm)), tm, te,
+                                       _id_ft(geom, x), v, sg, visc, rough)
+
+    budget = inp.n2_budget_scf
+    pack_frac = float(getattr(inp, "drive_mop_fraction", 0.9) or 0.9)
+    best = None
+    for i, x in enumerate(grid):
+        xm, xmin, xmax, kind = window(float(x))
+        face = SLACK_FLOOR_PSIG
+        cause = "gravity on the descent"
+        if budget:
+            v_ft3 = float(vol_behind[i])
+            p_pack = pressure_psia_from_scf(budget, v_ft3, inp.n2_temperature_f) - 14.7 if v_ft3 > 0 else math.inf
+            m = mop1(float(x))
+            p_pack = min(p_pack, float(caps_grid[i]), pack_frac * m if m is not None else math.inf)
+            if p_pack > face:
+                face, cause = p_pack, "packed N2 column"
+        needed = face - required_at(float(x), v_max, xm, xmin)
+        room = 0.0 if fixed else (max(0.0, xmax - xmin) if xmax is not None else math.inf)
+        short = needed - room
+        key = (short, needed)
+        if best is None or key > best[0]:
+            best = (key, i, float(x), xm, xmin, xmax, kind, face, needed, room, cause)
+    if best is None:
+        return None
+    _, i, x, xm, xmin, xmax, kind, face, needed, room, cause = best
+    ok = needed <= room + 0.5
+    over_mph = None
+    if not ok:
+        # the exit at its maximum (or fixed at its minimum): solve the speed the face drives
+        xp = xmin if fixed else min(xmax, xmin + room) if xmax is not None else xmin
+        lo, hi = v_max, 2.0 * v_max
+        while required_at(x, hi, xm, xp) < face and hi < 64.0 * v_max:
+            lo, hi = hi, 2.0 * hi
+        for _ in range(40):
+            mid = 0.5 * (lo + hi)
+            lo, hi = (mid, hi) if required_at(x, mid, xm, xp) < face else (lo, mid)
+        over_mph = lo / mph_to_fts(1.0)
+    return {
+        "ok": bool(ok), "fixed": fixed, "exit": kind, "exit_mp": round(xm, 2), "at_mp": round(x, 2),
+        "exit_min_psig": _r(xmin), "exit_max_psig": _r(xmax) if xmax is not None else None,
+        "room_psi": _r(room) if math.isfinite(room) else None,
+        "needed_psi": _r(max(0.0, needed)), "face_psig": _r(face), "cause": cause,
+        "overspeed_mph": round(over_mph, 2) if over_mph is not None else None,
     }
 
 

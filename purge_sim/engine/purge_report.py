@@ -24,6 +24,7 @@ from typing import List, Optional, Tuple
 import numpy as np
 
 from .simulator import SimResults, SimConfig, SimStep
+from .log_export import legacy_exit_schedule
 from .hgl import compute_hgl
 from .physics import pipe_area_ft2
 from ..branding import xlsx_color
@@ -50,6 +51,7 @@ _C_GREEN   = "E2EFDA"   # ok / safe fill
 _C_ZEBRA_A = "brand:tint"        # zebra row A
 _C_ZEBRA_B = "FFFFFF"   # zebra row B (white)
 _C_SLACK   = "FF9999"   # slack / overpressure cell
+_C_OVER    = "F4B183"   # pig over max speed (the exit could not hold it)
 _C_NEAR    = "FFD966"   # within 100 psi of MOP
 
 _FNT_TITLE = Font(name="Calibri", bold=True, color="FFFFFF", size=14)
@@ -127,24 +129,28 @@ def export_purge_report(
 # Row builder — pig-centric derived columns
 # ---------------------------------------------------------------------------
 
+# "Exit Pressure" is what the exit (running pump suction, BPCV or tank inlet) holds at that
+# moment: its minimum plus "Endpoint Added", the back-pressure a modulating exit put on to
+# hold the pig at max speed. "Over Max Speed" marks the steps where it could not.
 _COL_HDRS = [
     "Miles", "Elevation (ft)", "Elapsed Time (hr)",
     "Drive Pressure (psi)", "Friction Loss (psi)", "Head Pressure (psi)",
-    "Exit Pressure (psi)", "Injection Rate (SCFM)", "Cumulative N2 (SCF)",
-    "Pig Speed (mph)", "Miles to Outlet", "Barrels / hr",
+    "Exit Pressure (psi)", "Endpoint Added (psi)", "Injection Rate (SCFM)", "Cumulative N2 (SCF)",
+    "Pig Speed (mph)", "Miles to Outlet", "Barrels / hr", "Over Max Speed",
 ]
 _COL_KEYS = [
     "miles", "elevation_ft", "elapsed_hr",
     "drive_psi", "friction_psi", "head_psi",
-    "exit_psi", "inj_scfm", "cum_scf",
-    "speed_mph", "miles_to_outlet", "bph",
+    "exit_psi", "endpoint_added_psi", "inj_scfm", "cum_scf",
+    "speed_mph", "miles_to_outlet", "bph", "overspeed",
 ]
 _COL_FMTS = [
     "0.000", "0.0", "0.000",
     "0.0", "0.0", "0.0",
-    "0.0", "0.0", "#,##0",
-    "0.000", "0.000", "0.0",
+    "0.0", "0.0", "0.0", "#,##0",
+    "0.000", "0.000", "0.0", "@",
 ]
+_COL_WIDTHS = [9, 11, 11, 13, 13, 12, 12, 12, 14, 14, 11, 12, 11, 10]
 
 
 def _mop_at(mp: float, cfg: SimConfig) -> Optional[float]:
@@ -193,6 +199,9 @@ def _build_rows(results: SimResults) -> List[dict]:
             "friction_psi":   fric,
             "head_psi":       head,
             "exit_psi":       s.exit_psig,
+            "exit_min_psi":   s.exit_min_psig,
+            "endpoint_added_psi": s.endpoint_added_psi,
+            "overspeed":      bool(s.overspeed),
             "inj_scfm":       s.injection_scfm,
             "cum_scf":        s.total_scf,
             "speed_mph":      s.pig_speed_mph,
@@ -233,7 +242,7 @@ _FEATURE_KIND = {
     "aerial_marker": "Aerial marker", "ground_marker": "Above-ground marker", "crossing": "Crossing",
 }
 _INTERP_KEYS = ("elapsed_hr", "drive_psi", "friction_psi", "head_psi", "exit_psi",
-                "inj_scfm", "cum_scf", "speed_mph", "bph")
+                "exit_min_psi", "endpoint_added_psi", "inj_scfm", "cum_scf", "speed_mph", "bph")
 
 
 def report_features(results: SimResults, landmarks: Optional[List[dict]] = None) -> List[dict]:
@@ -292,6 +301,7 @@ def purge_report_rows(results: SimResults, step_mi: float = PURGE_REPORT_STEP_MI
             "miles_to_outlet": abs(cfg.purge_end_mp - mp),
             "mop": mop, "mop_margin": (mop - row["drive_psi"]) if mop else None,
             "slack": bool(b.get("slack")), "mop_viol": bool(b.get("mop_viol")),
+            "overspeed": bool(b.get("overspeed")),
             "booster_flow": b.get("booster_flow", {}), "booster_cum": b.get("booster_cum", {}),
         })
         return row
@@ -329,6 +339,8 @@ def _write_table(ws, start_row: int, data: List[dict], zebra=True) -> int:
         zf = fills[ri % 2] if zebra else fills[1]
         for ci, (key, fmt) in enumerate(zip(_COL_KEYS, _COL_FMTS), 1):
             v = row.get(key)
+            if key == "overspeed":
+                v = "YES" if v else ""
             c = ws.cell(row=r, column=ci, value=v)
             c.font   = _FNT_BODY
             c.fill   = zf
@@ -337,6 +349,8 @@ def _write_table(ws, start_row: int, data: List[dict], zebra=True) -> int:
             c.alignment = Alignment(horizontal="right")
             if row.get("mop_viol") and key == "drive_psi":
                 c.fill = _fill(_C_SLACK)
+            elif row.get("overspeed") and key in ("speed_mph", "overspeed"):
+                c.fill = _fill(_C_OVER)
             elif row.get("slack") and key == "speed_mph":
                 c.fill = _fill(_C_AMBER)
         r += 1
@@ -388,6 +402,9 @@ def _sheet_summary(wb, results, cfg, scenario_name, pi, rows):
     kv(15, "Total N2 (SCF):", f"{results.total_scf_n2:,.0f}")
     kv(16, "N2 Vented (SCF):",f"{results.total_scf_vented:,.0f}")
     kv(17, "MOP Violations:", f"{sum(s.mop_violations for s in results.steps):,}")
+    over = [s for s in results.steps if s.overspeed]
+    kv(18, "Over Max Speed:", (f"{len(over):,} steps (up to {max(s.overspeed_mph for s in over):.2f} mph over, "
+                               f"MP {over[0].pig_mp:.2f} to {over[-1].pig_mp:.2f})") if over else "0 steps")
 
     kv(10, "Target Speed (mph):", f"{cfg.target_speed_mph:.2f}", col=7)
     kv(11, "Avg Speed (mph):",    f"{sum(speeds)/len(speeds):.3f}" if speeds else "", col=7)
@@ -397,6 +414,9 @@ def _sheet_summary(wb, results, cfg, scenario_name, pi, rows):
     kv(15, "Max Drive (psi):",    f"{max(drives):.1f}" if drives else "", col=7)
     kv(16, "MAOP (psi):",         f"{cfg.maop_psig:.0f}" if math.isfinite(cfg.maop_psig) else "per MOP profile", col=7)
     kv(17, "Max Inj Pressure:",   f"{cfg.max_injection_psig:.0f} psi" if math.isfinite(cfg.max_injection_psig) else "unlimited", col=7)
+    exits = [s.exit_psig for s in results.steps]
+    kv(18, "Exit Pressure (psi):", (f"{min(exits):.0f} to {max(exits):.0f} held "
+                                    f"({getattr(cfg, 'exit_behavior', 'modulating')} exit)") if exits else "", col=7)
 
     _set_widths(ws, [22, 2, 24, 2, 2, 2, 24, 2, 20, 2, 2, 2])
 
@@ -404,6 +424,24 @@ def _sheet_summary(wb, results, cfg, scenario_name, pi, rows):
 # ---------------------------------------------------------------------------
 # Sheet 2 — Simulation Inputs
 # ---------------------------------------------------------------------------
+
+def _exit_input_rows(cfg) -> List[tuple]:
+    """Simulation Inputs rows for the exit: its minimum, its behavior and how far it may
+    rise, plus the legacy position schedule when a scenario still carries one."""
+    behavior = getattr(cfg, "exit_behavior", "modulating")
+    mx = getattr(cfg, "exit_max_pressure_psig", None)
+    rows = [
+        ("Exit Pressure — Minimum (psi)",    f"{cfg.exit_pressure_run_psig:.0f}"),
+        ("Exit Behavior",                    "fixed (pig may overspeed, flagged)" if behavior == "fixed"
+                                             else "modulating (rises to hold max pig speed)"),
+        ("Exit Pressure — Maximum (psi)",    "= minimum (fixed)" if behavior == "fixed"
+                                             else (f"{float(mx):.0f}" if mx is not None else "MOP at the exit")),
+    ]
+    legacy = legacy_exit_schedule(cfg)
+    if legacy:
+        rows.append(("Exit Schedule (legacy)", legacy))
+    return rows
+
 
 def _sheet_inputs(wb, cfg, scenario_name, pi):
     ws = wb.create_sheet("Simulation Inputs")
@@ -434,9 +472,7 @@ def _sheet_inputs(wb, cfg, scenario_name, pi):
         ("--- PURGE PARAMETERS ---", ""),
         ("Purge Start (MP)",                 f"{cfg.purge_start_mp:.3f}"),
         ("Purge End (MP)",                   f"{cfg.purge_end_mp:.3f}"),
-        ("Exit Pressure — Run (psi)",        f"{cfg.exit_pressure_run_psig:.0f}"),
-        ("Exit Pressure — End (psi)",        f"{cfg.exit_pressure_end_psig:.0f}"),
-        ("Throttle Down (miles from end)",   f"{cfg.throttle_down_miles:.1f}"),
+        *_exit_input_rows(cfg),
         ("Target Speed (mph)",               f"{cfg.target_speed_mph:.2f}"),
         ("Min Speed (mph)",                  f"{cfg.min_speed_mph:.2f}"),
         ("Max Speed (mph)",                  f"{cfg.max_speed_mph:.2f}"),
@@ -499,7 +535,7 @@ def _sheet_condensed(wb, rows, cfg, scenario_name):
 
     condensed = _select_n(rows, n)
     _write_table(ws, 3, condensed)
-    _set_widths(ws, [9, 11, 11, 13, 13, 12, 12, 14, 14, 11, 12, 11])
+    _set_widths(ws, _COL_WIDTHS)
 
 
 # ---------------------------------------------------------------------------
@@ -523,7 +559,7 @@ def _sheet_full(wb, rows, cfg, scenario_name, max_rows=1000):
     ws.merge_cells(f"A2:{_col_ltr(len(_COL_HDRS))}2")
 
     _write_table(ws, 3, thin, zebra=False)
-    _set_widths(ws, [9, 11, 11, 13, 13, 12, 12, 14, 14, 11, 12, 11])
+    _set_widths(ws, _COL_WIDTHS)
 
 
 # ---------------------------------------------------------------------------
@@ -863,7 +899,10 @@ def _sheet_raw_data(wb, results, cfg, scenario_name, max_rows=2000):
         ("Worst MOP Location (MP)",   lambda s: s.worst_mop_mp or "", "0.000"),
         ("Worst MOP Margin (psi)",    lambda s: s.worst_mop_margin or "", "0.0"),
         ("Slack Line Risk",           lambda s: "YES" if s.slack_line_risk else "no", "@"),
-        ("Meter Valve Active",        lambda s: "YES" if s.meter_valve_active else "no", "@"),
+        ("Exit Pressure Min (psi)",   lambda s: s.exit_min_psig,     "0.0"),
+        ("Endpoint Added (psi)",      lambda s: s.endpoint_added_psi, "0.0"),
+        ("Over Max Speed",            lambda s: "YES" if s.overspeed else "no", "@"),
+        ("Over Max Speed (mph)",      lambda s: s.overspeed_mph,     "0.00"),
         ("N2 Segments",               lambda s: len(s.segments or []),    "0"),
         ("Gas Profile Points",        lambda s: len(s.gas_pressure_profile or []), "0"),
         ("Injection Gas Psi",

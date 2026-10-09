@@ -91,6 +91,7 @@ table.purge tbody tr:nth-child(even) td { background: var(--panel-2); }
 tr.feat td { background: color-mix(in srgb, var(--hgl) 10%, transparent) !important; }
 tr.viol td { color: var(--bad); font-weight: 600; }
 tr.slack td.speed { background: color-mix(in srgb, var(--bad) 22%, transparent) !important; }
+tr.over td.speed { background: color-mix(in srgb, var(--warn) 38%, transparent) !important; }
 .pill { display: inline-block; font-size: 12px; padding: 1px 8px; border-radius: 10px; border: 1px solid var(--border); }
 .pill.running { border-color: var(--liquid); color: var(--liquid); }
 .pill.shutdown { color: var(--muted); }
@@ -144,7 +145,8 @@ footer { color: var(--muted); font-size: 12.5px; padding: 18px 0 34px; }
     <div class="card"><h3>Stations and valves</h3><div id="facilities"></div></div>
   </div></section>
   <section id="purge"><h2>Purge report</h2>
-    <div class="card"><p class="small muted" style="margin:0 0 8px">One row for every quarter mile the pig travels, counted from 0 at the launch (the same table as the Purge Report workbook). Red rows exceed MOP; a shaded speed cell marks slack-line risk.</p>
+    <div class="card"><p class="small muted" style="margin:0 0 8px">One row for every quarter mile the pig travels, counted from 0 at the launch (the same table as the Purge Report workbook). Red rows exceed MOP; a red speed cell marks slack-line risk, an orange one the pig over its maximum speed.</p>
+    <p class="small muted" id="endpointNote" hidden style="margin:0 0 8px"></p>
     <div class="small" id="featToggle" hidden style="margin:0 0 8px"><label><input type="checkbox" id="showFeat"> Add stations, valves, markers and crossings to the table</label></div>
     <table class="purge" id="purgeTable"></table></div>
   </section>
@@ -179,10 +181,12 @@ $("#kpis").innerHTML = [
   kpi(fmt(S.injection_psig_max), "Peak injection (psig)"),
   kpi(S.worst_mop_margin_psig == null ? "—" : fmt(S.worst_mop_margin_psig), "Smallest MOP margin (psi)"),
   kpi(fmt(S.n2_vented_scf), "N2 vented (SCF)"),
+  kpi(S.exit_psig_max == null ? "—" : `${fmt(S.exit_min_psig)} – ${fmt(S.exit_psig_max)}`, "Endpoint pressure held (psig)"),
+  kpi(fmt(S.overspeed_steps), "Steps over max speed"),
 ].join("");
 const flags = S.flags || [];
 $("#flags").innerHTML = flags.length ? flags.map(f => `<div class="flag bad">${esc(f)}</div>`).join("")
-  : `<div class="flag good">The run completed to MP ${fmt(S.final_mp, 2)} with no N2 venting, no slack-line risk and no MOP exceedance.</div>`;
+  : `<div class="flag good">The run completed to MP ${fmt(S.final_mp, 2)} with no N2 venting, no slack-line risk, no MOP exceedance and the pig never over its maximum speed.</div>`;
 if (S.booster_plan && S.booster_plan.sites_mp.length)
   $("#boosters").innerHTML = `<div class="card"><h3>N2 booster plan</h3><div class="small">${S.booster_plan.sites_mp.map(m => "MP " + fmt(m, 2)
     + (S.booster_plan.reasons[String(m)] ? ": " + esc(S.booster_plan.reasons[String(m)]) : "")).join("<br>")}</div></div>`;
@@ -231,6 +235,10 @@ function lineChart(el, opts) {
   for (const s of opts.series) {
     const r = {right: R, elev: E}[s.axis] || L; if (!r) continue;
     const xv = s.x || opts.x;
+    if (s.dots) {   // one dot per flagged step (overspeed), no line
+      xv.forEach((x, i) => { const y = s.y[i]; if (x != null && y != null) g += `<circle cx="${sx(x).toFixed(1)}" cy="${sy(y, r).toFixed(1)}" r="2.8" fill="${s.color}"/>`; });
+      continue;
+    }
     let d = "", pen = false;
     xv.forEach((x, i) => { const y = s.y[i]; if (x == null || y == null) { pen = false; return; } d += (pen ? "L" : "M") + sx(x).toFixed(1) + " " + sy(y, r).toFixed(1); pen = true; });
     if (s.fill) d && (g += `<path d="${d} L${sx(xv[xv.length - 1]).toFixed(1)} ${H - m.b} L${sx(xv[0]).toFixed(1)} ${H - m.b} Z" fill="${s.color}" fill-opacity=".12" stroke="none"/>`);
@@ -305,15 +313,21 @@ const hasElev = (SE.pig_elevation_ft || []).some(v => v != null);
 const elevSeries = name => $("#optElev").checked && hasElev
   ? [{name, y: SE.pig_elevation_ft, color: "var(--ground)", axis: "elev", width: 1.2, fill: true, unit: "ft"}] : [];
 
+// the exit's work: where it rose above its minimum to hold max speed, and where it could not
+const throttled = (SE.endpoint_added_psi || []).some(v => v > 0.5), overAny = (SE.overspeed || []).some(Boolean);
+const exitMinSeries = throttled ? [{name: "Exit minimum", y: SE.exit_min_psig, color: "var(--liquid)", dash: "1 3", width: 1.2, unit: "psig"}] : [];
+const overSeries = overAny ? [{name: "Over max speed", y: SE.pig_speed_mph.map((v, i) => SE.overspeed[i] ? v : null), color: "var(--bad)", dots: true, nd: 2, unit: "mph"}] : [];
+const maxSpeedSeries = S.max_speed_mph != null ? [{name: `Max speed (${S.max_speed_mph} mph)`, y: SE.pig_mp.map(() => S.max_speed_mph), color: "var(--muted)", dash: "6 3", width: 1, nd: 2, unit: "mph"}] : [];
 const CHARTS = [
-  {title: "Pressures along the route", note: "N2 drive at the pig face, N2 injection pressure, and pressure where the liquid leaves the line, plotted against pig position.",
+  {title: "Pressures along the route", note: "N2 drive at the pig face, N2 injection pressure, and pressure where the liquid leaves the line, plotted against pig position."
+     + (throttled ? " Where the exit line rises above its dotted minimum, the receiving end held extra pressure to keep the pig at its maximum speed." : ""),
    opts: () => ({x: SE.pig_mp, xLabel: "Pig milepost", yLabel: "psig", markers: facilityMarkers("mp"), series: [
      {name: "Injection", y: SE.injection_psig, color: "var(--s2)", width: 3, unit: "psig"},
      {name: "Pig face (N2 drive)", y: SE.pig_face_psig, color: "var(--gas)", unit: "psig"},
-     {name: "Exit", y: SE.exit_psig, color: "var(--liquid)", dash: "5 4", unit: "psig"}, ...elevSeries("Elevation")]})},
-  {title: "Pig speed along the route",
+     {name: "Exit", y: SE.exit_psig, color: "var(--liquid)", dash: "5 4", unit: "psig"}, ...exitMinSeries, ...elevSeries("Elevation")]})},
+  {title: "Pig speed along the route", note: overAny ? "Dots mark the steps where the pig ran over its maximum speed because the receiving end could not hold any more pressure." : "",
    opts: () => ({x: SE.pig_mp, xLabel: "Pig milepost", yLabel: "mph", markers: facilityMarkers("mp"),
-     series: [{name: "Pig speed", y: SE.pig_speed_mph, color: "var(--gas)", nd: 2, unit: "mph"}, ...elevSeries("Elevation")]})},
+     series: [{name: "Pig speed", y: SE.pig_speed_mph, color: "var(--gas)", nd: 2, unit: "mph"}, ...maxSpeedSeries, ...overSeries, ...elevSeries("Elevation")]})},
   {title: "Nitrogen over time", note: "N2 in the line (left axis) and the injection rate (right axis).",
    opts: () => ({x: SE.t_hr, xLabel: "Hours", xnd: 1, yLabel: "SCF in line", y2Label: "Injection SCFM", zeroBase: true, markers: facilityMarkers("time"), series: [
      {name: "N2 in line", y: SE.total_scf, color: "var(--s4)", unit: "SCF", fill: true},
@@ -355,6 +369,8 @@ function drawProfile() {
   $("#pfLegend").innerHTML = legend(series.concat(markerLegend().filter(k => k.name !== "Pump station")));
   lineChart($("#pfChart"), {x: P.mp, xLabel: "Milepost", yLabel: "psig", y2Label: "Elevation / HGL (ft)", series, markers, title: "Pipeline profile"});
   $("#readout").innerHTML = `<b>${fmt(f.t, 1)} hr</b> into the run · pig at <b>MP ${fmt(f.pig, 2)}</b> moving <b>${fmt(f.speed, 2)} mph</b> · N2 drive <b>${fmt(f.face)} psig</b> · exit <b>${fmt(f.exit_psig)} psig</b> at MP ${fmt(f.exit_mp, 2)}`
+    + (f.added > 0 ? ` (holding ${fmt(f.added)} psi over its ${fmt(f.exit_min)} psig minimum)` : "")
+    + (f.over ? ` · <span style="color:var(--bad)">over max speed</span>` : "")
     + (f.slack ? ` · <span style="color:var(--bad)">slack-line risk</span>` : "");
   $("#pfStations").innerHTML = (f.stations || []).length ? `<table style="margin-top:8px"><thead><tr><th>Pump station</th><th class="n">MP</th><th>Status at this moment</th></tr></thead><tbody>`
     + f.stations.map(s => `<tr><td>${esc(s.name)}</td><td class="n">${fmt(s.mp, 2)}</td><td><span class="pill ${esc(s.status)}">${esc(s.status)}</span></td></tr>`).join("") + `</tbody></table>` : "";
@@ -391,6 +407,7 @@ function drawPurgeTable() {
   $("#purgeTable").innerHTML = `<thead><tr>${head.join("")}</tr></thead><tbody>${rows.join("")}</tbody>`;
 }
 $("#featToggle").hidden = !PR.has_features;
+if (PR.has_endpoint) { $("#endpointNote").hidden = false; $("#endpointNote").textContent = `Endpoint Pressure is what the receiving end (pump suction, BPCV or tank inlet) holds at that point to keep the pig at or under ${fmt(S.max_speed_mph, 2)} mph; it rises above the ${fmt(S.exit_min_psig)} psig minimum where the N2 column would otherwise push the pig faster.`; }
 $("#showFeat").checked = PR.show_features;
 $("#showFeat").onchange = drawPurgeTable;
 drawPurgeTable();
