@@ -52,6 +52,9 @@ class PumpStationConfig:
     name: str = ""
     suction_psig: float = 0.0    # minimum suction pressure (what the pump needs at inlet)
     enabled: bool = True         # False = this station never runs (scenario can disable it)
+    # Highest suction the station can run at while it is the pig's exit and modulates
+    # (slows its pumps) to hold the pig at max speed. None = the MOP at the station.
+    max_suction_psig: Optional[float] = None
     # Note: stations don't have a fixed 'discharge' in the pig context —
     # after shutdown, the pig just has to push liquid past the station entirely.
 
@@ -253,6 +256,41 @@ def evaluate_shutdowns(
     return events
 
 
+def effective_exit_window(
+    stations: List[PumpStationState],
+    pig_mp: float,
+    bpcv_set_point_psig: Optional[float],
+    bpcv_mp: Optional[float],
+    tankage_psig: float,
+    tankage_mp: float,
+    bpcv_max_psig: Optional[float] = None,
+    tankage_max_psig: Optional[float] = None,
+) -> tuple[float, Optional[float], float, str]:
+    """
+    Return the exit for the pig's current liquid push: the nearest thing downstream of it,
+    as (min_psig, max_psig, exit_mp, description).
+
+    Only three things can be immediately downstream of the pig, and only the nearest one
+    is in its hydraulics:
+      1. Next RUNNING pump station ahead of pig -> its suction_psig (max: max_suction_psig)
+      2. BPCV set point, while the pig hasn't passed the BPCV (max: bpcv_max_psig)
+      3. Tankage inlet pressure (max: tankage_max_psig)
+
+    min_psig is the inlet pressure the device holds at rest; max_psig is the most it can
+    raise it to when it modulates to hold the pig at max speed (None = not known here, the
+    caller falls back to the MOP at the exit).
+    """
+    nxt = next_active_station(stations, pig_mp)
+    if nxt is not None:
+        return (nxt.config.suction_psig, nxt.config.max_suction_psig, nxt.mp,
+                f"Station {nxt.config.name} suction")
+
+    if bpcv_mp is not None and bpcv_set_point_psig is not None and pig_mp < bpcv_mp:
+        return bpcv_set_point_psig, bpcv_max_psig, bpcv_mp, "BPCV set point"
+
+    return tankage_psig, tankage_max_psig, tankage_mp, "Tankage inlet"
+
+
 def effective_exit_condition(
     stations: List[PumpStationState],
     pig_mp: float,
@@ -261,20 +299,7 @@ def effective_exit_condition(
     tankage_psig: float,
     tankage_mp: float,
 ) -> tuple[float, float, str]:
-    """
-    Return the effective exit condition for the pig's current liquid push:
-    (exit_psig, exit_mp, description)
-
-    Priority:
-      1. Next RUNNING pump station ahead of pig → its suction_psig
-      2. BPCV set point (if pig hasn't passed BPCV yet)
-      3. Tankage inlet pressure
-    """
-    nxt = next_active_station(stations, pig_mp)
-    if nxt is not None:
-        return nxt.config.suction_psig, nxt.mp, f"Station {nxt.config.name} suction"
-
-    if bpcv_mp is not None and bpcv_set_point_psig is not None and pig_mp < bpcv_mp:
-        return bpcv_set_point_psig, bpcv_mp, "BPCV set point"
-
-    return tankage_psig, tankage_mp, "Tankage inlet"
+    """(exit_min_psig, exit_mp, description): effective_exit_window without the maximum."""
+    lo, _hi, mp, desc = effective_exit_window(stations, pig_mp, bpcv_set_point_psig, bpcv_mp,
+                                              tankage_psig, tankage_mp)
+    return lo, mp, desc

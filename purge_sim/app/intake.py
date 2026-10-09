@@ -65,15 +65,21 @@ QUESTIONS: List[dict] = [
                  {"value": "pressurized", "label": "Pressurized receipt (sphere, pipeline, flare header)"},
                  {"value": "pump_station", "label": "Downstream Pump Station"}]},
     {"id": "exit_behavior", "section": "Hydraulic Endpoint", "kind": "select", "label": "Behavior",
-     "options": [{"value": "fixed", "label": "Fixed Pressure"},
-                 {"value": "modulating", "label": "Modulating"}],
-     "help": "Modulating: the endpoint lets its pressure come down as far as the minimum below. Recorded with the "
-             "job; the simulator still holds the endpoint at the pressure above."},
+     "options": [{"value": "modulating", "label": "Modulating (holds the pig under max speed)"},
+                 {"value": "fixed", "label": "Fixed Pressure"}],
+     "help": "Modulating (the norm): the endpoint holds the pressure below and the client's SCADA raises it "
+             "(pump station slowing, tank inlet valve pinching) whenever the pig would exceed max speed, up to "
+             "the maximum below. Fixed: the pressure stays put and the pig is allowed to overspeed; the run "
+             "flags every step it does. Applies to whatever is nearest downstream of the pig: a running pump "
+             "station's suction, the BPCV, or the tank inlet."},
     {"id": "exit_pressure_psig", "section": "Hydraulic Endpoint", "kind": "number", "unit": "psig",
      "label": "Pressure held at the endpoint",
-     "help": "Past tankage jobs held 50 psig. Volatile products need vapor pressure + 100 psi."},
-    {"id": "exit_min_pressure_psig", "section": "Hydraulic Endpoint", "kind": "number", "unit": "psig",
-     "label": "Minimum pressure (modulating)"},
+     "help": "The minimum the endpoint holds. Past tankage jobs held 50 psig. Volatile products need vapor "
+             "pressure + 100 psi."},
+    {"id": "exit_max_pressure_psig", "section": "Hydraulic Endpoint", "kind": "number", "unit": "psig",
+     "label": "Maximum endpoint pressure (modulating)",
+     "help": "The most the endpoint can hold when it raises its pressure to slow the pig: the station's suction "
+             "limit, the tank inlet valve or piping rating. Blank = the MOP at the pig stop."},
     # ---- pipe
     {"id": "nps", "section": "Pipe", "kind": "select", "label": "Nominal pipe size (in)", "required": True,
      "options": [{"value": k, "label": f'{k}" ({NPS_OD_IN[k]:.3f}" OD)'} for k in _NPS_CHOICES],
@@ -174,8 +180,7 @@ def _clean(qid: str, value: Any) -> Any:
         raise IntakeError(f"{qid} must be finite")
     if qid in ("purge_start_mp", "purge_end_mp", "fluid_exit_mp"):
         return x
-    if x < 0 or (x == 0 and qid not in ("drive_margin_pct", "n2_temperature_f", "exit_pressure_psig",
-                                          "exit_min_pressure_psig")):
+    if x < 0 or (x == 0 and qid not in ("drive_margin_pct", "n2_temperature_f", "exit_pressure_psig")):
         raise IntakeError(f"{qid} must be positive")
     if qid == "drive_margin_pct" and x >= 100:
         raise IntakeError("drive_margin_pct must be below 100")
@@ -249,8 +254,8 @@ def _defaults(sc: Scenario, a: Dict[str, Any]) -> Dict[str, Tuple[Any, str]]:
         d["exit_pressure_psig"] = (50.0, "assumed")
     else:
         d["exit_pressure_psig"] = (inp.exit_pressure_run_psig, "data")
-    d["exit_behavior"] = ("fixed", "standard")
-    d["exit_min_pressure_psig"] = (None, "data")
+    d["exit_behavior"] = (inp.exit_behavior, "standard" if fresh else "data")
+    d["exit_max_pressure_psig"] = (inp.exit_max_pressure_psig, "data")
 
     # pipe
     placeholder = _pipe_is_placeholder(inp)
@@ -345,15 +350,13 @@ def view(sc: Scenario) -> dict:
             relevant = strategy == "pack_and_coast"
         elif qid == "api_gravity":
             relevant = "crude" in (a.get("fluid") or d["fluid"][0] or "")
-        elif qid == "exit_min_pressure_psig":
+        elif qid == "exit_max_pressure_psig":
             relevant = (a.get("exit_behavior") or d["exit_behavior"][0]) == "modulating"
         # Product is only unknown on a fresh import; a saved scenario's SG and viscosity are data.
         required = (bool(q.get("required")) and (qid != "fluid" or _is_fresh(sc))) \
             or (qid == "flange_class" and basis == "flange_class")
         if qid == "mop_psig":
             required = basis == "flat"
-        if qid == "exit_min_pressure_psig":
-            required = relevant
         if qid in a and a[qid] is not None:
             status = "answered"
         elif dv is not None:
@@ -600,27 +603,33 @@ def apply(sc: Scenario, answers: Dict[str, Any]) -> Tuple[ScenarioInputs, Dict[s
                         f"puts the exit at the pig stop, so it is set to {at_stop:g} psig: {delivery:g} psig delivery "
                         f"plus that stretch's friction at {tgt:g} mph and the head to clear its terrain.")
     behavior = val("exit_behavior")
-    exit_min = a.get("exit_min_pressure_psig")
+    exit_max = a.get("exit_max_pressure_psig")
+    mop_at_stop = float(mop_at(inp, end)[0])
     if behavior == "modulating":
-        if exit_min is None:
-            warnings.append("The endpoint is modulating but no minimum pressure was given; answer the minimum.")
-        else:
-            if exit_min > delivery + 1e-6:
-                raise IntakeError(f"the modulating minimum ({exit_min:g} psig) can't be above the endpoint "
-                                  f"pressure ({delivery:g} psig)")
-            if vmin and exit_min < vmin:
-                warnings.append(f"The {exit_min:g} psig modulating minimum is below the {vmin:g} psig "
-                                f"{inp.fluid_name} needs to stay liquid.")
-        warnings.append(f"Modulating endpoint" + (f" (minimum {exit_min:g} psig)" if exit_min is not None else "")
-                        + f" is recorded with the job, but the simulator doesn't model a modulating endpoint yet: "
-                        f"it holds {delivery:g} psig there, which is conservative.")
+        if exit_max is not None:
+            if exit_max < at_stop - 1e-6:
+                raise IntakeError(f"the maximum endpoint pressure ({exit_max:g} psig) can't be below the "
+                                  f"{at_stop:g} psig the endpoint holds")
+            if math.isfinite(mop_at_stop) and exit_max > mop_at_stop + 1e-6:
+                warnings.append(f"The {exit_max:g} psig maximum endpoint pressure is above the {mop_at_stop:g} "
+                                f"psig MOP at the pig stop; the run is capped at MOP there anyway.")
+        elif fresh or any(a.get(k) is not None for k in ("exit_behavior", "exit_max_pressure_psig")):
+            assumed_ids.append("exit_max_pressure_psig")
+            assumptions.append("Maximum endpoint pressure: the MOP at the pig stop"
+                               + (f" ({mop_at_stop:g} psig)" if math.isfinite(mop_at_stop) else ""))
+    else:
+        warnings.append(f"Fixed endpoint: {at_stop:g} psig is held whatever the pig does, so the pig may run over "
+                        f"{inp.max_speed_mph:g} mph on descents; every step it does is flagged in the results.")
     exit_answered = any(a.get(k) is not None for k in ("exit_pressure_psig", "exit_type", "fluid_exit_mp",
-                                               "fluid_exit_at_profile_end", "fluid"))
+                                               "fluid_exit_at_profile_end", "fluid", "exit_behavior",
+                                               "exit_max_pressure_psig"))
     if fresh or exit_answered:
         # past jobs all held a constant delivery pressure to the end of the run
         inp.exit_pressure_run_psig = inp.exit_pressure_end_psig = float(at_stop)
         inp.exit_pressure_behavior = "constant_run"
         inp.throttle_down_miles = 0.0
+        inp.exit_behavior = behavior
+        inp.exit_max_pressure_psig = float(exit_max) if (behavior == "modulating" and exit_max is not None) else None
 
     # ---- pre-run check, then strategy (it needs the check's pack limit and budget)
     try:
@@ -671,8 +680,14 @@ def notes_block(inp: ScenarioInputs, report: dict) -> str:
     seg = inp.pipe_segments
     pipe = ", ".join(f'{s["od_in"]:.3f}" x {s["wt_in"]:.3f}" (MP {s["start_mp"]:g}-{s["end_mp"]:g})' for s in seg[:4])
     pre = report.get("precheck") or {}
+    if inp.exit_behavior == "fixed":
+        exit_txt = f"exit {inp.exit_pressure_run_psig:g} psig fixed"
+    else:
+        exit_txt = (f"exit {inp.exit_pressure_run_psig:g} psig modulating up to "
+                    + (f"{inp.exit_max_pressure_psig:g} psig" if inp.exit_max_pressure_psig is not None
+                       else "MOP at the stop"))
     lines = [NOTES_BEGIN,
-             f"Pig MP {inp.purge_start_mp:g} -> {inp.purge_end_mp:g}; exit {inp.exit_pressure_run_psig:g} psig. "
+             f"Pig MP {inp.purge_start_mp:g} -> {inp.purge_end_mp:g}; {exit_txt}. "
              f"{inp.fluid_name}, SG {inp.fluid_sg:g}, {inp.fluid_viscosity_cst:g} cSt. Pipe {pipe}.",
              f"MOP {inp.maop_psig or '-'} psig; max drive {inp.max_drive_psig or '-'} psig; N2 spread "
              f"{inp.max_injection_psig or '-'} psig / {inp.max_injection_scfm:,.0f} SCFM. Speed "

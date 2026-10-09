@@ -98,11 +98,21 @@ class ScenarioInputs:
     # 0.90 = hold a hard 10% below MOP at all times.
     drive_ceiling_fraction: float = 1.0
 
-    # Exit / endpoint
+    # Exit / endpoint. exit_pressure_run_psig is the MINIMUM inlet pressure the tank / final
+    # exit holds. (exit_pressure_end_psig, exit_pressure_behavior and throttle_down_miles are
+    # the legacy position schedule between run and end; every job since uses constant_run.)
     exit_pressure_run_psig: float = 50.0
     exit_pressure_end_psig: float = 10.0
     exit_pressure_behavior: str = 'taper_last_n_miles'
     throttle_down_miles: float = 5.0
+    # 'modulating' (the norm): the exit (nearest running pump suction / BPCV / tank inlet)
+    # raises its inlet pressure above its minimum to hold the pig at max_speed_mph, up to
+    # what it can hold; past that the pig overspeeds and is flagged. 'fixed': it holds its
+    # minimum and the pig overspeeds, flagged.
+    exit_behavior: str = 'modulating'
+    # The most the tank / final exit can hold (psig). None = the MOP at the pig stop. A pump
+    # station's limit is its max_suction_psig; the BPCV's follows from its downstream MOP.
+    exit_max_pressure_psig: Optional[float] = None
 
     # Pig speed
     min_speed_mph: float = 0.5
@@ -119,6 +129,8 @@ class ScenarioInputs:
 
     pump_stations: List[dict] = field(default_factory=list)
     # e.g. [{'mp': 26.45, 'name': 'Station A', 'suction_psig': 30.0}, ...]
+    # Optional 'max_suction_psig': the most the station can raise its suction to while it is
+    # the pig's exit and slows to hold max speed (None = the MOP at the station).
 
     booster_stations: List[dict] = field(default_factory=list)
     # e.g. [{'mp': 26.45, 'name': 'RY'}, {'mp': 51.62, 'name': 'NW'}, ...]

@@ -247,6 +247,11 @@ def step_bpcv(
     return {
         'set_point_psig': set_pt,
         'pig_has_passed': state.pig_has_passed,
+        # The valve's modulation window while it is the pig's exit: it holds set_point_psig
+        # (just enough to keep the upstream peaks full) and may raise it, to slow the pig,
+        # as far as its downstream MOP allows (inf when no downstream joints are known).
+        'set_point_min_psig': set_pt,
+        'set_point_max_psig': max(set_pt, set_pt_max),
     }
 
 

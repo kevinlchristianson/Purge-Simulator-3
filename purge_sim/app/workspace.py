@@ -43,6 +43,8 @@ BOOSTER_SUCTION_FLOOR_PSIG = 100.0
 
 EXIT_BEHAVIORS = ("taper_last_n_miles", "step_last_n_miles", "linear_ramp",
                   "constant_run", "constant_end")
+# How the exit holds the pig under max speed: see SimConfig.exit_behavior.
+EXIT_CONTROL = ("modulating", "fixed")
 
 # Large arrays that come from data import, not from hand edits.
 _IMPORT_ONLY_FIELDS = {"elevation_profile", "mop_joints", "elevation_source", "route_latlon", "landmarks"}
@@ -50,7 +52,7 @@ _IMPORT_ONLY_FIELDS = {"elevation_profile", "mop_joints", "elevation_source", "r
 _LIST_ITEM_KEYS = {
     "pipe_segments":    {"required": {"start_mp", "end_mp", "od_in", "wt_in"}, "numeric": {"start_mp", "end_mp", "od_in", "wt_in"}},
     "check_valves":     {"required": {"mp", "name"}, "numeric": {"mp"}},
-    "pump_stations":    {"required": {"mp", "name", "suction_psig"}, "numeric": {"mp", "suction_psig"}},
+    "pump_stations":    {"required": {"mp", "name", "suction_psig"}, "numeric": {"mp", "suction_psig", "max_suction_psig"}},
     "booster_stations": {"required": {"mp", "name"}, "numeric": {"mp", "discharge_psig", "suction_min_psig", "max_flow_scfm"}},
 }
 
@@ -119,6 +121,10 @@ def _coerce(name: str, value: Any, current: Any) -> Any:
         if value not in EXIT_BEHAVIORS:
             raise InputError(f"exit_pressure_behavior must be one of {list(EXIT_BEHAVIORS)}")
         return value
+    if name == "exit_behavior":
+        if value not in EXIT_CONTROL:
+            raise InputError(f"exit_behavior must be one of {list(EXIT_CONTROL)}")
+        return value
 
     if isinstance(default, bool) or "bool" in type_str:
         if not isinstance(value, bool):
@@ -158,6 +164,17 @@ def _check_rules(old: ScenarioInputs, new: ScenarioInputs, changed: set) -> None
     if changed & {"min_speed_mph", "max_speed_mph", "target_speed_mph"}:
         if new.min_speed_mph <= 0 or new.max_speed_mph < new.min_speed_mph:
             raise InputError("speeds must satisfy 0 < min_speed_mph <= max_speed_mph")
+    if changed & {"exit_max_pressure_psig", "exit_pressure_run_psig"} \
+            and new.exit_max_pressure_psig is not None \
+            and new.exit_max_pressure_psig < new.exit_pressure_run_psig:
+        raise InputError("exit_max_pressure_psig can't be below exit_pressure_run_psig, the minimum the "
+                         "exit holds (or null for the MOP at the pig stop)")
+    if "pump_stations" in changed:
+        for p in new.pump_stations:
+            mx = p.get("max_suction_psig")
+            if mx is not None and mx < p["suction_psig"]:
+                raise InputError(f"pump station {p.get('name')} max_suction_psig {mx:g} is below its "
+                                 f"suction_psig {p['suction_psig']:g}")
     if "dt_hr" in changed and new.dt_hr <= 0:
         raise InputError("dt_hr must be positive")
 
@@ -324,11 +341,32 @@ def results_summary(res: SimResults) -> dict:
             "slack_line_risk_mp_range": [_f(slack[0].pig_mp), _f(slack[-1].pig_mp)] if slack else None,
             "meter_valve_steps": int(sum(1 for s in steps if s.meter_valve_active)),
         })
+        # Exit modulation: steps the exit raised its inlet pressure to hold max speed, the most
+        # it added and where, and the steps it ran out of room (pig over max speed).
+        throttling = [s for s in steps if s.endpoint_added_psi > 0.5]
+        over = [s for s in steps if s.overspeed]
+        most = max(throttling, key=lambda s: s.endpoint_added_psi, default=None)
+        fastest = max(over, key=lambda s: s.overspeed_mph, default=None)
+        out.update({
+            "exit_behavior": getattr(cfg, "exit_behavior", "modulating"),
+            "endpoint_throttling_steps": len(throttling),
+            "endpoint_added_psi_max": _f(most.endpoint_added_psi, 1) if most else 0.0,
+            "endpoint_added_psi_max_mp": _f(most.pig_mp) if most else None,
+            "exit_psig_max": _f(max(s.exit_psig for s in steps), 1),
+            "overspeed_steps": len(over),
+            "overspeed_mph_max": _f(fastest.overspeed_mph, 2) if fastest else 0.0,
+            "overspeed_mp_range": [_f(over[0].pig_mp), _f(over[-1].pig_mp)] if over else None,
+        })
         flags = []
         if res.total_scf_vented > 0:
             flags.append(f"N2 vented ({res.total_scf_vented:,.0f} SCF): red flag under hard rule 1, fix by control")
         if slack:
             flags.append(f"slack-line risk on {len(slack)} steps (hard rule 2)")
+        if over:
+            flags.append(f"pig over max speed on {len(over)} steps (up to {fastest.overspeed_mph:.2f} mph over, "
+                         f"MP {over[0].pig_mp:.1f} to {over[-1].pig_mp:.1f}): the exit "
+                         + ("is fixed and holds nothing back" if out["exit_behavior"] == "fixed"
+                            else f"can't hold more than {max(s.exit_max_psig for s in over):.0f} psig there"))
         if out["mop_violation_steps"]:
             flags.append(f"MOP violations on {out['mop_violation_steps']} steps")
         if not res.completed:
@@ -369,6 +407,9 @@ def results_series(res: SimResults, max_points: int = 1500) -> dict:
         "injection_scfm": [_f(s.injection_scfm, 0) for s in pick],
         "total_scf": [_f(s.total_scf, 0) for s in pick],
         "exit_psig": [_f(s.exit_psig, 1) for s in pick],
+        "exit_min_psig": [_f(s.exit_min_psig, 1) for s in pick],
+        "endpoint_added_psi": [_f(s.endpoint_added_psi, 1) for s in pick],
+        "overspeed": [bool(s.overspeed) for s in pick],
         "mop_violations": [int(s.mop_violations) for s in pick],
         "slack_line_risk": [bool(s.slack_line_risk) for s in pick],
         "boosters_active": [sum(1 for b in s.booster_states if b.get("running"))

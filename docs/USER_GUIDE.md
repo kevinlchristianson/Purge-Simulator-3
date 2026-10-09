@@ -160,10 +160,15 @@ Open the **Job setup** tab. Answer everything you know, then click **Apply**.
   it blank when the liquid does go further makes the purge look easier than it is (on Laurel
   the difference is about 400 psig vs 50 psig at the pig stop).
 - **What receives the liquid** can be tankage, a pressurized receipt or a **Downstream Pump
-  Station**. **Behavior** is **Fixed Pressure** (the default) or **Modulating**; Modulating
-  shows a **Minimum pressure** box. The simulator does not model a modulating endpoint yet: it
-  records the minimum with the job and in the notes, and still holds the endpoint at the
-  fixed pressure above it, which is the conservative case.
+  Station**. **Behavior** is **Modulating** (the default) or **Fixed Pressure**. Modulating
+  means the endpoint holds the pressure you give and the client's SCADA raises it (a pump
+  station slowing, a tank inlet valve pinching) whenever the pig would run over the maximum
+  pig speed, by just enough to hold it there. **Maximum endpoint pressure** is the most it
+  can hold; blank means the MOP at the pig stop. When even that isn't enough, the pig runs
+  over max speed and every such step is flagged in the results ("over max speed"), along with
+  how much the endpoint had to add. Fixed holds the pressure no matter what, so the pig
+  overspeeds on steep descents and the run says so. This applies to whatever is nearest
+  downstream of the pig: a running pump station's suction, the BPCV, or the tank inlet.
 - **Fluid.** When you pick a product, the grey defaults in Specific gravity and Viscosity
   change to that product's library values (and SG follows an API gravity you type for a
   crude). Type a value only if the client gave you one.

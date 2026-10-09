@@ -102,9 +102,12 @@ mop_basis flat + mop_psig 900; "drive capped at 500" is max_drive_psig 500; "to 
 at the endpoint" is exit_type tankage with the pig stop as the exit; a pig that stops \
 short of where the product leaves sets the hydraulic endpoint, fluid_exit_mp (or \
 fluid_exit_at_profile_end true when it's the end of the profile). Product delivered into \
-a downstream pump station's suction is exit_type pump_station. An endpoint that lets its \
-pressure float down is exit_behavior modulating with exit_min_pressure_psig; the engine \
-doesn't model that yet and still holds exit_pressure_psig, so say so.
+a downstream pump station's suction is exit_type pump_station. The endpoint (whatever is \
+nearest downstream of the pig: running pump suction, BPCV, tank inlet) is exit_behavior \
+modulating by default: it holds exit_pressure_psig and the client's SCADA raises it to keep \
+the pig under max speed, up to exit_max_pressure_psig (blank = the MOP at the pig stop). \
+exit_behavior fixed holds exit_pressure_psig no matter what and lets the pig overspeed; \
+the results flag every overspeed step.
 2. Never invent an answer to a required question (pipe size, product, MOP). If one is \
 missing, ask for it.
 3. Reply with the setup in two or three lines, then the assumptions it reported as one \

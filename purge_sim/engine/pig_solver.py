@@ -12,13 +12,20 @@ The solver bisects on pig velocity to find the speed where N2 drive = liquid res
 Constraints:
   - max_speed_mph: physical or operational maximum
   - min_speed_mph: minimum to prevent slack line
-  - meter_valve throttles receipt when pig could go faster than target
-    (meter valve back-pressure limits throughput at tankage)
+
+The exit (the nearest thing downstream of the pig: a running pump's suction, the BPCV,
+or the tank inlet) holds a MINIMUM inlet pressure, `exit_psig`. When the drive would push
+the pig faster than max speed, the exit MODULATES: the client's SCADA raises that inlet
+pressure (pump slowing, tank inlet valve pinching, BPCV set point rising) by exactly the
+surplus, so the pig holds max speed. The device can only hold so much, `exit_max_psig`;
+once that is reached the pig overspeeds and the step is flagged (never hidden). A FIXED
+exit is the same with exit_max_psig == exit_psig: it adds nothing and the pig overspeeds.
+exit_max_psig=None is unbounded (the legacy behavior: the pig is pinned at max speed and
+the exit holds whatever that takes).
 
 Slack line risk:
   If the achievable speed < min_speed_mph, the liquid column is pulling faster than
-  the pig can push. The meter valve closes to reduce demand.
-  If the meter valve cannot fully compensate, a slack line condition is flagged.
+  the pig can push, and a slack line condition is flagged.
 
 BPCV phase:
   Before pig reaches BPCV: BPCV set point is the exit condition for the liquid column.
@@ -74,16 +81,24 @@ class PigSolverResult:
     pig_speed_mph: float
     pig_speed_fts: float
     drive_psig: float          # required N2 pressure immediately behind pig
-    exit_psig: float           # effective exit condition used
+    exit_psig: float           # exit inlet pressure actually held this step (minimum + added)
     exit_mp: float
     exit_description: str
 
     liquid_friction_psi: float
     static_head_psi: float
 
-    # Whether the pig is limited by meter valve (going faster than target)
+    # The pig has surplus drive (it is at or above target speed); the exit is what holds it
+    # back. Kept under its historical name for the injection controller and the reports.
     meter_valve_active: bool = False
-    meter_valve_back_pressure_psi: float = 0.0
+    meter_valve_back_pressure_psi: float = 0.0   # alias of endpoint_added_psi
+
+    # Exit modulation: the minimum the exit holds, what it added this step to keep the pig
+    # at max speed, and whether it ran out of room (pig over max speed).
+    exit_min_psig: float = 0.0
+    endpoint_added_psi: float = 0.0
+    overspeed: bool = False
+    overspeed_mph: float = 0.0
 
     # Slack line flag
     slack_line_risk: bool = False
@@ -111,20 +126,25 @@ def solve_pig_speed(
     terrain_mp=None,               # route terrain vertices (mp) between pig and exit
     terrain_elev=None,             # route terrain vertices (elevation ft)
     slack_margin_psi: float = 25.0,
+    exit_max_psig: Optional[float] = None,   # most the exit can raise its inlet pressure to
 ) -> PigSolverResult:
     """
     Solve for pig speed given current system state.
 
     The pig speed is found by balancing the available drive pressure against
-    the liquid-side resistance to produce a speed. The meter valve then throttles
-    if that speed exceeds the target.
+    the liquid-side resistance to produce a speed. Above max speed the exit
+    modulates (raises its inlet pressure) to hold the pig there.
 
     Steps:
       1. Compute liquid resistance at target speed (friction + static head to exit)
       2. Check if pig_face_psig can achieve at least min_speed
-      3. If pig can exceed target, meter valve activates (back-pressure = excess drive)
-      4. Final speed = min(achievable_speed, target_speed)
+      3. Between min and max speed the pig runs where drive = resistance
+      4. Past max speed the exit adds back-pressure, up to exit_max_psig, to hold max;
+         past that the pig overspeeds and is flagged
       5. Flag slack line if achievable < min
+
+    `exit_psig` is the minimum the exit holds; `exit_max_psig` is the most it can hold
+    (None = no limit, the exit holds whatever max speed takes; == exit_psig = fixed).
 
     MOP is zero-tolerance. `mop_drive_ceiling_psig` is the highest pig-face N2
     pressure the weakest joint (gas column or downstream liquid) can tolerate.
@@ -151,10 +171,18 @@ def solve_pig_speed(
         terrain_mp, terrain_elev, cfg.sg, slack_margin_psi,
     )
 
-    # Bisect on speed to find where drive = resistance
-    def _resistance_at_speed(v_fts: float) -> float:
+    # Bisect on speed to find where drive = resistance. `added_psi` is back-pressure the exit
+    # has put on top of its minimum: it raises the exit term (candidate 0) only, never the
+    # peak-clearing terms behind it.
+    def _resistance_at_speed(v_fts: float, added_psi: float = 0.0) -> float:
         fpf = liquid_friction_loss_psi(1.0, D_ft, v_fts, cfg.sg, cfg.viscosity_cst, eps_ft)
-        return float(np.max(_cl_base + fpf * _cl_len))
+        res = _cl_base + fpf * _cl_len
+        return float(max(res[0] + added_psi, np.max(res)))
+
+    def _exit_term_at_speed(v_fts: float) -> float:
+        # Pig face needed to deliver exit_psig at the exit alone (no peak terms).
+        fpf = liquid_friction_loss_psi(1.0, D_ft, v_fts, cfg.sg, cfg.viscosity_cst, eps_ft)
+        return float(_cl_base[0] + fpf * _cl_len[0])
 
     def _drive_available() -> float:
         # If BPCV constraint active (pig past BPCV in gas phase), drive is limited by BPCV.
@@ -203,6 +231,7 @@ def solve_pig_speed(
             exit_description=exit_description,
             liquid_friction_psi=fric,
             static_head_psi=head_psi,
+            exit_min_psig=exit_psig,
             slack_line_risk=True,
             slack_line_deficit_mph=fts_to_mph(v_min - v_achievable),
             injection_scfm=scfm_from_pig_velocity(v_achievable, area_ft2,
@@ -212,20 +241,42 @@ def solve_pig_speed(
 
     # Drive can sustain at least minimum. Find achievable speed.
     meter_valve_active = False
-    meter_back_psi = 0.0
+    added_psi = 0.0
+    overspeed = False
 
     if drive >= res_at_tgt:
         # Enough drive for at least target speed. The pig is allowed to run FASTER
         # than target — up to max_speed — when drive is excessive (downhill static-head
         # assist, surplus N2, or booster overshoot). Symmetric with the slow-down case:
         # just as the pig may fall below min_speed when drive is MOP-limited, it may rise
-        # above target when drive is abundant. The meter valve only throttles once the pig
-        # reaches max_speed, banking any remaining excess drive as back-pressure.
+        # above target when drive is abundant.
         meter_valve_active = True
         res_at_max = _resistance_at_speed(v_max)
         if drive >= res_at_max:
-            v_actual = v_max
-            meter_back_psi = drive - res_at_max
+            # At max speed the exit modulates: the nearest downstream device raises its
+            # inlet pressure by the surplus drive over what the liquid column itself takes at
+            # max speed (friction + head to the exit), and the pig holds max speed. The device
+            # can only hold so much; past its maximum the pig overspeeds, flagged below.
+            needed = max(0.0, drive - _exit_term_at_speed(v_max))
+            room = math.inf if exit_max_psig is None else max(0.0, exit_max_psig - exit_psig)
+            added_psi = min(needed, room)
+            if added_psi >= needed - 1e-9:
+                v_actual = v_max
+            else:
+                # Exit at its limit: solve the speed where the column's resistance, with the
+                # exit holding its maximum, equals the drive. Friction grows with speed, so
+                # bracket upward from max speed and bisect.
+                lo, hi = v_max, 2.0 * v_max
+                while _resistance_at_speed(hi, added_psi) < drive and hi < 64.0 * v_max:
+                    lo, hi = hi, 2.0 * hi
+                for _ in range(40):
+                    mid = 0.5 * (lo + hi)
+                    if _resistance_at_speed(mid, added_psi) <= drive:
+                        lo = mid
+                    else:
+                        hi = mid
+                v_actual = lo
+                overspeed = v_actual > v_max * (1.0 + 1e-6)
         else:
             # Natural speed between target and max where drive = resistance
             lo, hi = v_tgt, v_max
@@ -236,7 +287,6 @@ def solve_pig_speed(
                 else:
                     hi = mid
             v_actual = lo
-            meter_back_psi = 0.0
     else:
         # Pig speed is between min and target — bisect
         lo, hi = v_min, v_tgt
@@ -256,13 +306,17 @@ def solve_pig_speed(
         pig_speed_mph=fts_to_mph(v_actual),
         pig_speed_fts=v_actual,
         drive_psig=drive,
-        exit_psig=exit_psig,
+        exit_psig=exit_psig + added_psi,
         exit_mp=exit_mp,
         exit_description=exit_description,
         liquid_friction_psi=fric,
         static_head_psi=head_psi,
         meter_valve_active=meter_valve_active,
-        meter_valve_back_pressure_psi=meter_back_psi,
+        meter_valve_back_pressure_psi=added_psi,
+        exit_min_psig=exit_psig,
+        endpoint_added_psi=added_psi,
+        overspeed=overspeed,
+        overspeed_mph=fts_to_mph(max(0.0, v_actual - v_max)) if overspeed else 0.0,
         injection_scfm=inj_scfm,
         drive_for_target_psig=res_at_tgt,
     )
