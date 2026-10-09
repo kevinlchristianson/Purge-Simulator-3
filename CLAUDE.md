@@ -60,8 +60,20 @@ purge_sim/
     bpcv.py            — Back Pressure Control Valve: set point = min across downstream joints
                          of (MOP - static head - friction to that joint)
     pump_stations.py   — pump shutdown logic: shuts down when no longer hydraulically
-                         necessary, hard 1-mile safety limit ahead of the pig
-    pig_solver.py       — bisects pig velocity so N2 drive pressure = liquid resistance ahead
+                         necessary, hard 1-mile safety limit ahead of the pig. Also
+                         effective_exit_window(): the pig's exit is the nearest thing
+                         downstream of it (running pump suction, else BPCV, else tank inlet),
+                         as a (minimum, maximum) inlet pressure
+    pig_solver.py       — bisects pig velocity so N2 drive pressure = liquid resistance ahead.
+                         The exit MODULATES (SimConfig.exit_behavior, default): it holds its
+                         minimum and raises its inlet pressure to hold the pig at max speed, up
+                         to what it can hold (exit_max_pressure_psig / a station's
+                         max_suction_psig / the BPCV's downstream-MOP maximum; default MOP at the
+                         exit). Past that, or with exit_behavior 'fixed', the pig overspeeds and
+                         the step is flagged (SimStep.overspeed, endpoint_added_psi). Injection
+                         and station shutdowns read the exit's minimum, never the raised value,
+                         so the N2 controller can't fight the throttle. The old taper/step/ramp
+                         exit schedules are relics kept only so old scenarios load
     mop_check.py       — per-joint pressure vs MOP every timestep, from the HGL
     hgl.py             — Hydraulic Grade Line: full-route pressure profile at one timestep
                          (gas side behind pig, liquid side ahead); feeds the profile chart,

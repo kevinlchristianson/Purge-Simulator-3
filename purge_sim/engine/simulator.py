@@ -40,7 +40,7 @@ from .booster import (
 from .bpcv import BPCVConfig, BPCVState, step_bpcv
 from .pump_stations import (
     PumpStationConfig, PumpStationState, StationStatus,
-    evaluate_shutdowns, effective_exit_condition, next_active_station,
+    evaluate_shutdowns, effective_exit_window, next_active_station,
 )
 from .pig_solver import PigSolverConfig, PigSolverResult, solve_pig_speed, minimum_n2_floor_to_sustain_flow
 from .mop_check import (
@@ -129,10 +129,25 @@ class SimConfig:
     n2_initial_pressure_psig: float = 50.0   # pressure at purge start
 
     # --- Exit / endpoint ---
+    # The MINIMUM inlet pressure the tank / final exit holds (the legacy position schedule,
+    # exit_pressure_behavior, moves it between run and end; every job since has used
+    # constant_run, so run == end and the schedule is a relic kept so old scenarios load).
     exit_pressure_run_psig: float = 50.0
     exit_pressure_end_psig: float = 10.0
     exit_pressure_behavior: str = 'taper_last_n_miles'
     throttle_down_miles: float = 5.0
+    # How the exit (whatever is nearest downstream of the pig: a running pump's suction, the
+    # BPCV, or the tank inlet) behaves when the pig would exceed max_speed_mph:
+    #   'modulating' (the norm): the client's SCADA raises that inlet pressure above its
+    #       minimum by just enough to hold the pig at max speed (pump slowing, tank inlet
+    #       valve pinching, BPCV set point rising), up to what the device can hold; past that
+    #       the pig overspeeds and the step is flagged.
+    #   'fixed': the inlet pressure stays at its minimum; the pig overspeeds, flagged.
+    exit_behavior: str = 'modulating'
+    # The most the tank inlet / final exit can hold (psig). None = the MOP at the pig stop.
+    # A pump station's limit is PumpStationConfig.max_suction_psig; the BPCV's is the set
+    # point its downstream MOP allows (bpcv.compute_bpcv_set_point).
+    exit_max_pressure_psig: Optional[float] = None
 
     # --- Pig speed limits ---
     min_speed_mph: float = 0.5
@@ -258,7 +273,17 @@ class SimStep:
 
     # Flags
     slack_line_risk: bool = False
-    meter_valve_active: bool = False
+    meter_valve_active: bool = False      # pig at/above target speed (surplus drive)
+
+    # Exit modulation (see SimConfig.exit_behavior). exit_psig above is what the exit held
+    # this step = exit_min_psig + endpoint_added_psi; exit_max_psig is the most it could
+    # hold (inf = no limit known). overspeed: the exit ran out of room and the pig ran over
+    # max_speed_mph by overspeed_mph.
+    exit_min_psig: float = 0.0
+    exit_max_psig: float = math.inf
+    endpoint_added_psi: float = 0.0
+    overspeed: bool = False
+    overspeed_mph: float = 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -607,6 +632,10 @@ def _compute_station_pressures(
     for i, st in enumerate(ra):
         prev_mp = ra[i - 1].mp if i > 0 else pig_mp
         suction_by_mp[st.mp] = max(st.config.suction_psig, _antislack_suction(prev_mp, st.mp))
+    # The nearest running pump is the pig's exit; when it modulates (raises its suction to
+    # hold the pig at max speed) the suction it shows is the pressure it is holding.
+    if ra and abs(ra[0].mp - exit_mp) < 1e-6:
+        suction_by_mp[ra[0].mp] = max(suction_by_mp[ra[0].mp], exit_psig)
 
     # The discharge chain ends at the ULTIMATE downstream anchor (the BPCV, or tankage) —
     # NOT the pig's near exit. The pig's exit can be the first pump itself (degenerate); a
@@ -702,6 +731,34 @@ def simulate(cfg: SimConfig, progress_cb: Optional[Callable[[float], None]] = No
         _mj_mp, _mj_mop, _mj_elev = _mj_mp[_mj_sort], _mj_mop[_mj_sort], _mj_elev[_mj_sort]
     else:
         _mj_mp = _mj_mop = _mj_elev = None
+
+    # MOP of the pipe at one milepost (the lower of the two joints either side of it), from
+    # the full joint list; the flat MAOP when there are no joints; inf when neither is known.
+    # The default limit on how far a modulating exit can raise its inlet pressure.
+    if cfg.mop_joints:
+        _all_mp  = np.array([j.mp for j in cfg.mop_joints], dtype=float)
+        _all_mop = np.array([j.mop_psig for j in cfg.mop_joints], dtype=float)
+        _all_ord = np.argsort(_all_mp)
+        _all_mp, _all_mop = _all_mp[_all_ord], _all_mop[_all_ord]
+    else:
+        _all_mp = _all_mop = None
+
+    def _mop_at_mp(mp: float) -> float:
+        if _all_mp is None or _all_mp.size == 0:
+            return float(cfg.maop_psig) if cfg.maop_psig else math.inf
+        i = int(np.searchsorted(_all_mp, mp, side='right'))
+        lo = _all_mop[max(0, i - 1)]
+        hi = _all_mop[min(_all_mp.size - 1, i)]
+        return float(min(lo, hi))
+
+    def _exit_max_psig(exit_min: float, device_max: Optional[float], exit_mp: float) -> float:
+        """The most the exit may raise its inlet pressure to while it holds the pig at max
+        speed: the device's own limit when known, else the MOP at the exit; never below the
+        minimum it holds. A fixed exit never raises it (max = min)."""
+        if cfg.exit_behavior == 'fixed':
+            return exit_min
+        m = device_max if (device_max is not None and math.isfinite(device_max)) else _mop_at_mp(exit_mp)
+        return max(exit_min, float(m))
 
     # --- Elevation interpolator ---
     elev_arr = np.asarray(cfg.elevation_profile, dtype=float)
@@ -829,6 +886,7 @@ def simulate(cfg: SimConfig, progress_cb: Optional[Callable[[float], None]] = No
 
         # --- BPCV update ---
         bpcv_set_point_psig: Optional[float] = None
+        bpcv_set_point_max: Optional[float] = None
         bpcv_gas_constraint: Optional[float] = None
         if bpcv_state is not None:
             bpcv_result = step_bpcv(
@@ -842,15 +900,21 @@ def simulate(cfg: SimConfig, progress_cb: Optional[Callable[[float], None]] = No
                 upstream_roughness_ft=cfg.fluid_roughness_ft,
             )
             bpcv_set_point_psig = bpcv_result['set_point_psig']
+            bpcv_set_point_max = bpcv_result['set_point_max_psig']
             if bpcv_result['pig_has_passed']:
                 # N2 must push through BPCV set point — add gas friction from pig to BPCV
                 # This is an approximation; pig_solver handles the detailed balance
                 bpcv_gas_constraint = bpcv_set_point_psig
 
         # --- Determine exit condition for pig's liquid push ---
+        # The nearest thing downstream of the pig (running pump suction / BPCV / tank inlet)
+        # holds exit_psig, its MINIMUM, and when the pig would exceed max speed it modulates
+        # up to exit_max (SimConfig.exit_behavior). Everything that sizes injection or decides
+        # a station shutdown reads the minimum; only the speed solve and what is displayed see
+        # the raised pressure, so the N2 controller never fights the throttle.
         bpcv_mp   = cfg.bpcv.mp if cfg.bpcv else None
         tankage_mp = cfg.purge_end_mp
-        exit_psig, exit_mp, exit_desc = effective_exit_condition(
+        exit_psig, _exit_dev_max, exit_mp, exit_desc = effective_exit_window(
             station_states, pig_mp,
             bpcv_set_point_psig, bpcv_mp,
             tankage_psig=target_exit_pressure(pig_mp, {
@@ -859,7 +923,10 @@ def simulate(cfg: SimConfig, progress_cb: Optional[Callable[[float], None]] = No
                 'exit_pressure_behavior': cfg.exit_pressure_behavior,
             }, cfg.purge_start_mp, cfg.purge_end_mp, cfg.throttle_down_miles),
             tankage_mp=tankage_mp,
+            bpcv_max_psig=bpcv_set_point_max,
+            tankage_max_psig=cfg.exit_max_pressure_psig,
         )
+        exit_max = _exit_max_psig(exit_psig, _exit_dev_max, exit_mp)
 
         # --- MOP hard ceiling (computed BEFORE the speed solve) ---
         # MOP is zero-tolerance. mop_cap is the highest pig-face N2 pressure the
@@ -911,6 +978,7 @@ def simulate(cfg: SimConfig, progress_cb: Optional[Callable[[float], None]] = No
             bpcv_gas_constraint_psig=bpcv_gas_constraint,
             mop_drive_ceiling_psig=mop_ceiling,
             terrain_mp=_mj_mp, terrain_elev=_mj_elev, slack_margin_psi=25.0,
+            exit_max_psig=exit_max,
         )
 
         # --- Activate boosters (unconditional) ---
@@ -1029,8 +1097,10 @@ def simulate(cfg: SimConfig, progress_cb: Optional[Callable[[float], None]] = No
 
         # Minimum pig face needed to sustain the pig's current motion (= the floor: exit
         # pressure + friction + static head at the solved speed). On a climb where the pig
-        # rides min speed this IS the min-speed floor.
-        _min_face_psig = (pig_result.exit_psig
+        # rides min speed this IS the min-speed floor. The exit's MINIMUM, not what a
+        # modulating exit is holding to slow the pig: injection must never build to push
+        # through the throttle (the throttle would only close harder).
+        _min_face_psig = (pig_result.exit_min_psig
                           + pig_result.liquid_friction_psi
                           + pig_result.static_head_psi)
 
@@ -1226,8 +1296,12 @@ def simulate(cfg: SimConfig, progress_cb: Optional[Callable[[float], None]] = No
                                       drive_setpoint_psig + _slew)
             if math.isfinite(mop_cap) and mop_cap > 0:
                 drive_setpoint_psig = min(drive_setpoint_psig, mop_cap)   # a cap is immediate
+            # The hold rate is sized at the pig's speed, capped at max speed: a pig running
+            # away over max (a fixed exit that holds nothing back) is not something the N2
+            # pump chases; it keeps feeding the displacement at the speed the job allows and
+            # lets the runaway draw the column down.
             _q_hold = scfm_from_pig_velocity(
-                pig_result.pig_speed_fts, area_ft2,
+                min(pig_result.pig_speed_fts, mph_to_fts(cfg.max_speed_mph)), area_ft2,
                 psig_to_psia(max(pig_face_psig, 0.0)), cfg.n2_temperature_f,
             )
             _gain = cfg.max_injection_scfm / SMOOTH_PUMP_FULL_RATE_ERROR_PSI
@@ -1509,7 +1583,7 @@ def simulate(cfg: SimConfig, progress_cb: Optional[Callable[[float], None]] = No
             _ult_p  = cfg.exit_pressure_run_psig
         station_pressures = _compute_station_pressures(
             station_states, pig_mp, pig_face_psig,
-            exit_psig, exit_mp, gas_profile,
+            pig_result.exit_psig, exit_mp, gas_profile,
             od_in, wt_in,
             cfg.fluid_sg, cfg.fluid_viscosity_cst, cfg.fluid_roughness_ft,
             # Size the station hydraulics at the ACTUAL flow (pig speed, floored at min) so the
@@ -1521,7 +1595,7 @@ def simulate(cfg: SimConfig, progress_cb: Optional[Callable[[float], None]] = No
         )
         mop_liq = check_mop_liquid_side(
             pig_mp, pig_face_psig, mop_joints,
-            exit_psig, exit_mp,
+            pig_result.exit_psig, exit_mp,
             fts_to_bph(mph_to_fts(pig_result.pig_speed_mph), area_ft2),
             cfg.fluid_sg, cfg.fluid_viscosity_cst, cfg.fluid_roughness_ft,
             cfg.mop_warning_fraction,
@@ -1545,7 +1619,7 @@ def simulate(cfg: SimConfig, progress_cb: Optional[Callable[[float], None]] = No
             pig_face_psig=pig_face_psig,
             segments=segs.summary(),
             gas_pressure_profile=gas_profile,
-            exit_psig=exit_psig,
+            exit_psig=pig_result.exit_psig,
             exit_mp=exit_mp,
             exit_description=exit_desc,
             mop_violations=mop_sum['n_violations'],
@@ -1558,6 +1632,11 @@ def simulate(cfg: SimConfig, progress_cb: Optional[Callable[[float], None]] = No
             station_shutdown_events=shutdown_events,
             slack_line_risk=pig_result.slack_line_risk,
             meter_valve_active=pig_result.meter_valve_active,
+            exit_min_psig=pig_result.exit_min_psig,
+            exit_max_psig=exit_max,
+            endpoint_added_psi=pig_result.endpoint_added_psi,
+            overspeed=pig_result.overspeed,
+            overspeed_mph=pig_result.overspeed_mph,
         )
         results.steps.append(step)
 

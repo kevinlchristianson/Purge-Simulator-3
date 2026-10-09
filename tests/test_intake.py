@@ -160,20 +160,28 @@ def test_hydraulic_endpoint_at_profile_end():
 
 def test_endpoint_receiver_and_modulating_behavior():
     ws = _ws(_fresh_kmz_scenario())
-    ws.apply_intake({**EXAMPLE, "exit_type": "pump_station"})
+    r = ws.apply_intake({**EXAMPLE, "exit_type": "pump_station"})
+    inp = ws.scenario.inputs
     assert ws.scenario.meta.intake["answers"]["exit_type"] == "pump_station"
+    # modulating is the norm: the endpoint holds 50 psig and may raise it as far as MOP
+    assert inp.exit_behavior == "modulating" and inp.exit_max_pressure_psig is None
+    assert any(x.startswith("Maximum endpoint pressure: the MOP at the pig stop (900 psig)") for x in r["assumptions"])
+    assert "modulating up to MOP at the stop" in ws.scenario.meta.notes
     v = intake.view(ws.scenario)
     q = {x["id"]: x for x in v["questions"]}
-    assert not q["exit_min_pressure_psig"]["relevant"] and v["missing"] == []
-    r = ws.apply_intake({"exit_behavior": "modulating"})
-    assert "exit_min_pressure_psig" in r["missing"]
-    r = ws.apply_intake({"exit_min_pressure_psig": 20})
-    # recorded, but the engine still holds the fixed endpoint pressure
-    assert r["missing"] == [] and ws.scenario.inputs.exit_pressure_run_psig == 50
-    assert ws.scenario.inputs.exit_pressure_behavior == "constant_run"
-    assert any("doesn't model a modulating endpoint" in w for w in r["warnings"])
-    with pytest.raises(InputError, match="can't be above"):
-        ws.apply_intake({"exit_min_pressure_psig": 80})
+    assert q["exit_max_pressure_psig"]["relevant"] and v["missing"] == []
+    r = ws.apply_intake({"exit_max_pressure_psig": 300})
+    assert ws.scenario.inputs.exit_max_pressure_psig == 300 and r["missing"] == []
+    assert "modulating up to 300 psig" in ws.scenario.meta.notes
+    with pytest.raises(InputError, match="can't be below"):
+        ws.apply_intake({"exit_max_pressure_psig": 20})
+    r = ws.apply_intake({"exit_behavior": "fixed", "exit_max_pressure_psig": None})
+    inp = ws.scenario.inputs
+    assert inp.exit_behavior == "fixed" and inp.exit_max_pressure_psig is None
+    assert inp.exit_pressure_run_psig == 50 and inp.exit_pressure_behavior == "constant_run"
+    assert any("Fixed endpoint" in w and "flagged" in w for w in r["warnings"])
+    assert "exit 50 psig fixed" in ws.scenario.meta.notes
+    assert not {x["id"]: x for x in intake.view(ws.scenario)["questions"]}["exit_max_pressure_psig"]["relevant"]
 
 
 def test_pig_speed_defaults():

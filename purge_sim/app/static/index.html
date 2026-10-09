@@ -695,7 +695,7 @@ async function renderSetup() {
     const tick = qc("fluid_exit_at_profile_end"), mp = qc("fluid_exit_mp");
     if (tick && mp) mp.disabled = tick.checked;
     const mod = (qc("exit_behavior").value || qd("exit_behavior").default) === "modulating";
-    if (row("exit_min_pressure_psig")) row("exit_min_pressure_psig").hidden = !mod;
+    if (row("exit_max_pressure_psig")) row("exit_max_pressure_psig").hidden = !mod;
   };
   if (qc("fluid_exit_at_profile_end")) qc("fluid_exit_at_profile_end").onchange = followEndpoint;
   qc("exit_behavior").onchange = followEndpoint;
@@ -746,12 +746,14 @@ const GROUPS = [
   ["Fluid", ["fluid_name", "fluid_sg", "fluid_viscosity_cst", "fluid_roughness_ft"]],
   ["N2 & injection", ["n2_temperature_f", "max_injection_psig", "max_injection_scfm", "smooth_injection", "injection_ramp_scfm_per_hr", "drive_setpoint_slew_psi_per_hr", "n2_budget_scf", "drive_mop_fraction"]],
   ["Pressure limits", ["maop_psig", "max_drive_psig", "drive_ceiling_fraction", "mop_warning_fraction"]],
-  ["Exit", ["exit_pressure_run_psig", "exit_pressure_end_psig", "exit_pressure_behavior", "throttle_down_miles"]],
+  ["Exit", ["exit_behavior", "exit_pressure_run_psig", "exit_max_pressure_psig", "exit_pressure_end_psig", "exit_pressure_behavior", "throttle_down_miles"]],
   ["Pig speed", ["min_speed_mph", "target_speed_mph", "max_speed_mph"]],
   ["Booster spreads", ["n_spreads", "mob_time_hr", "spread_discharge_psig", "spread_suction_min_psig", "spread_max_flow_scfm"]],
   ["Simulation", ["dt_hr", "adaptive_dt"]],
 ];
 const EXIT_OPTS = ["taper_last_n_miles", "step_last_n_miles", "linear_ramp", "constant_run", "constant_end"];
+// Fixed-choice inputs rendered as a dropdown (the rest are typed).
+const CHOICES = {exit_pressure_behavior: EXIT_OPTS, exit_behavior: ["modulating", "fixed"]};
 function renderInputs() {
   const el = $("#tab-inputs");
   if (!S.scenario) { el.innerHTML = `<div class="empty">Open a scenario first.</div>`; return; }
@@ -761,7 +763,7 @@ function renderInputs() {
     html += `<details class="group" open><summary>${g}</summary>` + keys.map(k => {
       const v = x[k];
       let ctl;
-      if (k === "exit_pressure_behavior") ctl = `<select data-k="${k}">${EXIT_OPTS.map(o => `<option ${o === v ? "selected" : ""}>${o}</option>`).join("")}</select>`;
+      if (CHOICES[k]) ctl = `<select data-k="${k}">${CHOICES[k].map(o => `<option ${o === v ? "selected" : ""}>${o}</option>`).join("")}</select>`;
       else if (typeof v === "boolean") ctl = `<select data-k="${k}" data-bool="1"><option ${v ? "selected" : ""}>true</option><option ${!v ? "selected" : ""}>false</option></select>`;
       else ctl = `<input data-k="${k}" value="${v == null ? "" : esc(v)}" placeholder="${v == null ? "none" : ""}" ${typeof v === "string" ? 'data-str="1"' : ""}>`;
       return `<div class="field"><label title="${k}">${k.replace(/_/g, " ")}</label>${ctl}</div>`;
@@ -772,7 +774,7 @@ function renderInputs() {
   el.querySelectorAll("[data-k]").forEach(inp => inp.onchange = async () => {
     const k = inp.dataset.k; let v = inp.value.trim();
     if (inp.dataset.bool) v = v === "true";
-    else if (!inp.dataset.str && k !== "exit_pressure_behavior") v = v === "" ? null : Number(v);
+    else if (!inp.dataset.str && !CHOICES[k]) v = v === "" ? null : Number(v);
     inp.parentElement.classList.remove("err");
     try { await api("/api/scenario/update", {body: {changes: {[k]: v}}}); await poll(); }
     catch (e) { inp.parentElement.classList.add("err"); toast(e.message); }

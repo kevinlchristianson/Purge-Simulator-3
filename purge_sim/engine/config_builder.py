@@ -36,7 +36,8 @@ def build_sim_config(inp: ScenarioInputs) -> SimConfig:
     # station's suction instead of the exit at the stop (GL-09: Lavina at MP 239.5 vs the
     # stop at MP 220, 30 psig instead of 583).
     pss = [
-        PumpStationConfig(mp=ps['mp'], name=ps['name'], suction_psig=ps['suction_psig'])
+        PumpStationConfig(mp=ps['mp'], name=ps['name'], suction_psig=ps['suction_psig'],
+                          max_suction_psig=ps.get('max_suction_psig'))
         for ps in inp.pump_stations
         if ps['mp'] < inp.purge_end_mp
     ]
@@ -94,6 +95,8 @@ def build_sim_config(inp: ScenarioInputs) -> SimConfig:
         exit_pressure_end_psig=inp.exit_pressure_end_psig,
         exit_pressure_behavior=inp.exit_pressure_behavior,
         throttle_down_miles=inp.throttle_down_miles,
+        exit_behavior=getattr(inp, 'exit_behavior', 'modulating'),
+        exit_max_pressure_psig=getattr(inp, 'exit_max_pressure_psig', None),
         min_speed_mph=inp.min_speed_mph,
         max_speed_mph=inp.max_speed_mph,
         target_speed_mph=inp.target_speed_mph,
