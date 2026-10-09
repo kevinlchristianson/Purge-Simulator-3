@@ -187,7 +187,12 @@ Click **Pre-run check** (free, under a second). It tells you, before any simulat
   and what speed the cap allows there;
 - the highest pack pressure that keeps every joint under MOP;
 - the minimum N2 for pack-and-coast at target speed;
-- downhill stretches steep enough to run away from the pig.
+- downhill stretches steep enough to run away from the pig;
+- whether the receiving end (pump suction, BPCV or tank inlet) can hold the pig at its maximum
+  speed where gravity or a packed N2 column would push it faster: how much pressure it has to
+  add, how much it can add, and where the pig will run over max speed if that isn't enough.
+  This covers what the terrain and the plan fix in advance; what a lean run's N2 column adds
+  on top (it can't shed pressure the moment a descent starts) only the run shows.
 
 If the check says the target speed can't be held under the drive cap, fix that now (lower
 the speed, or confirm a higher cap) instead of finding out after a long run.
@@ -203,6 +208,12 @@ Use the **Inputs** tab for:
   purge is still your call. This is the single biggest judgment the software can't make for
   you.
 - **The BPCV and booster stations.**
+- **The exit.** *exit behavior* (modulating or fixed), *exit pressure run psig* (the minimum
+  the receiving end holds) and *exit max pressure psig* (the most it can rise to when it
+  slows the pig; blank = the MOP at the pig stop). A scenario saved before the modulating
+  exit may still carry the old taper / step / ramp schedule: the Inputs tab then shows its
+  three extra fields with a yellow note, and the engine honors the schedule until you set
+  *exit pressure behavior* to constant_run (or apply Job setup).
 
 The **Infrastructure** lists (pump stations, check valves, booster stations, BPCV, pipe
 segments) are editable tables. Click a list's name to open it, then:
@@ -215,6 +226,9 @@ segments) are editable tables. Click a list's name to open it, then:
   list, for example a pipe-size list from a spreadsheet.
 - Nothing changes until you click that list's **Save**; **Discard** throws the edits away.
   The list shows "unsaved changes" until then.
+- **Pump stations:** *Max suction* is the most a station can raise its suction to (slowing
+  down) to hold the pig at max speed while it is the pig's exit; blank means the MOP at the
+  station.
 - **Booster stations:** a blank discharge, suction or flow uses the Booster spreads settings
   above. "Which boosters run" is either *the optimizer decides* or *only the ticked ones*,
   which adds a **Run** column to tick.
@@ -283,8 +297,8 @@ do: invent pipe size, product or MOP, or invent elevations. If one is missing, i
 ## 6. Reading results: what must be zero
 
 Open the **Overview** tab after every run. A clean run shows a green line: *No venting, no
-slack-line risk, no MOP violations.* Anything else is listed in red. The engineering rules
-behind these:
+slack-line risk, no MOP violations, pig never over max speed.* Anything else is listed in
+red. The engineering rules behind these:
 
 1. **N2 vented must be 0.** Venting is a last-resort safety net in the engine, never a plan.
    Any vented SCF means the drive or booster settings need fixing.
@@ -294,12 +308,20 @@ behind these:
 3. **MOP violation steps must be 0.** Check the worst MOP margin and where it is.
 4. **The run must complete.** "Did not complete" with a reason means the result is not a
    valid plan.
+5. **Over max speed steps should be 0.** The receiving end (a running pump station's
+   suction, the BPCV or the tank inlet) raises its pressure above its minimum to hold the
+   pig at max speed; *Max exit pressure* shows how high it had to go. Steps over max speed
+   mean it ran out of room (its maximum, by default the MOP there) or the exit is fixed. The
+   flag says which and where. Either raise the maximum the endpoint can hold, lower the
+   drive or pack pressure, or accept the overspeed knowingly.
 
 Also check:
 
 - **"Inputs changed since this run"** (yellow): the results on screen are from before your
   last edit. Run again before reading them.
-- **Pig speed:** average and minimum against your target and minimum speed.
+- **Pig speed:** average and minimum against your target and minimum speed. On the Charts
+  tab the speed chart draws the max speed line and a red dot on every step over it; the
+  pressure chart adds a dotted *Exit minimum* line wherever the exit rose above it.
 - **Booster plan:** which sites were used and why.
 - **Charts tab, elevation:** tick *Show elevation profile on each chart* to add the ground
   elevation (ft) on a right-hand axis of every chart. On the milepost charts it is the profile
@@ -384,7 +406,11 @@ name.
   milepost in the PxP or tally. Tick *Add a row at each valve, AGM, aerial marker, crossing
   and station* on the Reports tab to slot those in at their own positions, named in a
   *Feature* column (they come from the ILI or PxP import). On the client web page the
-  client can also show or hide those rows with a checkbox above the table.
+  client can also show or hide those rows with a checkbox above the table. When the
+  receiving end had to hold pressure during the run (or the pig ran over max speed), the
+  table gains an *Endpoint Pressure (psi)* column, the pressure it holds at each row, and
+  the speed cell is shaded orange on the rows where the pig ran over its maximum. The full
+  technical report always carries *Exit Pressure*, *Endpoint Added* and *Over Max Speed*.
 - **One at a time:** *Client web page*, *Client report* (Purge Report table + charts, xlsx)
   for the client, *Full technical report* (7 sheets) for your own record, *Run log*, and the
   *Profile animation* GIF.

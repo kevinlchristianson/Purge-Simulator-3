@@ -503,6 +503,9 @@ function guideHtml(text) {
 function renderTab() {
   ({guide: renderGuide, overview: renderOverview, setup: renderSetup, inputs: renderInputs, charts: renderCharts, profile: renderProfile, map: renderMap, exports: renderExports})[S.tab]();
 }
+// A scenario still on the old position-based exit schedule (taper / step / ramp / constant_end).
+const legacyExitHtml = sc => sc.legacy_exit_schedule
+  ? `<div class="flag warn small">This scenario still carries a ${esc(sc.legacy_exit_schedule)}. The engine honors it as before. New jobs hold a minimum exit pressure that modulates to keep the pig under max speed; to switch this one, set exit pressure behavior to constant_run on the Inputs tab (or apply Job setup).</div>` : "";
 function renderOverview() {
   const el = $("#tab-overview");
   if (!S.scenario) {
@@ -516,7 +519,7 @@ function renderOverview() {
   let html = `<div class="card"><div class="small muted">MP ${fmt(x.purge_start_mp, 2)} → ${fmt(x.purge_end_mp, 2)} (${fmt(x.purge_end_mp - x.purge_start_mp, 1)} mi) · ${esc(x.fluid_name)} SG ${x.fluid_sg} · target ${x.target_speed_mph} mph ·
     max drive ${x.max_drive_psig ?? "—"} psig · ${sc.pump_stations.length} pump stations · ${sc.check_valves.length} check valves · ${sc.booster_stations.length} booster sites${sc.bpcv ? " · BPCV" : ""}
     · ${fmt(ep.points)} profile pts · ${fmt(mj.joints)} MOP joints${mj.joints ? ` (min ${fmt(mj.mop_min_psig)} psig @ MP ${fmt(mj.mop_min_mp, 2)})` : ""}</div>
-    ${elevLine(sc)}</div>`;
+    ${elevLine(sc)}${legacyExitHtml(sc)}</div>`;
   const r = S.results;
   if (!r) {
     html += `<div class="empty">No results yet. Press <b>Run</b>.</div>`;
@@ -533,10 +536,12 @@ function renderOverview() {
       ${kpi(fmt(s.pig_face_psig && s.pig_face_psig.max), "Max face (psig)")}
       ${kpi(fmt(s.mop_violation_steps), "MOP violation steps")}
       ${kpi(fmt(s.slack_line_risk_steps), "Slack-line risk steps")}
+      ${kpi(fmt(s.exit_psig_max), "Max exit pressure (psig)")}
+      ${kpi(fmt(s.overspeed_steps), "Over max speed steps")}
     </div>`;
     const flags = s.flags || [];
     html += flags.length ? flags.map(f => `<div class="flag bad">${esc(f)}</div>`).join("")
-                         : `<div class="flag good">No venting, no slack-line risk, no MOP violations.</div>`;
+                         : `<div class="flag good">No venting, no slack-line risk, no MOP violations, pig never over max speed.</div>`;
     if (s.booster_plan) html += `<div class="card"><b>Booster plan</b><div class="small">${s.booster_plan.sites_mp.map(m => "MP " + fmt(m, 2) + (s.booster_plan.reasons[String(m)] ? ": " + esc(s.booster_plan.reasons[String(m)]) : "")).join("<br>") || "None deployed"}</div>
       ${s.booster_plan.notes.length ? `<div class="small muted">${s.booster_plan.notes.map(esc).join("<br>")}</div>` : ""}</div>`;
     if (s.roadmap_report) html += `<details class="card"><summary><b>Pressure roadmap</b></summary><pre>${esc(s.roadmap_report)}</pre></details>`;
@@ -733,6 +738,7 @@ function setupReportHtml(r) {
         ${kpi(fmt(p.static_pack_limit_psig), "Flat pack limit (psig)")}
         ${kpi(fmt(p.line_volume_bbl), "Line volume (bbl)")}
         ${kpi(p.n2_min_coast_budget_scf ? fmt(p.n2_min_coast_budget_scf / 1e6, 2) : "—", "Min coast N2 (MMscf)")}
+        ${p.endpoint_hold ? kpi(fmt(p.endpoint_hold.needed_psi) + (p.endpoint_hold.room_psi == null ? "" : ` / ${fmt(p.endpoint_hold.room_psi)}`), "Exit back-pressure to hold max speed: needed / available (psi)") : ""}
       </div>
       <ul class="small">${(p.findings || []).map(f => `<li>${esc(f)}</li>`).join("")}</ul>
       <div class="small muted">An estimate from terrain and steady friction at target speed, exit at ${esc(p.exit_note || "the pig stop")}. Run the scenario for the real answer.</div></div>`;
@@ -746,21 +752,30 @@ const GROUPS = [
   ["Fluid", ["fluid_name", "fluid_sg", "fluid_viscosity_cst", "fluid_roughness_ft"]],
   ["N2 & injection", ["n2_temperature_f", "max_injection_psig", "max_injection_scfm", "smooth_injection", "injection_ramp_scfm_per_hr", "drive_setpoint_slew_psi_per_hr", "n2_budget_scf", "drive_mop_fraction"]],
   ["Pressure limits", ["maop_psig", "max_drive_psig", "drive_ceiling_fraction", "mop_warning_fraction"]],
-  ["Exit", ["exit_behavior", "exit_pressure_run_psig", "exit_max_pressure_psig", "exit_pressure_end_psig", "exit_pressure_behavior", "throttle_down_miles"]],
+  ["Exit", ["exit_behavior", "exit_pressure_run_psig", "exit_max_pressure_psig"]],
   ["Pig speed", ["min_speed_mph", "target_speed_mph", "max_speed_mph"]],
   ["Booster spreads", ["n_spreads", "mob_time_hr", "spread_discharge_psig", "spread_suction_min_psig", "spread_max_flow_scfm"]],
   ["Simulation", ["dt_hr", "adaptive_dt"]],
 ];
 const EXIT_OPTS = ["taper_last_n_miles", "step_last_n_miles", "linear_ramp", "constant_run", "constant_end"];
+// The old position-based exit schedule: shown only while a scenario still carries one
+// (anything but constant_run), so it can be read and switched off. New jobs never set it.
+const LEGACY_EXIT = ["exit_pressure_behavior", "exit_pressure_end_psig", "throttle_down_miles"];
 // Fixed-choice inputs rendered as a dropdown (the rest are typed).
 const CHOICES = {exit_pressure_behavior: EXIT_OPTS, exit_behavior: ["modulating", "fixed"]};
+const GROUP_HINTS = {
+  Exit: "The exit is whatever is nearest downstream of the pig: a running pump station's suction, the BPCV, or the tank inlet. It holds <b>exit pressure run psig</b> as its minimum. <b>Modulating</b> raises it to hold the pig at max speed, up to <b>exit max pressure psig</b> (blank = the MOP at the pig stop; a station's limit is its max suction, the BPCV's its downstream MOP). <b>Fixed</b> holds the minimum and the run flags every step the pig is over max speed.",
+};
 function renderInputs() {
   const el = $("#tab-inputs");
   if (!S.scenario) { el.innerHTML = `<div class="empty">Open a scenario first.</div>`; return; }
   const x = S.scenario.scalars;
   let html = `<div class="grid2">`;
-  for (const [g, keys] of GROUPS) {
-    html += `<details class="group" open><summary>${g}</summary>` + keys.map(k => {
+  for (const [g, keys0] of GROUPS) {
+    const legacy = g === "Exit" && x.exit_pressure_behavior != null && x.exit_pressure_behavior !== "constant_run";
+    const keys = legacy ? keys0.concat(LEGACY_EXIT) : keys0;
+    html += `<details class="group" open><summary>${g}</summary>` + (GROUP_HINTS[g] ? `<p class="small muted">${GROUP_HINTS[g]}</p>` : "")
+      + (legacy ? legacyExitHtml(S.scenario) : "") + keys.map(k => {
       const v = x[k];
       let ctl;
       if (CHOICES[k]) ctl = `<select data-k="${k}">${CHOICES[k].map(o => `<option ${o === v ? "selected" : ""}>${o}</option>`).join("")}</select>`;
@@ -791,8 +806,9 @@ const COL_NAME = {k: "name", h: "Name", type: "text", req: true};
 const COL_MP = {k: "mp", h: "MP", type: "num", req: true};
 const INFRA = [
   {k: "pump_stations", label: "Pump stations", mpKey: "mp",
-   hint: "Stations that hold the liquid ahead of the pig until they are no longer needed. Suction is the inlet pressure the station needs while it pumps.",
-   cols: [COL_NAME, COL_MP, {k: "suction_psig", h: "Suction (psig)", type: "num", req: true, def: 30}]},
+   hint: "Stations that hold the liquid ahead of the pig until they are no longer needed. Suction is the inlet pressure the station needs while it pumps; Max suction is the most it can raise that to (slowing down) to hold the pig at max speed while it is the pig's exit. Blank = the MOP at the station.",
+   cols: [COL_NAME, COL_MP, {k: "suction_psig", h: "Suction (psig)", type: "num", req: true, def: 30},
+          {k: "max_suction_psig", h: "Max suction (psig)", type: "num", ph: "MOP"}]},
   {k: "check_valves", label: "Check valves", mpKey: "mp",
    hint: "Mainline check valves. Each one splits the N2 behind the pig into its own section.",
    cols: [COL_NAME, COL_MP, {k: "is_pump_station", h: "At a pump station", type: "bool"}]},
@@ -1049,6 +1065,10 @@ function lineChart(opts) {
   }
   for (const s of opts.series) {
     const r = {right: R, elev: E}[s.axis] || L; if (!r) continue;
+    if (s.dots) {   // one dot per flagged step (overspeed), no line
+      opts.x.forEach((xv, i) => { const yv = s.y[i]; if (xv != null && yv != null) g += `<circle cx="${sx(xv).toFixed(1)}" cy="${sy(yv, r).toFixed(1)}" r="2.6" fill="${s.color}"/>`; });
+      continue;
+    }
     let d = "", pen = false;
     opts.x.forEach((xv, i) => { const yv = s.y[i]; if (xv == null || yv == null) { pen = false; return; } d += (pen ? "L" : "M") + sx(xv).toFixed(1) + " " + sy(yv, r).toFixed(1); pen = true; });
     if (s.fill && d) {   // shaded down to the chart floor (ground profile); only for x that only increases
@@ -1075,15 +1095,20 @@ function renderCharts() {
   // elevation under the pig: along the route on the milepost charts, over time on the time charts
   const elev = name => showElev && hasElev ? [{name, y: pigElev, color: "var(--ground)", axis: "elev", width: 1.2, fill: true}] : [];
   const faceHgl = s.pig_face_psig.map((p, i) => p == null || pigElev[i] == null ? null : pigElev[i] + p / grad);
+  // the exit's work: where it rose above its minimum to hold max speed, and where it could not
+  const sm = S.results.summary || {};
+  const over = (s.overspeed || []).some(Boolean) ? [{name: "Over max speed", y: s.pig_speed_mph.map((v, i) => s.overspeed[i] ? v : null), color: "var(--bad)", dots: true}] : [];
+  const maxLine = sm.max_speed_mph != null ? [{name: `Max speed (${sm.max_speed_mph} mph)`, y: s.pig_mp.map(() => sm.max_speed_mph), color: "var(--muted)", dash: "6 3", width: 1}] : [];
+  const exitMin = (s.endpoint_added_psi || []).some(v => v > 0.5) ? [{name: "Exit minimum", y: s.exit_min_psig, color: "var(--s3)", dash: "1 3", width: 1.2}] : [];
   el.innerHTML =
     `<div class="card" style="display:flex;gap:16px;align-items:center;flex-wrap:wrap">
        <label class="small"><input type="checkbox" id="chElev" ${showElev ? "checked" : ""} ${hasElev ? "" : "disabled"}> Show elevation profile on each chart (right axis, ft)</label>
        ${hasElev ? "" : `<span class="small muted">This run has no elevation profile.</span>`}</div>
      <div class="card"><b>Pig speed along the route</b>${lineChart({x: s.pig_mp, xLabel: "Pig milepost", yLabel: "mph",
-       series: [{name: "Pig speed", y: s.pig_speed_mph, color: "var(--s1)"}, ...elev("Elevation (ft)")]})}</div>
+       series: [{name: "Pig speed", y: s.pig_speed_mph, color: "var(--s1)"}, ...maxLine, ...over, ...elev("Elevation (ft)")]})}</div>
      <div class="card"><b>Pressures along the route</b>${lineChart({x: s.pig_mp, xLabel: "Pig milepost", yLabel: "psig", elevLabel: "Elevation / head ft",
        series: [{name: "Pig face", y: s.pig_face_psig, color: "var(--s1)"}, {name: "Injection", y: s.injection_psig, color: "var(--s2)"},
-                {name: "Exit", y: s.exit_psig, color: "var(--s3)", dash: "4 3"}, ...elev("Elevation (ft)"),
+                {name: "Exit", y: s.exit_psig, color: "var(--s3)", dash: "4 3"}, ...exitMin, ...elev("Elevation (ft)"),
                 ...(showElev && hasElev ? [{name: "HGL at pig face (ft)", y: faceHgl, color: "var(--hgl)", axis: "elev", width: 1.6}] : [])]})}</div>
      <div class="card"><b>N2 over time</b>${lineChart({x: s.t_hr, xLabel: "Hours", yLabel: "SCF in line", y2Label: "Injection SCFM", zeroBase: true,
        series: [{name: "N2 inventory (SCF)", y: s.total_scf, color: "var(--s4)"}, {name: "Injection rate (SCFM)", y: s.injection_scfm, color: "var(--s2)", axis: "right"},
@@ -1155,10 +1180,13 @@ function renderProfile() {
   bindPlay("#pfPlay", "#pfStep", "profile", drawProfile);
   drawProfile();
 }
+// what the exit is doing at this step: holding the pig back, or out of room
+const exitNote = p => (p.endpoint_added_psi > 0.5 ? ` · exit holding +${fmt(p.endpoint_added_psi)} psi over its ${fmt(p.exit_min_psig)} psig minimum` : "")
+  + (p.overspeed ? ` · <span style="color:var(--bad)">over max speed by ${fmt(p.overspeed_mph, 2)} mph</span>` : "");
 async function drawProfile() {
   let p; try { p = await api("/api/results/profile?step=" + S.profileStep); } catch (e) { return; }
   if (!$("#pfChart")) return;
-  $("#pfInfo").innerHTML = `t = ${fmt(p.t_hr, 2)} hr · pig at MP ${fmt(p.pig_mp, 2)} · ${fmt(p.pig_speed_mph, 2)} mph · face ${fmt(p.pig_face_psig)} psig · exit ${fmt(p.exit_psig)} psig at MP ${fmt(p.exit_mp, 2)} (${esc(p.exit_description)})${p.slack_line_risk ? ' · <span style="color:var(--bad)">slack-line risk</span>' : ""}`;
+  $("#pfInfo").innerHTML = `t = ${fmt(p.t_hr, 2)} hr · pig at MP ${fmt(p.pig_mp, 2)} · ${fmt(p.pig_speed_mph, 2)} mph · face ${fmt(p.pig_face_psig)} psig · exit ${fmt(p.exit_psig)} psig at MP ${fmt(p.exit_mp, 2)} (${esc(p.exit_description)})${exitNote(p)}${p.slack_line_risk ? ' · <span style="color:var(--bad)">slack-line risk</span>' : ""}`;
   $("#pfChart").innerHTML = hglChart(p);
   $("#pfStations").innerHTML = p.stations.length ? `<table class="t"><tr><th>Station</th><th>MP</th><th>Status</th><th>Discharge psig</th></tr>` +
     p.stations.map(s => `<tr><td>${esc(s.name)}</td><td class="n">${fmt(s.mp, 2)}</td><td>${esc(s.status)}</td><td class="n">${fmt(s.discharge_psig)}</td></tr>`).join("") + `</table>` : "";
@@ -1376,7 +1404,7 @@ async function drawMapStep() {
   // scrubber read-out and profile underneath
   if (p) {
     const pct = b > a ? Math.max(0, Math.min(100, (pig - a) / (b - a) * 100)) : 0;
-    $("#mpInfo").innerHTML = `t = ${fmt(p.t_hr, 2)} hr · pig at MP ${fmt(pig, 2)} (${fmt(pct, 0)}% of the purge) · ${fmt(p.pig_speed_mph, 2)} mph · face ${fmt(p.pig_face_psig)} psig · exit ${fmt(p.exit_psig)} psig${p.slack_line_risk ? ' · <span style="color:var(--bad)">slack-line risk</span>' : ""}${S.state.results_stale ? ' · <span style="color:var(--warn)">inputs changed since this run</span>' : ""}`;
+    $("#mpInfo").innerHTML = `t = ${fmt(p.t_hr, 2)} hr · pig at MP ${fmt(pig, 2)} (${fmt(pct, 0)}% of the purge) · ${fmt(p.pig_speed_mph, 2)} mph · face ${fmt(p.pig_face_psig)} psig · exit ${fmt(p.exit_psig)} psig${exitNote(p)}${p.slack_line_risk ? ' · <span style="color:var(--bad)">slack-line risk</span>' : ""}${S.state.results_stale ? ' · <span style="color:var(--warn)">inputs changed since this run</span>' : ""}`;
     $("#mapChartTitle").textContent = "Pressure and elevation profile at this moment";
     $("#mapChart").innerHTML = hglChart(p);
   } else {

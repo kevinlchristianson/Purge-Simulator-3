@@ -14,7 +14,10 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO_ROOT)
 os.environ.setdefault("MPLBACKEND", "Agg")
 
-from purge_sim.app.workspace import InputError, Workspace, results_summary   # noqa: E402
+from purge_sim.app.client_report import build_data, render_html              # noqa: E402
+from purge_sim.app.workspace import InputError, Workspace, inputs_summary, results_summary   # noqa: E402
+from purge_sim.engine.log_export import export_run_log                        # noqa: E402
+from purge_sim.engine.purge_report import purge_report_rows                   # noqa: E402
 from purge_sim.engine.physics import liquid_friction_loss_psi, mph_to_fts     # noqa: E402
 from purge_sim.engine.pig_solver import PigSolverConfig, solve_pig_speed      # noqa: E402
 from purge_sim.engine.pump_stations import (                                  # noqa: E402
@@ -22,6 +25,8 @@ from purge_sim.engine.pump_stations import (                                  # 
     effective_exit_window)
 
 SHORT = "bundled:CHS_TipvilleSantaRita_East10/tipville_east10_3mph.json"
+WB08 = "bundled:WB08_Spindle_MP10_butane/wb08_butane_1000psi.json"          # legacy step 450 -> 175 psig
+SPMT = "bundled:PMPL_SPtoMT/sp_to_mt_shls_packcoast_48m.json"              # BPCV is the exit, packed column
 
 # A flat 10" diesel line, pig at MP 0, exit 10 miles ahead at 50 psig.
 CFG = PigSolverConfig(od_in=10.75, wt_in=0.365, roughness_ft=0.00015, sg=0.84, viscosity_cst=3.0,
@@ -168,3 +173,79 @@ def test_exit_maximum_can_be_typed_and_is_validated():
     assert all(st.exit_max_psig == 80.0 for st in res.steps)
     assert s["endpoint_added_psi_max"] == pytest.approx(30.0, abs=0.1)
     assert s["overspeed_steps"] > 0 and any("80 psig" in f for f in s["flags"])
+
+
+# ---------------------------------------------------------------- reports, views, pre-run check
+
+def test_reports_carry_the_exit_pressure_and_overspeed(tmp_path):
+    ws = Workspace()
+    ws.load(SHORT)
+    ws.update_inputs({"exit_behavior": "fixed"})
+    res = ws.run()
+    s = results_summary(res)
+    assert "meter_valve_steps" not in s and s["max_speed_mph"] == 3.0 and s["exit_min_psig"] == 50.0
+    rows = purge_report_rows(res)
+    assert any(r["overspeed"] for r in rows)
+    assert all({"exit_psi", "exit_min_psi", "endpoint_added_psi", "overspeed"} <= set(r) for r in rows)
+    export_run_log(res, str(tmp_path / "log.txt"), "t")
+    txt = (tmp_path / "log.txt").read_text()
+    assert "exit_psig,exit_min_psig,endpoint_added_psi," in txt and ",slack_line,overspeed,overspeed_mph," in txt
+    assert "meter_valve" not in txt and "fixed at 50.0 psig" in txt and "Over max speed:" in txt
+    html = render_html(build_data(res, "t", inputs=ws.scenario.inputs))
+    assert "Endpoint Pressure (psi)" in html and '"flag":"over"' in html and '"has_endpoint":true' in html
+    openpyxl = pytest.importorskip("openpyxl")
+    from purge_sim.engine.formatted_report import export_formatted_report
+    from purge_sim.engine.purge_report import export_purge_report
+    export_purge_report(res, str(tmp_path / "full.xlsx"), "t")
+    export_formatted_report(res, str(tmp_path / "client.xlsx"), "t")
+    wb = openpyxl.load_workbook(str(tmp_path / "full.xlsx"))
+    hdr = [c.value for c in wb["Condensed Results"][3]]
+    assert "Endpoint Added (psi)" in hdr and "Over Max Speed" in hdr
+    assert "Meter Valve Active" not in [c.value for c in wb["Raw Data"][3]]
+    inputs = {r[0].value: r[1].value for r in wb["Simulation Inputs"].iter_rows(min_row=3) if r[0].value}
+    assert inputs["Exit Behavior"].startswith("fixed") and "Throttle Down (miles from end)" not in inputs
+    client = openpyxl.load_workbook(str(tmp_path / "client.xlsx"))["Purge Report"]
+    assert "Endpoint Pressure (psi)" in [c.value for c in client[17]]
+
+
+def test_client_table_keeps_its_layout_when_the_exit_never_modulates():
+    ws = Workspace()
+    ws.load(SHORT)
+    ws.update_inputs({"max_speed_mph": 50.0})      # nothing ever pushes the pig that fast
+    res = ws.run()
+    s = results_summary(res)
+    assert s["endpoint_throttling_steps"] == 0 and s["overspeed_steps"] == 0
+    data = build_data(res, "t", inputs=ws.scenario.inputs)
+    assert not data["purge"]["has_endpoint"]
+    assert [c["h"] for c in data["purge"]["cols"]][:8] == ["Miles", "Elevation (ft)", "Elapsed Time (hr)", "Drive Pressure (psi)",
+                                                           "Friction Loss (psi)", "Injection Rate (SCFM)", "Cumulative N2 (SCF)",
+                                                           "Pig Speed (mph)"]
+    assert data["basis"][6][0] == "Endpoint pressure" and "modulating up to the MOP at the exit" in data["basis"][6][1]
+
+
+def test_legacy_exit_schedule_is_named_on_load_and_nowhere_else():
+    ws = Workspace()
+    ws.load(WB08)
+    note = inputs_summary(ws.scenario)["legacy_exit_schedule"]
+    assert note.startswith("legacy schedule step_last_n_miles") and "450 to 175 psig" in note
+    ws.load(SHORT)
+    assert inputs_summary(ws.scenario)["legacy_exit_schedule"] is None
+    ws.load(SPMT)       # carries taper_last_n_miles 50 -> 50: a schedule that changes nothing
+    assert inputs_summary(ws.scenario)["legacy_exit_schedule"] is None
+
+
+def test_precheck_says_what_the_exit_must_hold():
+    ws = Workspace()
+    ws.load(SHORT)
+    h = ws.precheck()["endpoint_hold"]
+    assert h["ok"] and not h["fixed"] and h["exit"] == "tank inlet" and h["exit_max_psig"] == 1000
+    ws.update_inputs({"exit_behavior": "fixed"})
+    h = ws.precheck()["endpoint_hold"]
+    assert h["fixed"] and h["room_psi"] == 0
+    # SP to MT pack-and-coast: the packed column pushes harder than the BPCV can hold on the descent
+    ws.load(SPMT)
+    pc = ws.precheck()
+    h = pc["endpoint_hold"]
+    assert not h["ok"] and h["exit"] == "BPCV" and h["cause"] == "packed N2 column"
+    assert h["needed_psi"] > h["room_psi"] and h["overspeed_mph"] > ws.scenario.inputs.max_speed_mph
+    assert "overspeed risk" in pc["job_type"] and any("BPCV would have to add" in f for f in pc["findings"])

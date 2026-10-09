@@ -14,6 +14,41 @@ from typing import Optional
 from .simulator import SimResults, SimConfig
 
 
+def legacy_exit_schedule(cfg) -> str:
+    """The old position-based exit schedule a config still carries, as text, or "" when it
+    holds a constant minimum (every job since the modulating exit model). Relic of the
+    pre-v30 engine; kept so old scenarios run as they did until they are edited."""
+    behavior = str(getattr(cfg, "exit_pressure_behavior", "constant_run") or "constant_run")
+    if behavior == "constant_run":
+        return ""
+    run_p = float(getattr(cfg, "exit_pressure_run_psig", 0.0))
+    end_p = float(getattr(cfg, "exit_pressure_end_psig", run_p))
+    td = float(getattr(cfg, "throttle_down_miles", 0.0) or 0.0)
+    if abs(end_p - run_p) < 1e-9 or (behavior in ("taper_last_n_miles", "step_last_n_miles") and td <= 0):
+        return ""          # a schedule that never leaves the minimum changes nothing
+    if behavior == "constant_end":
+        return f"legacy schedule constant_end: {end_p:.0f} psig throughout"
+    if behavior == "linear_ramp":
+        return f"legacy schedule linear_ramp: {run_p:.0f} to {end_p:.0f} psig over the whole run"
+    return f"legacy schedule {behavior}: {run_p:.0f} to {end_p:.0f} psig over the last {td:g} mi"
+
+
+def exit_condition_text(cfg) -> str:
+    """How the exit (nearest running pump suction, BPCV or tank inlet downstream of the pig)
+    holds its inlet pressure: the minimum, and how far it may rise to hold max pig speed."""
+    run_p = float(getattr(cfg, "exit_pressure_run_psig", 0.0))
+    behavior = getattr(cfg, "exit_behavior", "modulating")
+    if behavior == "fixed":
+        txt = f"fixed at {run_p:.1f} psig (the pig may run over max speed; flagged)"
+    else:
+        mx = getattr(cfg, "exit_max_pressure_psig", None)
+        lim = f"{float(mx):.0f} psig" if mx is not None else "the MOP at the exit"
+        txt = (f"holds {run_p:.1f} psig minimum, modulating up to {lim} to hold "
+               f"{getattr(cfg, 'max_speed_mph', 0.0):g} mph")
+    legacy = legacy_exit_schedule(cfg)
+    return txt + (f"; {legacy}" if legacy else "")
+
+
 def export_run_log(results: SimResults, path: str, scenario_name: str = "") -> None:
     """
     Write a full run log to `path`.
@@ -62,7 +97,7 @@ def export_run_log(results: SimResults, path: str, scenario_name: str = "") -> N
         f"  MAOP:              " + (f"{cfg.maop_psig:.1f} psig" if math.isfinite(cfg.maop_psig) else "unconstrained (MOP profile applies)"),
         f"  Max drive:         " + (f"{cfg.max_drive_psig:.1f} psig" if math.isfinite(cfg.max_drive_psig) else "unconstrained"),
         f"  Fluid:             SG={cfg.fluid_sg}, visc={cfg.fluid_viscosity_cst} cSt, rough={cfg.fluid_roughness_ft} ft",
-        f"  Exit condition:    {cfg.exit_pressure_behavior} {cfg.exit_pressure_run_psig:.1f} psig",
+        f"  Exit:              {exit_condition_text(cfg)}",
         f"  BPCV:              {bpcv_str}",
         f"  Pump stations ({len(cfg.pump_stations)}): {station_names}",
         f"  Booster stations ({len(cfg.booster_configs)}): {booster_names}",
@@ -102,8 +137,18 @@ def export_run_log(results: SimResults, path: str, scenario_name: str = "") -> N
         f"  Max pig-face P:    {max(faces):.1f} psig" if results.steps else "  Max pig-face P:    n/a",
         f"  MOP violations:    {total_viol:,}  (joint-steps)",
         f"  MOP warnings:      {total_warn:,}  (joint-steps)",
-        "",
     ]
+    if results.steps:
+        throttled = [s for s in results.steps if s.endpoint_added_psi > 0.5]
+        over = [s for s in results.steps if s.overspeed]
+        most = max(throttled, key=lambda s: s.endpoint_added_psi, default=None)
+        lines.append(f"  Exit held back:    {len(throttled):,} steps"
+                     + (f"  (up to +{most.endpoint_added_psi:.1f} psi at MP {most.pig_mp:.2f}, "
+                        f"exit {most.exit_psig:.1f} psig)" if most else ""))
+        lines.append(f"  Over max speed:    {len(over):,} steps"
+                     + (f"  (up to {max(s.overspeed_mph for s in over):.2f} mph over, "
+                        f"MP {over[0].pig_mp:.2f} to {over[-1].pig_mp:.2f})" if over else ""))
+    lines.append("")
 
     # -----------------------------------------------------------------------
     # 4. Station shutdown events
@@ -165,17 +210,18 @@ def export_run_log(results: SimResults, path: str, scenario_name: str = "") -> N
     lines += [
         "STEP DATA (CSV)",
         "time_hr,pig_mp,pig_speed_mph,pig_face_psig,injection_scfm,injection_psig,"
-        "exit_psig,exit_mp,exit_description,n_mop_violations,n_mop_warnings,"
-        "slack_line,meter_valve,total_scf",
+        "exit_psig,exit_min_psig,endpoint_added_psi,exit_mp,exit_description,"
+        "n_mop_violations,n_mop_warnings,slack_line,overspeed,overspeed_mph,total_scf",
     ]
     for s in results.steps:
         exit_desc_clean = s.exit_description.replace(",", ";")
         lines.append(
             f"{s.t_hr:.4f},{s.pig_mp:.4f},{s.pig_speed_mph:.4f},"
             f"{s.pig_face_psig:.2f},{s.injection_scfm:.1f},{s.injection_psig:.2f},"
-            f"{s.exit_psig:.2f},{s.exit_mp:.4f},{exit_desc_clean},"
+            f"{s.exit_psig:.2f},{s.exit_min_psig:.2f},{s.endpoint_added_psi:.2f},"
+            f"{s.exit_mp:.4f},{exit_desc_clean},"
             f"{s.mop_violations},{s.mop_warnings},"
-            f"{int(s.slack_line_risk)},{int(s.meter_valve_active)},"
+            f"{int(s.slack_line_risk)},{int(s.overspeed)},{s.overspeed_mph:.3f},"
             f"{s.total_scf:.0f}"
         )
 
