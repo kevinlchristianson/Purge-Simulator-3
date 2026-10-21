@@ -271,8 +271,9 @@ class ResultsPanel(ttk.Frame):
         fig = self._figures["Pig Speed"]
         fig.clear()
         plot_pig_speed(fig, times, mps, [s.pig_speed_mph for s in steps],
-                       [s.meter_valve_active for s in steps],
-                       [s.slack_line_risk for s in steps])
+                       [s.endpoint_added_psi > 0.5 for s in steps],
+                       [s.slack_line_risk for s in steps],
+                       [s.overspeed for s in steps])
         self._canvases["Pig Speed"].draw()
 
         # Pressure + MOP

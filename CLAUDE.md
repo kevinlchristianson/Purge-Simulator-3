@@ -73,7 +73,8 @@ purge_sim/
                          the step is flagged (SimStep.overspeed, endpoint_added_psi). Injection
                          and station shutdowns read the exit's minimum, never the raised value,
                          so the N2 controller can't fight the throttle. The old taper/step/ramp
-                         exit schedules are relics kept only so old scenarios load
+                         exit schedules are relics kept only so old scenarios load (the Inputs tab
+                         shows them, with a note, only while a scenario still carries one)
     mop_check.py       — per-joint pressure vs MOP every timestep, from the HGL
     hgl.py             — Hydraulic Grade Line: full-route pressure profile at one timestep
                          (gas side behind pig, liquid side ahead); feeds the profile chart,
@@ -89,11 +90,15 @@ purge_sim/
     purge_report.py     — comprehensive 7-sheet technical xlsx (full run-data record);
                          also purge_report_rows(), the 1/4-mile Purge Report rows both client
                          reports share
-    log_export.py       — human-readable + CSV run log export
+    log_export.py       — human-readable + CSV run log export; exit_condition_text() /
+                         legacy_exit_schedule() describe the exit for every report
     precheck.py         — pre-run job check, no simulation: speed- vs drive-capped (and the speed
                          the cap allows), friction share, laminar, descents steeper than friction,
                          flat pack limit under MOP (at rest / moving), min pack-and-coast N2,
-                         vapor check; exit_pressure_at_stop() for a liquid exit past the pig stop
+                         vapor check, endpoint_hold (back-pressure the exit must add to hold max
+                         speed against gravity / the packed column vs what it can add, and the
+                         overspeed if not); exit_pressure_at_stop() for a liquid exit past the
+                         pig stop
     config_builder.py   — build_sim_config(ScenarioInputs) -> SimConfig; the one place a scenario
                          becomes an engine config (headless runner, tests and the app all use it)
   app/                  — standalone app (python app.py), standard-library HTTP server

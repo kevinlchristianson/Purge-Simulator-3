@@ -29,6 +29,7 @@ from ..data.elevation import DEFAULT_SPACING_FT, ElevationError, describe_source
 from ..data.scenario import Scenario, ScenarioInputs, load_scenario, save_scenario
 from ..engine.config_builder import build_sim_config
 from ..engine.simulator import SimResults, simulate
+from ..engine.log_export import legacy_exit_schedule
 from . import paths
 
 
@@ -301,6 +302,9 @@ def inputs_summary(sc: Scenario) -> dict:
         "elevation_source": inp.elevation_source,
         "route_points": len(inp.route_latlon),
         "mop_joints": mop_stats(inp.mop_joints),
+        # a scenario still on the old position-based exit schedule (taper / step / ramp /
+        # constant_end); the engine honors it until the exit is edited or Job setup is applied
+        "legacy_exit_schedule": legacy_exit_schedule(inp) or None,
     }
 
 
@@ -339,7 +343,6 @@ def results_summary(res: SimResults) -> dict:
             "worst_mop_mp": _f(worst.worst_mop_mp) if worst else None,
             "slack_line_risk_steps": len(slack),
             "slack_line_risk_mp_range": [_f(slack[0].pig_mp), _f(slack[-1].pig_mp)] if slack else None,
-            "meter_valve_steps": int(sum(1 for s in steps if s.meter_valve_active)),
         })
         # Exit modulation: steps the exit raised its inlet pressure to hold max speed, the most
         # it added and where, and the steps it ran out of room (pig over max speed).
@@ -349,6 +352,8 @@ def results_summary(res: SimResults) -> dict:
         fastest = max(over, key=lambda s: s.overspeed_mph, default=None)
         out.update({
             "exit_behavior": getattr(cfg, "exit_behavior", "modulating"),
+            "exit_min_psig": _f(cfg.exit_pressure_run_psig, 1),
+            "max_speed_mph": _f(cfg.max_speed_mph, 2),
             "endpoint_throttling_steps": len(throttling),
             "endpoint_added_psi_max": _f(most.endpoint_added_psi, 1) if most else 0.0,
             "endpoint_added_psi_max_mp": _f(most.pig_mp) if most else None,
@@ -855,6 +860,8 @@ class Workspace:
             "pig_speed_mph": _f(step.pig_speed_mph),
             "pig_face_psig": _f(step.pig_face_psig, 1),
             "exit_mp": _f(step.exit_mp), "exit_psig": _f(step.exit_psig, 1),
+            "exit_min_psig": _f(step.exit_min_psig, 1), "endpoint_added_psi": _f(step.endpoint_added_psi, 1),
+            "overspeed": bool(step.overspeed), "overspeed_mph": _f(step.overspeed_mph, 2),
             "exit_description": step.exit_description,
             "slack_line_risk": bool(step.slack_line_risk),
             "mp": [_f(h.mp[i]) for i in idx],

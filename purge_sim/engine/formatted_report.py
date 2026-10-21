@@ -159,6 +159,13 @@ def _sheet_purge_report(wb, results, cfg, scenario_name, pi, rows):
     has_feat = any(r.get("feature") for r in rows)
     if has_feat:   # station / valve / marker name, right after Miles
         cols.insert(1, "Feature"); keys.insert(1, "feature"); fmts.insert(1, "@")
+    # The endpoint pressure column appears when the exit actually modulated during this run
+    # (or the pig ran over max speed): it is then the pressure the receiving end has to hold
+    # at each row. Otherwise it would be the constant minimum the field asked to leave out.
+    has_endpoint = any((r.get("endpoint_added_psi") or 0.0) > 0.5 or r.get("overspeed") for r in rows)
+    if has_endpoint:
+        i = cols.index("Injection Rate (SCFM)")
+        cols.insert(i, "Endpoint Pressure (psi)"); keys.insert(i, "exit_psi"); fmts.insert(i, "0.0")
     for nm in bnames:
         cols += [f"{nm} Booster Flow (SCFM)", f"{nm} Booster Cum Flow (SCF)"]
         keys += [f"__bflow__{nm}", f"__bcum__{nm}"]
@@ -196,7 +203,8 @@ def _sheet_purge_report(wb, results, cfg, scenario_name, pi, rows):
                "WALL THICK (in):", f"{wt:.3f}")
     _pair(9,  "PURGED FLUID:", pi.get("fluid_name", getattr(cfg, "fluid_name", "Diesel")),
                "ID (in):",     f"{id_in:.3f}")
-    _pair(10, "EXIT PRESS TARGET (psi):", f"{cfg.exit_pressure_run_psig:.0f}",
+    _pair(10, "EXIT PRESS MIN (psi):", f"{cfg.exit_pressure_run_psig:.0f}"
+               + (" (fixed)" if getattr(cfg, "exit_behavior", "modulating") == "fixed" else " (modulating)"),
                "MAX N2 PRESS (psi):",
                f"{cfg.max_injection_psig:.0f}" if math.isfinite(cfg.max_injection_psig) else "1500")
     _pair(11, "CUM. INJ. N2 (SCF):", f"{results.total_scf_n2:,.0f}",
@@ -248,7 +256,9 @@ def _sheet_purge_report(wb, results, cfg, scenario_name, pi, rows):
                     c.font = Font(name="Calibri", size=10, bold=True, color="CC0000")
                 elif row["mop_margin"] < 100:
                     c.font = Font(name="Calibri", size=10, bold=True, color="9C5700")
-            # Flag slack risk in speed column
+            # Flag the pig over max speed (orange) and slack risk (red) in the speed column
+            if key == "speed_mph" and row.get("overspeed"):
+                c.fill = _fill("F4B183")
             if key == "speed_mph" and row.get("slack"):
                 c.fill = _fill("FF9999")
 
@@ -265,10 +275,28 @@ def _sheet_purge_report(wb, results, cfg, scenario_name, pi, rows):
             f"{p.name} @ MP {p.mp:.1f}" for p in cfg.pump_stations)
         ws.cell(row=note_row, column=1, value=pump_note).font = _F_ITAL
         ws.merge_cells(f"A{note_row}:{last_col}{note_row}")
+        note_row += 1
+    if has_endpoint:
+        ws.cell(row=note_row, column=1, value=(
+            "ENDPOINT PRESSURE: the pressure the receiving end (pump suction, BPCV or tank inlet) holds to keep "
+            f"the pig at or under {cfg.max_speed_mph:g} mph; it rises above the {cfg.exit_pressure_run_psig:.0f} psig "
+            "minimum where the N2 column would otherwise push the pig faster.")).font = _F_ITAL
+        ws.merge_cells(f"A{note_row}:{last_col}{note_row}")
+        note_row += 1
+        over = [s for s in results.steps if s.overspeed]
+        if over:
+            if getattr(cfg, "exit_behavior", "modulating") == "fixed":
+                why = "the endpoint pressure is fixed"
+            else:
+                why = f"the endpoint can hold at most {max(s.exit_max_psig for s in over):.0f} psig there"
+            ws.cell(row=note_row, column=1, value=(
+                f"PIG OVER MAX SPEED on the orange-shaded speed cells (up to {max(s.overspeed_mph for s in over):.2f} mph "
+                f"over {cfg.max_speed_mph:g} mph): {why}.")).font = _F_ITAL
+            ws.merge_cells(f"A{note_row}:{last_col}{note_row}")
 
     # Wide data columns: base widths + per-booster (Flow, Cum Flow)
-    col_widths_data = ([10] + ([34] if has_feat else []) + [12, 12, 14, 14, 15, 15, 12]
-                       + [15, 18] * len(bnames))
+    col_widths_data = ([10] + ([34] if has_feat else []) + [12, 12, 14, 14] + ([14] if has_endpoint else [])
+                       + [15, 15, 12] + [15, 18] * len(bnames))
     for i, w in enumerate(col_widths_data, 1):
         ws.column_dimensions[get_column_letter(i)].width = w
 
@@ -325,6 +353,9 @@ def _sheet_pressure_profile(wb, results, cfg, scenario_name, rows):
     ax.plot(mps, friction, color="#FF7F0E", lw=1.5, label="Friction Loss")
     ax.plot(mps, head,     color="#2CA02C", lw=1.5, label="Head Pressure")
     ax.plot(mps, exit_p,   color="#9467BD", lw=1.5, ls="--", label="Exit Pressure")
+    exit_min = [r.get("exit_min_psi") for r in thin]
+    if all(v is not None for v in exit_min) and any(abs(a - b) > 0.5 for a, b in zip(exit_p, exit_min)):
+        ax.plot(mps, exit_min, color="#9467BD", lw=1.0, ls=":", label="Exit Minimum (held by the endpoint)")
 
     # MAOP line
     if math.isfinite(cfg.maop_psig):
@@ -398,6 +429,12 @@ def _sheet_run_profile(wb, results, cfg, scenario_name, rows):
     if cfg.min_speed_mph > 0:
         ax.axhline(cfg.min_speed_mph, color="red", ls="--", lw=0.8,
                    label=f"Min Speed ({cfg.min_speed_mph:.1f} mph)")
+    ax.axhline(cfg.max_speed_mph, color="#C71585", ls="--", lw=0.8,
+               label=f"Max Speed ({cfg.max_speed_mph:.1f} mph)")
+    over_i = [i for i, r in enumerate(thin) if r.get("overspeed")]
+    if over_i:
+        ax.scatter([mps[i] for i in over_i], [speed[i] for i in over_i], color="#C71585", marker="^",
+                   s=18, zorder=5, label="Over max speed")
     ax.set_xlabel("Milepost", fontsize=11)
     ax.set_ylabel("Pig Speed (mph)", color="#1F77B4", fontsize=11)
     ax.tick_params(axis="y", labelcolor="#1F77B4")

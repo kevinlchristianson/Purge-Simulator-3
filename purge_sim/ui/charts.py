@@ -14,21 +14,30 @@ from ..engine.mop_check import MOPStatus
 
 
 def plot_pig_speed(fig, times_hr: List[float], mps: List[float], speeds_mph: List[float],
-                   meter_valve_flags: List[bool], slack_flags: List[bool]):
-    """Two-panel: speed vs time (top) and speed vs milepost (bottom)."""
+                   throttle_flags: List[bool], slack_flags: List[bool],
+                   overspeed_flags: List[bool] = None):
+    """Two-panel: speed vs time (top) and speed vs milepost (bottom).
+
+    throttle_flags: steps where the exit raised its inlet pressure to hold the pig at max
+    speed; overspeed_flags: steps where it ran out of room (or is fixed) and the pig ran
+    over max speed; slack_flags: slack-line risk."""
     ax1 = fig.add_subplot(211)
     ax2 = fig.add_subplot(212)
 
     times = np.array(times_hr)
     mps_a = np.array(mps)
     spd   = np.array(speeds_mph)
-    mv    = np.array(meter_valve_flags)
-    sl    = np.array(slack_flags)
+    mv    = np.array(throttle_flags, dtype=bool)
+    sl    = np.array(slack_flags, dtype=bool)
+    ov    = np.array(overspeed_flags if overspeed_flags is not None else [False] * len(spd), dtype=bool)
 
     ax1.plot(times, spd, 'b-', linewidth=1.2, label='Pig speed')
     if mv.any():
         ax1.scatter(times[mv], spd[mv], color='orange', s=8, zorder=5,
-                    label='Meter valve active')
+                    label='Exit holding pressure (max speed)')
+    if ov.any():
+        ax1.scatter(times[ov], spd[ov], color='magenta', marker='^', s=18, zorder=6,
+                    label='Over max speed')
     if sl.any():
         ax1.scatter(times[sl], spd[sl], color='red', marker='x', s=20, zorder=6,
                     label='Slack line risk')
@@ -41,6 +50,8 @@ def plot_pig_speed(fig, times_hr: List[float], mps: List[float], speeds_mph: Lis
     ax2.plot(mps_a, spd, 'b-', linewidth=1.2)
     if mv.any():
         ax2.scatter(mps_a[mv], spd[mv], color='orange', s=8, zorder=5)
+    if ov.any():
+        ax2.scatter(mps_a[ov], spd[ov], color='magenta', marker='^', s=18, zorder=6)
     if sl.any():
         ax2.scatter(mps_a[sl], spd[sl], color='red', marker='x', s=20, zorder=6)
     ax2.set_xlabel("Milepost")

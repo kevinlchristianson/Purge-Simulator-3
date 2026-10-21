@@ -22,6 +22,7 @@ from typing import List, Optional
 import numpy as np
 
 from ..engine.hgl import compute_hgl, elevation_lookup
+from ..engine.log_export import exit_condition_text
 from ..engine.purge_report import _deployed_boosters, purge_report_rows, report_features
 from ..engine.simulator import SimResults
 from .. import branding
@@ -36,6 +37,9 @@ _REPORT = [   # (column, row key, decimals): the xlsx Purge Report columns
     ("Injection Rate (SCFM)", "inj_scfm", 0), ("Cumulative N2 (SCF)", "cum_scf", 0),
     ("Pig Speed (mph)", "speed_mph", 2),
 ]
+# Added before Injection Rate when the exit modulated during the run (or the pig ran over max
+# speed): the pressure the receiving end holds at each row (formatted_report does the same).
+_ENDPOINT_COL = ("Endpoint Pressure (psi)", "exit_psi", 0)
 
 
 def _r(v, nd=1):
@@ -76,7 +80,7 @@ def _basis(res: SimResults, inputs) -> List[list]:
         ["Max N2 drive pressure", f"{cfg.max_drive_psig:,.0f} psig" if math.isfinite(cfg.max_drive_psig) else "not limited"],
         ["Max injection", (f"{cfg.max_injection_psig:,.0f} psig, " if math.isfinite(cfg.max_injection_psig) else "")
          + f"{cfg.max_injection_scfm:,.0f} SCFM"],
-        ["Exit pressure", f"{cfg.exit_pressure_run_psig:g} psig while running, {cfg.exit_pressure_end_psig:g} psig at the end"],
+        ["Endpoint pressure", exit_condition_text(cfg)],
         ["N2 temperature", f"{cfg.n2_temperature_f:g} °F"],
     ]
     if cfg.mop_joints:
@@ -108,14 +112,20 @@ def _purge_table(res: SimResults, inputs=None, show_features: bool = False) -> d
     feats = report_features(res, getattr(inputs, "landmarks", None))
     rows = purge_report_rows(res, features=feats)
     boosters = [n for n, _ in _deployed_boosters(res)]
-    cols = [{"h": c, "nd": nd} for c, _, nd in _REPORT] + [{"h": f"{n} booster flow (SCFM)", "nd": 0} for n in boosters]
+    spec = list(_REPORT)
+    has_endpoint = any((row.get("endpoint_added_psi") or 0.0) > 0.5 or row.get("overspeed") for row in rows)
+    if has_endpoint:
+        spec.insert([c for c, _, _ in spec].index("Injection Rate (SCFM)"), _ENDPOINT_COL)
+    cols = [{"h": c, "nd": nd} for c, _, nd in spec] + [{"h": f"{n} booster flow (SCFM)", "nd": 0} for n in boosters]
     out = []
     for row in rows:
-        vals = [_r(row.get(k), nd) for _, k, nd in _REPORT]
+        vals = [_r(row.get(k), nd) for _, k, nd in spec]
         vals += [_r(row.get("booster_flow", {}).get(n, 0.0), 0) for n in boosters]
-        flag = "viol" if row.get("mop_viol") else ("slack" if row.get("slack") else "")
+        flag = ("viol" if row.get("mop_viol") else "over" if row.get("overspeed")
+                else "slack" if row.get("slack") else "")
         out.append({"v": vals, "flag": flag, "f": row.get("feature") or ""})
-    return {"cols": cols, "rows": out, "show_features": bool(show_features and feats), "has_features": bool(feats)}
+    return {"cols": cols, "rows": out, "show_features": bool(show_features and feats), "has_features": bool(feats),
+            "has_endpoint": has_endpoint}
 
 
 def _profile(res: SimResults) -> dict:
@@ -151,6 +161,7 @@ def _profile(res: SimResults) -> dict:
         frames.append({
             "t": _r(s.t_hr, 2), "pig": _r(pig, 3), "speed": _r(s.pig_speed_mph, 2),
             "face": _r(s.pig_face_psig, 0), "exit_mp": _r(s.exit_mp, 2), "exit_psig": _r(s.exit_psig, 0),
+            "exit_min": _r(s.exit_min_psig, 0), "added": _r(s.endpoint_added_psi, 0), "over": bool(s.overspeed),
             "slack": bool(s.slack_line_risk),
             "gas_end": _r(h.pressure_psig[gas][-1], 0) if gas.any() else None,
             "liq_start": _r(h.pressure_psig[~gas][0], 0) if (~gas).any() else None,
