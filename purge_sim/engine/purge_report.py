@@ -903,6 +903,8 @@ def _sheet_raw_data(wb, results, cfg, scenario_name, max_rows=2000):
         ("Endpoint Added (psi)",      lambda s: s.endpoint_added_psi, "0.0"),
         ("Over Max Speed",            lambda s: "YES" if s.overspeed else "no", "@"),
         ("Over Max Speed (mph)",      lambda s: s.overspeed_mph,     "0.00"),
+        ("Reynolds Number",           lambda s: getattr(s, "reynolds", 0.0), "#,##0"),
+        ("Flow Regime",               lambda s: getattr(s, "flow_regime", ""), "@"),
         ("N2 Segments",               lambda s: len(s.segments or []),    "0"),
         ("Gas Profile Points",        lambda s: len(s.gas_pressure_profile or []), "0"),
         ("Injection Gas Psi",

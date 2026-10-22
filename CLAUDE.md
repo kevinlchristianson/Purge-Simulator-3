@@ -50,7 +50,12 @@ purge_sim/
                          The launch is resolved with column-fraction steps so the pump ramps up
                          instead of the pig lurching. False = the old per-step pressure fix.
                          Pack-and-coast is unchanged.
-    physics.py         — pure, stateless physics functions (friction, Z-factor, haversine, etc.)
+    physics.py         — pure, stateless physics functions (friction, Z-factor, haversine, etc.).
+                         Friction factor is Churchill 1977 (darcy_friction_factor / _array): one
+                         smooth curve, = 64/Re laminar, within 0.1% of Swamee-Jain turbulent. Every
+                         friction calc in the engine (solver, BPCV, MOP check, lookahead) uses it;
+                         don't add another copy. Each SimStep carries reynolds + flow_regime
+                         (laminar < 2000 < transitional < 4000 < turbulent), a label only
     constants.py       — NPS tables, roughness, fluid/N2 property lookups
     segment_model.py   — N2Segment: gas column divided into segments by check valves/boosters,
                          each an isolated SCF inventory; pressure via Peng-Robinson EOS
@@ -93,7 +98,8 @@ purge_sim/
     log_export.py       — human-readable + CSV run log export; exit_condition_text() /
                          legacy_exit_schedule() describe the exit for every report
     precheck.py         — pre-run job check, no simulation: speed- vs drive-capped (and the speed
-                         the cap allows), friction share, laminar, descents steeper than friction,
+                         the cap allows), friction share, laminar / transitional (speed range crosses Re
+                         2000-4000), descents steeper than friction,
                          flat pack limit under MOP (at rest / moving), min pack-and-coast N2,
                          vapor check, endpoint_hold (back-pressure the exit must add to hold max
                          speed against gravity / the packed column vs what it can add, and the

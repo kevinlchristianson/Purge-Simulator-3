@@ -211,7 +211,8 @@ def export_run_log(results: SimResults, path: str, scenario_name: str = "") -> N
         "STEP DATA (CSV)",
         "time_hr,pig_mp,pig_speed_mph,pig_face_psig,injection_scfm,injection_psig,"
         "exit_psig,exit_min_psig,endpoint_added_psi,exit_mp,exit_description,"
-        "n_mop_violations,n_mop_warnings,slack_line,overspeed,overspeed_mph,total_scf",
+        "n_mop_violations,n_mop_warnings,slack_line,overspeed,overspeed_mph,total_scf,"
+        "reynolds,flow_regime",
     ]
     for s in results.steps:
         exit_desc_clean = s.exit_description.replace(",", ";")
@@ -222,7 +223,7 @@ def export_run_log(results: SimResults, path: str, scenario_name: str = "") -> N
             f"{s.exit_mp:.4f},{exit_desc_clean},"
             f"{s.mop_violations},{s.mop_warnings},"
             f"{int(s.slack_line_risk)},{int(s.overspeed)},{s.overspeed_mph:.3f},"
-            f"{s.total_scf:.0f}"
+            f"{s.total_scf:.0f},{getattr(s, 'reynolds', 0.0):.0f},{getattr(s, 'flow_regime', '')}"
         )
 
     # -----------------------------------------------------------------------

@@ -33,7 +33,7 @@ Nothing leaves the machine except assistant messages, which go to the Claude API
   pig stop and where the liquid leaves, speeds, strategy. Blank questions use a default,
   and every default that is only a typical value is listed as an assumption to confirm and
   written into the scenario notes. A pre-run check classifies the job (speed- or
-  drive-capped, friction-dominated, laminar, gravity-assisted) and sizes pack-and-coast
+  drive-capped, friction-dominated, laminar, transitional, gravity-assisted) and sizes pack-and-coast
   before anything runs. Or just describe the job to the assistant, which fills in the same
   questions.
 - **What the assistant can do.** Read and explain the open scenario, change inputs (the
