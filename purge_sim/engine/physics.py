@@ -173,14 +173,55 @@ def scf_from_pressure_volume(p_psia: float, V_ft3: float, t_f: float) -> float:
 
 
 # ---------------------------------------------------------------------------
-# Friction losses (Darcy-Weisbach, Swamee-Jain / Haaland)
+# Friction losses (Darcy-Weisbach, Churchill 1977 friction factor)
 # ---------------------------------------------------------------------------
+# Churchill, S.W. (1977), "Friction factor equation spans all fluid-flow regimes",
+# Chemical Engineering 84(24): 91-92. One smooth equation for laminar, transitional and
+# turbulent flow: equals 64/Re in laminar flow and matches Swamee-Jain/Colebrook within
+# about 0.1% in turbulent flow. It replaced a hard switch from 64/Re to Swamee-Jain at
+# Re 2300, where friction jumped ~76% and the pig solver parked the pig at the switch speed
+# whenever the drive fell inside the gap (Timber Creek, 80 cSt). Pressure drop (f * Re^2)
+# rises with speed at every Re, so the pig solver always has exactly one balance speed.
+# Every friction calculation in the engine goes through these two functions.
+
+RE_LAMINAR_MAX = 2000.0      # below this, flow is laminar (regime label only)
+RE_TURBULENT_MIN = 4000.0    # above this, flow is turbulent (regime label only)
+
+
+def darcy_friction_factor(Re: float, rel_roughness: float) -> float:
+    """Darcy friction factor (Churchill 1977), valid for all Re. rel_roughness = eps / D."""
+    Re = max(1.0, float(Re))
+    a = (2.457 * math.log(1.0 / ((7.0 / Re) ** 0.9 + 0.27 * rel_roughness))) ** 16
+    b = (37530.0 / Re) ** 16
+    return 8.0 * ((8.0 / Re) ** 12 + (a + b) ** -1.5) ** (1.0 / 12.0)
+
+
+def darcy_friction_factor_array(Re, rel_roughness):
+    """Vectorized darcy_friction_factor() over numpy arrays (broadcasts)."""
+    Re = np.maximum(np.asarray(Re, dtype=float), 1.0)
+    a = (2.457 * np.log(1.0 / ((7.0 / Re) ** 0.9 + 0.27 * np.asarray(rel_roughness, dtype=float)))) ** 16
+    b = (37530.0 / Re) ** 16
+    return 8.0 * ((8.0 / Re) ** 12 + (a + b) ** -1.5) ** (1.0 / 12.0)
+
+
+def flow_regime(Re: float) -> str:
+    """'laminar' (Re < 2000), 'transitional' (2000-4000) or 'turbulent' (> 4000)."""
+    if Re < RE_LAMINAR_MAX:
+        return "laminar"
+    if Re <= RE_TURBULENT_MIN:
+        return "transitional"
+    return "turbulent"
+
+
+def liquid_reynolds(D_ft: float, v_fts: float, viscosity_cst: float) -> float:
+    """Reynolds number of the liquid column (D in ft, v in ft/s, kinematic viscosity in cSt)."""
+    nu = float(viscosity_cst) * 1e-6
+    return float(v_fts * 0.3048 * D_ft * 0.3048 / max(1e-12, nu))
+
 
 def _darcy_friction_factor(Re: float, eps_m: float, D_m: float) -> float:
-    """Darcy friction factor via Swamee-Jain (turbulent) or Hagen-Poiseuille (laminar)."""
-    if Re < 2300.0:
-        return 64.0 / max(1.0, Re)
-    return 0.25 / (math.log10(eps_m / (3.7 * D_m) + 5.74 / Re**0.9)) ** 2
+    """Darcy friction factor for pipe of roughness eps_m and diameter D_m (Churchill)."""
+    return darcy_friction_factor(Re, eps_m / D_m if D_m > 0 else 0.0)
 
 
 def gas_friction_loss_psi(L_ft: float, D_ft: float, v_fts: float,

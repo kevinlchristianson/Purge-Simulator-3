@@ -38,6 +38,19 @@
     "total_scf_injected": 3512480.9,
     "total_scf_vented": 0.0
   },
+  "scenarios/Bridger_TimberCreek/timber_creek_packcoast_80cst.json": {
+    "abort_reason": "",
+    "avg_speed_mph": 3.0892,
+    "completed": true,
+    "final_mp": 13.901,
+    "max_face_psig": 528.0,
+    "min_speed_mph": 2.5375,
+    "mop_violations": 0,
+    "n_steps": 140,
+    "total_scf_booster_fresh": 0.0,
+    "total_scf_injected": 135560.9,
+    "total_scf_vented": 0.0
+  },
   "scenarios/CHS_LaurelAllendale/laurel_allendale_3mph.json": {
     "abort_reason": "",
     "avg_speed_mph": 2.9552,

@@ -30,6 +30,7 @@ from .physics import (
     scfm_from_pig_velocity, psig_to_psia, psia_to_psig,
     static_head_psi, liquid_friction_loss_psi, gas_friction_loss_psi,
     target_exit_pressure, fts_to_bph, bph_to_fts, mph_to_fts,
+    darcy_friction_factor, liquid_reynolds, flow_regime,
 )
 from .segment_model import N2Segment, SegmentList, PipeGeometry, scf_from_pressure_volume
 from .check_valve import CheckValve, evaluate_check_valves, insert_check_valve_boundary
@@ -285,6 +286,12 @@ class SimStep:
     overspeed: bool = False
     overspeed_mph: float = 0.0
 
+    # Liquid column flow regime at the pig's speed: Reynolds number and 'laminar' (< 2000),
+    # 'transitional' (2000-4000) or 'turbulent'. Friction is Churchill (one smooth curve), so
+    # this is a label for the reader, not a switch in the math.
+    reynolds: float = 0.0
+    flow_regime: str = ""
+
 
 # ---------------------------------------------------------------------------
 # Results container
@@ -464,8 +471,7 @@ def _compute_mop_cap(
         _nu  = cfg.fluid_viscosity_cst * 1e-6
         _Re  = _v_m * _D_m / max(1e-12, _nu)
         _eps = cfg.fluid_roughness_ft * _m
-        _f   = (64.0 / max(1.0, _Re)) if _Re < 2300 else \
-               (0.25 / (math.log10(_eps / (3.7 * _D_m) + 5.74 / _Re**0.9)) ** 2)
+        _f   = darcy_friction_factor(_Re, _eps / _D_m if _D_m > 0 else 0.0)
         _fric_pft = _f / _D_m * 0.5 * _rho * _v_m**2 / 6894.757 * _m
         _L_arr    = (lj_mps - pig_mp) * 5280.0
         # Proactive lookahead: the static head pressing on joint j is set by the
@@ -1638,6 +1644,9 @@ def simulate(cfg: SimConfig, progress_cb: Optional[Callable[[float], None]] = No
             overspeed=pig_result.overspeed,
             overspeed_mph=pig_result.overspeed_mph,
         )
+        step.reynolds = liquid_reynolds((od_in - 2.0 * wt_in) / 12.0,
+                                        mph_to_fts(pig_result.pig_speed_mph), cfg.fluid_viscosity_cst)
+        step.flow_regime = flow_regime(step.reynolds) if step.reynolds > 0 else ""
         results.steps.append(step)
 
         # --- Progress callback ---

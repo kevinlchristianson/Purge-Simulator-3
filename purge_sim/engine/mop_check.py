@@ -20,7 +20,8 @@ from enum import Enum, auto
 from typing import List, Optional
 import numpy as np
 
-from .physics import liquid_friction_loss_psi, static_head_psi, pipe_area_ft2, bph_to_fts
+from .physics import (liquid_friction_loss_psi, static_head_psi, pipe_area_ft2, bph_to_fts,
+                      darcy_friction_factor_array)
 
 
 class MOPStatus(Enum):
@@ -84,7 +85,7 @@ def check_mop_liquid_side(
     area  = np.pi / 4.0 * D_ft ** 2
     v_fts = flow_bph * 5.614583 / 3600.0 / np.maximum(area, 1e-9)
 
-    # Darcy-Weisbach friction (Swamee-Jain, vectorized)
+    # Darcy-Weisbach friction (Churchill, vectorized)
     eps_m = roughness_ft * 0.3048
     D_m   = D_ft * 0.3048
     L_m   = L_ft * 0.3048
@@ -92,11 +93,7 @@ def check_mop_liquid_side(
     rho   = 999.0 * sg
     nu    = viscosity_cst * 1e-6
     Re    = v_m * D_m / max(nu, 1e-12)
-    f     = np.where(
-        Re < 2300.0,
-        64.0 / np.maximum(Re, 1.0),
-        0.25 / np.log10(eps_m / (3.7 * D_m) + 5.74 / np.maximum(Re, 1.0) ** 0.9) ** 2,
-    )
+    f     = darcy_friction_factor_array(Re, eps_m / np.maximum(D_m, 1e-9))
     fric  = f * (L_m / np.maximum(D_m, 1e-9)) * 0.5 * rho * v_m ** 2 / 6894.757
 
     # Static head (positive = joint is higher than pig → pressure decreases)

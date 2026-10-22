@@ -181,8 +181,10 @@ Open the **Job setup** tab. Answer everything you know, then click **Apply**.
 
 Click **Pre-run check** (free, under a second). It tells you, before any simulation:
 
-- the job type: speed-capped, drive-capped, friction-dominated, laminar, gravity-assisted,
-  or pump/BPCV controlled;
+- the job type: speed-capped, drive-capped, friction-dominated, laminar, transitional,
+  gravity-assisted, or pump/BPCV controlled. "Transitional" means the pig's speed range puts
+  the flow between laminar and turbulent (Reynolds number 2,000 to 4,000), where friction is
+  least certain: run a viscosity bracket rather than one value;
 - the drive pressure needed at launch and at the worst point, compared with your drive cap,
   and what speed the cap allows there;
 - the highest pack pressure that keeps every joint under MOP;

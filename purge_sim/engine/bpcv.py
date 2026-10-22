@@ -29,7 +29,7 @@ from typing import List, Optional
 import math
 import numpy as np
 
-from .physics import static_head_psi, liquid_friction_loss_psi, psia_to_psig
+from .physics import static_head_psi, liquid_friction_loss_psi, psia_to_psig, darcy_friction_factor
 
 
 @dataclass
@@ -110,11 +110,7 @@ def compute_bpcv_set_point(
     rho = 999.0 * float(fluid_sg)
     nu  = float(fluid_viscosity_cst) * 1e-6
     Re  = v_m * D_m / max(1e-12, nu)
-    if Re < 2300.0:
-        f = 64.0 / max(1.0, Re)
-    else:
-        eps_m = eps_ft * m
-        f = 0.25 / (math.log10(eps_m / (3.7 * D_m) + 5.74 / Re**0.9)) ** 2
+    f   = darcy_friction_factor(Re, eps_ft / D_ft if D_ft > 0 else 0.0)
     friction_psi_per_ft = f / (D_ft * m) * 0.5 * rho * v_m**2 / 6894.757 * m
 
     # Build arrays once from joint list (cache-friendly sequential access)
@@ -178,11 +174,7 @@ def compute_bpcv_upstream_min_set_point(
     rho = 999.0 * float(fluid_sg)
     nu  = float(fluid_viscosity_cst) * 1e-6
     Re  = v_m * D_m / max(1e-12, nu)
-    if Re < 2300.0:
-        f = 64.0 / max(1.0, Re)
-    else:
-        eps_m = upstream_roughness_ft * m
-        f = 0.25 / (math.log10(eps_m / (3.7 * D_m) + 5.74 / Re**0.9)) ** 2
+    f   = darcy_friction_factor(Re, upstream_roughness_ft / D_ft if D_ft > 0 else 0.0)
     # friction in psi per foot of pipe
     friction_psi_per_ft = f / D_m * 0.5 * rho * v_m**2 / 6894.757 * m
 

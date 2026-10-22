@@ -31,7 +31,8 @@ import numpy as np
 
 from ..data.scenario import ScenarioInputs
 from .physics import (fts_to_bph, liquid_friction_loss_psi, mph_to_fts, pipe_area_ft2,
-                      pressure_psia_from_scf, required_drive_to_clear, scf_from_pressure_volume)
+                      pressure_psia_from_scf, required_drive_to_clear, scf_from_pressure_volume,
+                      flow_regime, RE_LAMINAR_MAX, RE_TURBULENT_MIN)
 from .segment_model import PipeGeometry
 
 MAX_GRID = 400
@@ -179,10 +180,22 @@ def precheck(inp: ScenarioInputs, min_liquid_psig: Optional[float] = None) -> di
         tags.append("friction-dominated")
         findings.append(f"Friction is {friction_share:.0%} of the launch drive ({fpf * 5280:.1f} psi/mi at "
                         f"{inp.target_speed_mph:g} mph), so speed is the main lever on drive and N2.")
-    laminar = reynolds < 2300
+    regime = flow_regime(reynolds)
+    laminar = regime == "laminar"
+    lo_mph = min(inp.min_speed_mph, inp.target_speed_mph)
+    hi_mph = max(inp.max_speed_mph, inp.target_speed_mph)
+    _tgt = inp.target_speed_mph if inp.target_speed_mph > 0 else 1.0
+    re_lo, re_hi = reynolds * lo_mph / _tgt, reynolds * hi_mph / _tgt
+    crosses_transition = re_lo <= RE_TURBULENT_MIN and re_hi >= RE_LAMINAR_MAX
     if laminar:
         tags.append("laminar")
         findings.append(f"Laminar at run speed (Re about {reynolds:,.0f}): friction scales linearly with speed.")
+    if crosses_transition:
+        tags.append("transitional")
+        findings.append(f"Between {lo_mph:g} and {hi_mph:g} mph the Reynolds number runs {re_lo:,.0f} to {re_hi:,.0f}, "
+                        f"into the laminar-turbulent transition (Re 2,000 to 4,000). Friction there is the least certain "
+                        f"number in the model, and speed and time can move against viscosity (thicker crude can run "
+                        f"slightly faster as the flow goes laminar), so run a viscosity bracket, not one value.")
 
     # descents steeper than friction: the column pulls the pig, the exit has to hold it
     fine = np.arange(start, end + 1e-9, 0.05)
@@ -328,6 +341,8 @@ def precheck(inp: ScenarioInputs, min_liquid_psig: Optional[float] = None) -> di
         "line_volume_ft3": _r(seg_vol),
         "reynolds": _r(reynolds),
         "laminar": laminar,
+        "flow_regime": regime,
+        "reynolds_speed_range": [_r(re_lo), _r(re_hi)],
         "friction_psi_per_mi": _r(fpf * 5280.0, 1),
         "friction_share_at_launch": round(friction_share, 2),
         "exit_note": ("next pump station / BPCV ahead of the pig, then the pig stop" if has_control
