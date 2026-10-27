@@ -460,3 +460,23 @@ def test_assistant_load_refuses_to_discard_unsaved_edits():
         execute_tool(ws, "load_scenario", {"scenario_id": LOW_FLOOR})
     execute_tool(ws, "load_scenario", {"scenario_id": LOW_FLOOR, "discard_unsaved": True})
     assert ws.scenario_id == LOW_FLOOR
+
+
+def test_portable_mode_keeps_data_next_to_app(tmp_path, monkeypatch):
+    """A PurgeSimData folder next to the app moves scenarios/settings/outputs into it."""
+    from purge_sim import portable
+    for k in ("PURGE_SIM_SCENARIOS_DIR", "PURGE_SIM_OUTPUTS_DIR", "PURGE_SIM_SETTINGS",
+              "PURGE_SIM_ELEV_CACHE", "PURGE_SIM_PORTABLE"):
+        monkeypatch.delenv(k, raising=False)
+    assert portable.enable(base=str(tmp_path)) is None          # no folder -> off
+    assert "PURGE_SIM_SETTINGS" not in os.environ
+    root = portable.enable(base=str(tmp_path), create=True)
+    assert root == str(tmp_path / "PurgeSimData")
+    from purge_sim.app import paths
+    from purge_sim import branding
+    from purge_sim.data import elevation
+    assert paths.user_scenarios_dir() == str(tmp_path / "PurgeSimData" / "Scenarios")
+    assert paths.outputs_dir() == str(tmp_path / "PurgeSimData" / "Outputs")
+    assert paths.settings_path() == branding.settings_path()
+    assert paths.settings_path().startswith(root)
+    assert elevation.default_cache_path().startswith(root)

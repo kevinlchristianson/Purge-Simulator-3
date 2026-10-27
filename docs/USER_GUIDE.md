@@ -49,6 +49,22 @@ Things to know:
 - If `git pull` complains about local changes, don't force anything. Copy the message and
   ask in the project.
 
+### Running from an external drive (portable mode)
+
+The app can live on an external drive and go with you between computers. Put the app
+folder on the drive and start it with **Purge Simulator.bat** (double-click it), or with
+`python app.py --portable`. Your saved scenarios, reports and settings (API key, branding)
+are then kept in a **PurgeSimData** folder next to the app, on the drive, instead of in
+the computer's user folder. Once that folder exists, plain `python app.py` uses it too.
+
+- The drive letter can be different on each computer; the app finds its data relative to
+  itself.
+- The computer still needs Python, unless you use the PurgeSimulator.exe build
+  (`packaging\build_windows.bat`), which runs without Python. Copy the whole
+  `dist\PurgeSimulator` folder to the drive; it already has its PurgeSimData folder.
+- The API key is stored on the drive, so treat the drive like anything holding a password.
+- Quit the app before unplugging the drive.
+
 ---
 
 ## 3. How the API is actually used (so you can control the cost)
@@ -384,7 +400,7 @@ name.
   basis, who confirmed the assumptions. The Job setup block in the notes is kept up to date
   automatically; your own reasoning is not.
 - Saved scenarios go to `PurgeSimScenarios` in your home folder (shared with the older
-  desktop app), in a `Client\Pipeline` subfolder. Reports go to a new dated folder under
+  desktop app), or to `PurgeSimData\Scenarios` next to the app in portable mode, in a `Client\Pipeline` subfolder. Reports go to a new dated folder under
   `PurgeSimOutputs` every time, so earlier variants are never overwritten.
 - **Reports tab, Download all reports (zip):** one click writes every deliverable for the
   run and downloads them as one zip: the client web page, both xlsx reports, the run log,

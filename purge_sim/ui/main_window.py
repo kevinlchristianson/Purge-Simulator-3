@@ -30,7 +30,8 @@ from ..data.scenario import Scenario, ScenarioMeta, ScenarioInputs, save_scenari
 WINDOW_TITLE = "Purge Simulator v30"
 WINDOW_MIN_W = 1280
 WINDOW_MIN_H = 800
-DEFAULT_SCENARIO_DIR = os.path.join(os.path.expanduser("~"), "PurgeSimScenarios")
+DEFAULT_SCENARIO_DIR = os.environ.get("PURGE_SIM_SCENARIOS_DIR") or os.path.join(
+    os.path.expanduser("~"), "PurgeSimScenarios")
 
 
 class MainWindow:

@@ -10,6 +10,8 @@ Usage:
     python app.py                 # pick a free port, open the browser
     python app.py --port 8765     # fixed port
     python app.py --no-browser    # just print the URL
+    python app.py --portable      # keep scenarios/settings in PurgeSimData next to the app
+                                  # (automatic whenever that folder already exists)
 """
 
 import argparse
@@ -24,6 +26,11 @@ os.environ.setdefault("MPLBACKEND", "Agg")
 if not getattr(sys, "frozen", False):
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+from purge_sim import portable  # noqa: E402
+
+# A PurgeSimData folder next to the app keeps scenarios/settings with it (run from a USB drive).
+portable.enable(create="--portable" in sys.argv)
+
 from purge_sim.app.server import App  # noqa: E402
 
 
@@ -31,12 +38,16 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Purge Simulator standalone app")
     parser.add_argument("--port", type=int, default=0, help="port to listen on (default: any free port)")
     parser.add_argument("--no-browser", action="store_true", help="don't open a browser window")
+    parser.add_argument("--portable", action="store_true",
+                        help="keep scenarios and settings in a PurgeSimData folder next to the app")
     args = parser.parse_args()
 
     app = App()
     httpd = app.serve(port=args.port)
     url = app.url
     print(f"Purge Simulator is running at {url}")
+    if portable.active():
+        print(f"Portable mode: scenarios and settings are in {portable.active()}")
     print("Close it with the Quit button in the app, or Ctrl+C here.")
     if not args.no_browser:
         threading.Timer(0.5, webbrowser.open, args=(url,)).start()
