@@ -25,3 +25,6 @@ dev/
 # PyInstaller build output (packaging/purge_simulator.spec)
 /build/
 /dist/
+
+# Portable-mode data (scenarios, outputs, settings with API key) - never commit
+PurgeSimData/
