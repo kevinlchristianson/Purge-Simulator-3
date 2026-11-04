@@ -229,6 +229,48 @@ def test_keepalive_reuses_one_connection_per_worker():
         srv.shutdown()
 
 
+def _samples_urlopen(calls, meters_of=lambda lat: 1000.0, point_ft=None, fail=False):
+    """Fake urlopen for getSamples (POST, many points) and the point service (GET, one)."""
+    import urllib.parse as up
+
+    def urlopen(req, timeout):
+        calls.append(req.full_url)
+        if "getSamples" in req.full_url:
+            if fail:
+                return _Resp(json.dumps({"error": {"code": 500, "message": "busy"}}).encode())
+            form = up.parse_qs(req.data.decode())
+            pts = json.loads(form["geometry"][0])["points"]
+            return _Resp(json.dumps({"samples": [
+                {"locationId": i, "value": "NoData" if y > 50 else str(meters_of(y))}
+                for i, (x, y) in enumerate(pts)]}).encode())
+        lat = float(req.full_url.split("y=")[1].split("&")[0])
+        ft = point_ft(lat) if point_ft else meters_of(lat) * E.FT_PER_M
+        return _Resp(json.dumps({"value": str(ft)}).encode())
+    return urlopen
+
+
+def test_samples_service_answers_many_points_per_request():
+    calls = []
+    p = E.USGS3DEP(workers=2, retries=0, urlopen=_samples_urlopen(calls))
+    p.use_samples = True
+    pts = [(45.0 + i * 1e-4, -108.5) for i in range(450)] + [(60.0, -108.5)]
+    vals = p.lookup(pts)
+    assert vals[:450] == [pytest.approx(1000.0 * E.FT_PER_M)] * 450 and vals[450] is None
+    assert sum("getSamples" in u for u in calls) == 3          # 200 + 200 + 51
+    assert sum("getSamples" not in u for u in calls) == 1      # the one units check
+
+
+def test_samples_service_falls_back_to_point_service():
+    calls = []   # the batch service errors: every point goes to the point service
+    p = E.USGS3DEP(workers=2, retries=0, urlopen=_samples_urlopen(calls, fail=True))
+    p.use_samples = True
+    assert p.lookup([(45.0, -108.5), (45.1, -108.5)]) == [pytest.approx(3280.84)] * 2
+    calls = []   # units disagree with the point service: trust the point service
+    p = E.USGS3DEP(workers=2, retries=0, urlopen=_samples_urlopen(calls, point_ft=lambda lat: 1234.0))
+    p.use_samples = True
+    assert p.lookup([(45.0, -108.5), (45.1, -108.5)]) == [1234.0, 1234.0]
+
+
 # ---------------------------------------------------------------- app paths
 
 def test_import_2d_kmz_looks_up_elevation(tmp_path, dem):

@@ -110,6 +110,7 @@ class USGS3DEP:
         self._local = threading.local()
         self._url_idx = 0
         self._lock = threading.Lock()
+        self.use_samples = urlopen is None   # tests that inject urlopen exercise the point service
 
     def _get(self, url: str) -> bytes:
         """Response body for url. Raises urllib.error.HTTPError on a non-200 answer."""
@@ -157,8 +158,87 @@ class USGS3DEP:
                 time.sleep(0.5 * 2 ** attempt)
         raise ElevationError(f"USGS 3DEP lookup failed at ({lat:.5f}, {lon:.5f}): {last}")
 
+    # Fast path: the 3DEP ImageServer's getSamples answers a few hundred points per request
+    # (the point service above answers one, at several seconds each). Same 3DEP data, in
+    # meters. If it fails or looks wrong, the lookup falls back to the point service.
+    SAMPLES_URL = "https://elevation.nationalmap.gov/arcgis/rest/services/3DEPElevation/ImageServer/getSamples"
+    SAMPLES_BATCH = 200
+    SAMPLES_CHECK_TOL_FT = 10.0
+
+    def _samples_batch(self, points: Sequence[Tuple[float, float]]) -> List[Optional[float]]:
+        """Elevations (ft) for up to SAMPLES_BATCH points in one getSamples request."""
+        geom = {"points": [[round(lon, 7), round(lat, 7)] for lat, lon in points],
+                "spatialReference": {"wkid": 4326}}
+        form = urllib.parse.urlencode({
+            "geometry": json.dumps(geom, separators=(",", ":")),
+            "geometryType": "esriGeometryMultipoint",
+            "returnFirstValueOnly": "true",
+            "f": "json",
+        }).encode()
+        last: Optional[Exception] = None
+        tries = min(self.retries, 1) + 1   # one retry: a dead fast path must not cost minutes
+        for attempt in range(tries):
+            req = urllib.request.Request(self.SAMPLES_URL, data=form, headers={
+                "User-Agent": "purge-simulator/1.0", "Content-Type": "application/x-www-form-urlencoded"})
+            try:
+                with self._urlopen(req, timeout=max(self.timeout_s, 30.0)) as resp:
+                    data = json.loads(resp.read().decode("utf-8"))
+                samples = data["samples"]
+                out: List[Optional[float]] = [None] * len(points)
+                for smp in samples:
+                    i = int(smp["locationId"])
+                    try:
+                        v = float(smp["value"])
+                    except (TypeError, ValueError):
+                        continue   # "NoData"
+                    if 0 <= i < len(points) and v > -10000:   # meters; -3.4e38 style no-data
+                        out[i] = v * FT_PER_M
+                return out
+            except Exception as e:   # network, HTTP, an error body without "samples", bad JSON
+                last = e
+            if attempt + 1 < tries:
+                time.sleep(1.0)
+        raise ElevationError(f"3DEP getSamples failed: {last}")
+
+    def _lookup_samples(self, points, progress_cb: ProgressCb = None) -> Optional[List[Optional[float]]]:
+        """All points via getSamples, or None to fall back to the point service."""
+        chunks = [list(range(i, min(i + self.SAMPLES_BATCH, len(points))))
+                  for i in range(0, len(points), self.SAMPLES_BATCH)]
+        out: List[Optional[float]] = [None] * len(points)
+        try:
+            with ThreadPoolExecutor(max_workers=min(4, len(chunks))) as pool:
+                futs = {pool.submit(self._samples_batch, [points[i] for i in c]): c for c in chunks}
+                done = 0
+                for fut in as_completed(futs):
+                    for i, v in zip(futs[fut], fut.result()):
+                        out[i] = v
+                    done += len(futs[fut])
+                    if progress_cb:
+                        progress_cb(done / len(points), f"{done}/{len(points)} points")
+        except ElevationError:
+            return None
+        good = [i for i, v in enumerate(out) if v is not None]
+        if len(good) < 0.5 * len(points):
+            return None   # mostly empty: let the point service decide what has data
+        # Units/datum check: one point against the point service, which reports feet.
+        k = good[len(good) // 2]
+        try:
+            ref = self.lookup_one(*points[k])
+        except ElevationError:
+            ref = None
+        if ref is not None and abs(ref - out[k]) > self.SAMPLES_CHECK_TOL_FT:
+            return None
+        return out
+
     def lookup(self, points: Sequence[Tuple[float, float]], progress_cb: ProgressCb = None) -> List[Optional[float]]:
         """Progress is reported from the calling thread, so a Tk callback is safe."""
+        if self.use_samples and len(points) > 1:
+            fast = self._lookup_samples(points, progress_cb)
+            if fast is not None:
+                return fast
+        return self._lookup_points(points, progress_cb)
+
+    def _lookup_points(self, points: Sequence[Tuple[float, float]], progress_cb: ProgressCb = None) -> List[Optional[float]]:
         out: List[Optional[float]] = [None] * len(points)
         errors: List[str] = []
         abort = threading.Event()
