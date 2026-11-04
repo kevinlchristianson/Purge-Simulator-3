@@ -108,6 +108,19 @@ def test_sampling_spacing_length_and_vertices():
     assert len(res.profile()) == res.source["points"]
 
 
+def test_dense_route_is_not_collapsed():
+    # A KMZ with a vertex every ~35 ft (Cheyenne-Kaneb 762) used to come back as two points,
+    # the route's ends, because each vertex replaced the one before it.
+    n = 600
+    lat = 41.10 + np.arange(n) * 1e-4          # ~36 ft apart, ~4.1 mi
+    lon = np.full(n, -104.83)
+    vmp = E.route_mileposts(lat, lon)
+    mp = E.sample_mileposts(vmp, 250.0)
+    gaps = np.diff(mp) * E.FT_PER_MI
+    assert len(mp) >= vmp[-1] * E.FT_PER_MI / 250.0
+    assert gaps.max() <= 250 + 1e-6 and gaps[:-1].min() >= 125 - 1e-6   # the last may be short
+
+
 def test_peak_refinement_catches_a_narrow_crest(monkeypatch):
     lat, lon = zip(*ROUTE)
     true_peak = terrain(*PEAK)

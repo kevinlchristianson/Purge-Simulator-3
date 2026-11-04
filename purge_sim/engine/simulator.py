@@ -868,6 +868,15 @@ def simulate(cfg: SimConfig, progress_cb: Optional[Callable[[float], None]] = No
     total_scf_vented   = 0.0
     stall_start_t_hr: Optional[float] = None   # time when pig first stalled (None = not stalled)
     prev_injection_scfm = 0.0                  # SP rate last step (smooth-injection ramp)
+    if cfg.smooth_injection and cfg.n2_budget_scf is None:
+        # Launch with the pumper already at rate: the crew packs the launcher to the start
+        # pressure and brings the pump up to the rate that feeds the pig at target speed
+        # before the pig is released. Starting the ramp from zero instead lets the tiny launch
+        # charge expand, the pig drops to a crawl and the first minutes flag as slack line.
+        _od0, _wt0 = cfg.pipe_geometry.od_wt_at(cfg.purge_start_mp)
+        prev_injection_scfm = min(cfg.max_injection_scfm, scfm_from_pig_velocity(
+            mph_to_fts(cfg.target_speed_mph), pipe_area_ft2(_od0, _wt0),
+            psig_to_psia(cfg.n2_initial_pressure_psig), cfg.n2_temperature_f))
     drive_setpoint_psig: Optional[float] = None  # smooth controller's requested drive
 
     for step_num in range(cfg.max_steps):

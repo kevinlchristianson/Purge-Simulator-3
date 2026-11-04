@@ -247,16 +247,24 @@ def sample_mileposts(vertex_mp: np.ndarray, spacing_ft: float) -> np.ndarray:
     grid = np.arange(0.0, total, step)
     cand = sorted([(m, 0) for m in vertex_mp] + [(m, 1) for m in grid] + [(total, 0)])   # vertices win ties
     out: List[float] = []
+    kinds: List[int] = []
     half = 0.5 * step
     for m, kind in cand:
         if not out:
             out.append(m)
+            kinds.append(kind)
         elif m - out[-1] >= half:
             out.append(m)
-        elif kind == 0 and len(out) > 1 and m - out[-2] >= half:
-            out[-1] = m   # swap a grid point for the vertex right next to it
+            kinds.append(kind)
+        elif (kind == 0 and kinds[-1] == 1 and len(out) > 1
+              and half <= m - out[-2] <= step + 1e-12):
+            # Swap a grid point for the vertex right next to it. Only a grid point: swapping
+            # a vertex for the next vertex let a dense route (a vertex every few feet) slide
+            # one point along the whole line and collapse the profile to its two ends.
+            out[-1] = m
+            kinds[-1] = kind
     if total - out[-1] > 1e-9:
-        if total - out[-1] < half and len(out) > 1:
+        if total - out[-1] < half and len(out) > 1 and total - out[-2] <= step + 1e-12:
             out[-1] = total
         else:
             out.append(total)
