@@ -249,3 +249,23 @@ def test_precheck_says_what_the_exit_must_hold():
     assert not h["ok"] and h["exit"] == "BPCV" and h["cause"] == "packed N2 column"
     assert h["needed_psi"] > h["room_psi"] and h["overspeed_mph"] > ws.scenario.inputs.max_speed_mph
     assert "overspeed risk" in pc["job_type"] and any("BPCV would have to add" in f for f in pc["findings"])
+
+
+def test_pig_that_cannot_start_aborts_fast_without_overpressure():
+    """An exit pressure above the drive cap: the pig can't move. The run must stop within a
+    few hours of sim time with the reason, and never pump the column past the cap."""
+    import numpy as np
+    from purge_sim.data.scenario import ScenarioInputs
+    from purge_sim.engine.config_builder import build_sim_config
+    from purge_sim.engine.simulator import simulate
+    inp = ScenarioInputs(purge_start_mp=0.0, purge_end_mp=20.0,
+                         elevation_profile=[[float(m), 4000.0] for m in np.linspace(0, 20, 41)],
+                         pipe_segments=[{"start_mp": 0.0, "end_mp": 20.0, "od_in": 10.75, "wt_in": 0.219}],
+                         exit_pressure_run_psig=1100.0, exit_pressure_end_psig=1100.0,
+                         maop_psig=750.0, max_drive_psig=750.0, max_injection_psig=750.0)
+    msgs = []
+    res = simulate(build_sim_config(inp), status_cb=msgs.append)
+    assert not res.completed and res.abort_reason.startswith("Pig can't move")
+    assert res.steps[-1].t_hr < 3.0
+    assert max(s.injection_psig for s in res.steps) <= 750.0 + 1e-6
+    assert any(m.startswith("Pig stalled") for m in msgs)

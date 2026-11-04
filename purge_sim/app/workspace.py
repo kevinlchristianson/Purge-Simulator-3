@@ -799,8 +799,12 @@ class Workspace:
             if progress_cb:
                 progress_cb(frac)
 
+        def _status(text: str):
+            self.job["message"] = text or f"Simulating {name}"
+            self.revision += 1
+
         try:
-            res = simulate(cfg, progress_cb=_cb)
+            res = simulate(cfg, progress_cb=_cb, status_cb=_status)
         except Exception as e:
             with self.lock:
                 self.job.update(state="error", error=f"{type(e).__name__}: {e}",

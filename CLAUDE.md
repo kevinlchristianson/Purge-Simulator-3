@@ -50,7 +50,10 @@ purge_sim/
                          At launch the pump is already at the rate for target speed at the start
                          pressure (the crew brings it to rate before releasing the pig), and the
                          launch is resolved with column-fraction steps so the pig doesn't lurch. False = the old per-step pressure fix.
-                         Pack-and-coast is unchanged.
+                         Pack-and-coast is unchanged. A stalled pig is never pumped past the drive
+                         cap, and a run with the pig stalled, no booster coming and the face not
+                         rising for stuck_stall_hr (2 h) aborts with the reason (else max_stall_hr 48 h);
+                         status_cb reports the stall while it lasts (the app shows it by the bar)
     physics.py         — pure, stateless physics functions (friction, Z-factor, haversine, etc.).
                          Friction factor is Churchill 1977 (darcy_friction_factor / _array): one
                          smooth curve, = 64/Re laminar, within 0.1% of Swamee-Jain turbulent. Every
