@@ -223,6 +223,9 @@ class SimConfig:
     dt_min_hr: float = 1.0 / 3600.0      # 1-second minimum step
     dt_max_hr: float = 5.0 / 60.0        # 5-minute maximum step
     max_stall_hr: float = 48.0           # abort if pig stalled this long with no progress
+    # Abort sooner when the pig is stalled, no booster is running or on its way, and the pig
+    # face has not risen in this long: the drive is at its cap and nothing else can change.
+    stuck_stall_hr: float = 2.0
 
 
 # ---------------------------------------------------------------------------
@@ -379,7 +382,8 @@ def compute_initial_n2_pressure(
     from the purge start to the first active exit point.
 
     First exit = first pump station (suction psig), then BPCV, then end-of-line.
-    Returns a value clamped between (exit_psig + 5) and (MAOP × 0.9).
+    Returns a value clamped between (exit_psig + 5) and (MAOP × 0.9), and never above the
+    drive cap or MAOP.
     """
     # First active exit point
     if cfg.pump_stations:
@@ -406,7 +410,10 @@ def compute_initial_n2_pressure(
                                 cfg.fluid_sg)
 
     p = exit_psig + friction_psi + head_psi
-    return float(max(exit_psig + 5.0, min(p, cfg.maop_psig * 0.9)))
+    p = max(exit_psig + 5.0, min(p, cfg.maop_psig * 0.9))
+    # never pack the launcher past the drive cap or MOP, even when the exit alone needs more
+    # (the pig then can't start, and the run reports it instead of starting over MOP)
+    return float(min(p, cfg.max_drive_psig, cfg.maop_psig))
 
 
 def _compute_mop_cap(
@@ -691,13 +698,16 @@ def _compute_station_pressures(
     return out
 
 
-def simulate(cfg: SimConfig, progress_cb: Optional[Callable[[float], None]] = None) -> SimResults:
+def simulate(cfg: SimConfig, progress_cb: Optional[Callable[[float], None]] = None,
+             status_cb: Optional[Callable[[str], None]] = None) -> SimResults:
     """
     Run the purge simulation.
 
     Args:
         cfg:         full simulation configuration
         progress_cb: optional callback(fraction_complete) called each step
+        status_cb:   optional callback(text) when the pig stalls (and while it stays stalled),
+                     so a caller can show why progress isn't moving
 
     Returns:
         SimResults with full timestep history
@@ -867,6 +877,8 @@ def simulate(cfg: SimConfig, progress_cb: Optional[Callable[[float], None]] = No
     total_scf_booster_fresh = 0.0  # fresh N2 injected at booster stations (own N2 source)
     total_scf_vented   = 0.0
     stall_start_t_hr: Optional[float] = None   # time when pig first stalled (None = not stalled)
+    stall_face_ref: Optional[tuple] = None     # (t_hr, pig face psig) when the face last rose in a stall
+    stall_status_t = -1.0                      # last stall status report (sim hr)
     prev_injection_scfm = 0.0                  # SP rate last step (smooth-injection ramp)
     if cfg.smooth_injection and cfg.n2_budget_scf is None:
         # Launch with the pumper already at rate: the crew packs the launcher to the start
@@ -1327,8 +1339,12 @@ def simulate(cfg: SimConfig, progress_cb: Optional[Callable[[float], None]] = No
             scf_inject = max(scf_inject, target_scf - inj_seg.scf)
 
         # Stalled with no booster behind: inject at max rate — the only way to build pig-face
-        # pressure and recover when there is no booster to relay it forward.
-        if is_stalled and not _booster_behind:
+        # pressure and recover when there is no booster to relay it forward. Never past the
+        # drive cap: without it a pig that can't move (exit + head above the cap) had gas
+        # pumped in without limit, to absurd pig-face pressures.
+        _stall_cap = min(mop_cap if (math.isfinite(mop_cap) and mop_cap > 0) else math.inf,
+                         cfg.max_drive_psig)
+        if is_stalled and not _booster_behind and pig_face_psig < _stall_cap:
             scf_inject = max(scf_inject, cfg.max_injection_scfm * dt_hr * 60.0)
 
         # --- COAST: ride the stored column instead of injecting more ---
@@ -1377,6 +1393,10 @@ def simulate(cfg: SimConfig, progress_cb: Optional[Callable[[float], None]] = No
                 _lo = 0.0   # at the MOP cap: cut at once, never ramp gas into it
             _rate = min(max(_want, _lo), _hi, cfg.max_injection_scfm)
             scf_inject = max(0.0, _rate) * dt_hr * 60.0
+
+        # A stalled pig with nothing behind it: don't pump the column past the drive cap.
+        if is_stalled and not _booster_behind and math.isfinite(_stall_cap):
+            scf_inject = min(scf_inject, max(0.0, inj_seg.scf_at_pressure(_stall_cap) - inj_seg.scf))
 
         # PACK-AND-COAST: once the N2 budget is spent, SP is OFF — the stored compressed column
         # does PV work (boosters may still recompress it forward) to finish the run.
@@ -1676,6 +1696,20 @@ def simulate(cfg: SimConfig, progress_cb: Optional[Callable[[float], None]] = No
             if stall_start_t_hr is None:
                 stall_start_t_hr = t_hr
             stall_duration_hr = t_hr - stall_start_t_hr
+            if stall_face_ref is None or pig_face_psig > stall_face_ref[1] + 1.0:
+                stall_face_ref = (t_hr, pig_face_psig)
+            no_help = not any(bs.requested or bs.running for bs in booster_states)
+            if status_cb and t_hr - stall_status_t >= 0.25:
+                stall_status_t = t_hr
+                status_cb(f"Pig stalled at MP {pig_mp:.2f} for {stall_duration_hr:.1f} h "
+                          f"(pig face {pig_face_psig:.0f} psig, needs to beat {exit_psig:.0f} psig exit at MP {exit_mp:.1f})")
+            if no_help and t_hr - stall_face_ref[0] >= cfg.stuck_stall_hr:
+                results.abort_reason = (
+                    f"Pig can't move at MP {pig_mp:.2f}: the pig face is at {pig_face_psig:.0f} psig and can't "
+                    f"go higher (drive cap or N2 budget), which is not enough to push the liquid to the "
+                    f"{exit_psig:.0f} psig exit at MP {exit_mp:.1f}. Lower the exit pressure, raise the drive "
+                    f"cap if MOP allows, or add a booster or a downstream pump station. See the pre-run check.")
+                break
             if stall_duration_hr >= cfg.max_stall_hr:
                 # Determine whether the stall is a flow bottleneck or pressure issue
                 flow_limited_boosters = [
@@ -1697,7 +1731,10 @@ def simulate(cfg: SimConfig, progress_cb: Optional[Callable[[float], None]] = No
                     )
                 break
         else:
+            if stall_start_t_hr is not None and status_cb:
+                status_cb("")   # moving again
             stall_start_t_hr = None  # reset if pig starts moving again
+            stall_face_ref = None
 
     results.total_scf_injected = total_scf_injected
     results.total_scf_booster_fresh = total_scf_booster_fresh
