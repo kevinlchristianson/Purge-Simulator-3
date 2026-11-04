@@ -184,11 +184,24 @@ def route_from_file(path: str, inp: ScenarioInputs, direction: str = "auto") -> 
         raise RouteError(f"{os.path.basename(path)} has no route coordinates (latitude/longitude); "
                          "use the pipeline's KMZ or a GPS export")
     lat, lon = np.asarray(p.lat, dtype=float), np.asarray(p.lon, dtype=float)
-    notes: List[str] = []
+    file_mp, file_elev = p.mileposts, np.asarray(p.elevations_ft, dtype=float)
+    notes: List[str] = list(p.notes)
+    ends = _profile_span(inp)
+    span = abs(ends[1] - ends[0]) if ends else None
+    if p.parts and span:
+        # A KMZ with several lines is joined into one route. If the scenario covers only one
+        # of those lines (e.g. built from it before), use the one whose length fits best.
+        best = min(p.parts, key=lambda q: abs(q["length_mi"] - span))
+        if abs(best["length_mi"] - span) < abs(p.total_length_mi - span):
+            lat, lon = np.asarray(best["lat"], dtype=float), np.asarray(best["lon"], dtype=float)
+            file_mp, file_elev = best["mileposts"], np.asarray(best["elevations_ft"], dtype=float)
+            nm = f'"{best["name"]}"' if best["name"] else "one line"
+            notes = [f"The file has {len(p.parts)} lines. Used {nm} ({best['length_mi']:.2f} mi), the one that fits "
+                     f"this scenario's {span:.2f} mi; the lines joined would be {p.total_length_mi:.2f} mi."]
     flip = direction == "reverse"
     if direction == "auto":
         prof = np.asarray(inp.elevation_profile, dtype=float) if inp.elevation_profile else np.empty((0, 2))
-        fit = _direction_fit(p.mileposts, np.asarray(p.elevations_ft, dtype=float), prof) if len(prof) else None
+        fit = _direction_fit(file_mp, file_elev, prof) if len(prof) else None
         if fit is None:
             notes.append("Used the route in the direction it is drawn in the file (no elevations in the file to "
                          "check it against). If the launch marker is at the wrong end, add it again reversed.")

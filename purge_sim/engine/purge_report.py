@@ -240,6 +240,7 @@ PURGE_REPORT_STEP_MI = 0.25
 _FEATURE_KIND = {
     "block_valve": "Block valve", "launcher_receiver": "Launcher / receiver",
     "aerial_marker": "Aerial marker", "ground_marker": "Above-ground marker", "crossing": "Crossing",
+    "map_pin": "Map pin",
 }
 _INTERP_KEYS = ("elapsed_hr", "drive_psi", "friction_psi", "head_psi", "exit_psi",
                 "exit_min_psi", "endpoint_added_psi", "inj_scfm", "cum_scf", "speed_mph", "bph")

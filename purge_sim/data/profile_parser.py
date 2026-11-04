@@ -50,6 +50,13 @@ class ProfileData:
     lon: Optional[np.ndarray] = None
     source: str = ""
     elevation_status: str = "full"   # 'full' | 'partial' (some NaN) | 'none' (all NaN)
+    # KMZ/KML only. pins: named Point placemarks near the route, [{name, mp, offset_ft}] on
+    # this profile's mileposts. parts: each line in the file (when it has more than one),
+    # [{name, lat, lon, mileposts, elevations_ft, length_mi}],
+    # so a caller can pick one line instead of the joined route. notes: what the join did.
+    pins: List[dict] = field(default_factory=list)
+    parts: List[dict] = field(default_factory=list)
+    notes: List[str] = field(default_factory=list)
 
     @property
     def needs_elevation(self) -> bool:
@@ -110,22 +117,54 @@ def _parse_gx_coord(text: str) -> Optional[tuple]:
         return None
 
 
-def _extract_coords_from_kml_root(root) -> List[tuple]:
-    """Extract (lat, lon, elev_m) from KML root — longest LineString wins."""
-    candidates = []
+# Lines whose ends are this close are joined end to end into one route. A pipeline KMZ is
+# often drawn as several lines meeting at stations or valves, with small gaps between them.
+JOIN_GAP_FT = 5280.0
+# A gap bigger than this is joined but reported.
+JOIN_NOTE_GAP_FT = 100.0
+# Named pins further than this from the route are left out.
+PIN_MAX_OFFSET_FT = 2640.0
+_FT_PER_MI = 5280.0
 
-    for ls in root.iter():
-        if _lname(ls.tag) == 'LineString':
+
+def _iter_placemarks(root):
+    for pm in root.iter():
+        if _lname(pm.tag) == 'Placemark':
+            yield pm
+
+
+def _pm_name(pm) -> str:
+    for ch in pm:
+        if _lname(ch.tag) == 'name' and ch.text:
+            return ch.text.strip()
+    return ''
+
+
+def _extract_lines(root) -> List[dict]:
+    """Every LineString in the file (each one of a MultiGeometry counts), as
+    [{name, pts: [(lat, lon, elev_m)]}] in file order. Falls back to gx:Track, then to any
+    <coordinates> outside a Polygon, when the file has no LineString."""
+    lines = []
+    for pm in _iter_placemarks(root):
+        name = _pm_name(pm)
+        for ls in pm.iter():
+            if _lname(ls.tag) != 'LineString':
+                continue
             for ch in ls.iter():
                 if _lname(ch.tag) == 'coordinates' and getattr(ch, 'text', None):
                     pts = _parse_kml_coordinates(ch.text)
-                    if pts:
-                        candidates.append(pts)
-
-    if candidates:
-        return max(candidates, key=len)
-
-    # Fall back to gx:Track
+                    if len(pts) >= 2:
+                        lines.append({'name': name, 'pts': pts})
+    if not lines:   # a LineString outside any Placemark
+        for ls in root.iter():
+            if _lname(ls.tag) == 'LineString':
+                for ch in ls.iter():
+                    if _lname(ch.tag) == 'coordinates' and getattr(ch, 'text', None):
+                        pts = _parse_kml_coordinates(ch.text)
+                        if len(pts) >= 2:
+                            lines.append({'name': '', 'pts': pts})
+    if lines:
+        return lines
     for tr in root.iter():
         if _lname(tr.tag) == 'Track':
             pts = []
@@ -134,20 +173,160 @@ def _extract_coords_from_kml_root(root) -> List[tuple]:
                     p = _parse_gx_coord(ch.text)
                     if p:
                         pts.append(p)
-            if pts:
-                candidates.append(pts)
-
-    if candidates:
-        return max(candidates, key=len)
-
-    # Fall back to any <coordinates> not in a Polygon
+            if len(pts) >= 2:
+                lines.append({'name': '', 'pts': pts})
+    if lines:
+        return lines
+    best: List[tuple] = []
     for ch in root.iter():
         if _lname(ch.tag) == 'coordinates' and getattr(ch, 'text', None):
             pts = _parse_kml_coordinates(ch.text)
-            if pts:
-                candidates.append(pts)
+            if len(pts) > len(best):
+                best = pts
+    return [{'name': '', 'pts': best}] if len(best) >= 2 else []
 
-    return max(candidates, key=len) if candidates else []
+
+def _extract_pins(root) -> List[dict]:
+    """Named Point placemarks (stations, valves...) as [{name, lat, lon}]."""
+    pins = []
+    for pm in _iter_placemarks(root):
+        name = _pm_name(pm)
+        if not name:
+            continue
+        for pt in pm.iter():
+            if _lname(pt.tag) != 'Point':
+                continue
+            for ch in pt.iter():
+                if _lname(ch.tag) == 'coordinates' and getattr(ch, 'text', None):
+                    pts = _parse_kml_coordinates(ch.text)
+                    if pts:
+                        pins.append({'name': name, 'lat': pts[0][0], 'lon': pts[0][1]})
+    return pins
+
+
+def _line_length_mi(pts) -> float:
+    return float(sum(haversine_miles(a[0], a[1], b[0], b[1]) for a, b in zip(pts, pts[1:])))
+
+
+def _gap_ft(p, q) -> float:
+    return haversine_miles(p[0], p[1], q[0], q[1]) * _FT_PER_MI
+
+
+def _label(line: dict, i: int) -> str:
+    return f'"{line["name"]}"' if line['name'] else f"line {i + 1}"
+
+
+def join_lines(lines: List[dict], max_gap_ft: float = JOIN_GAP_FT) -> tuple:
+    """Join lines end to end into one route. Starts from the longest line, in the direction
+    it is drawn, and keeps adding whichever remaining line has an end closest to either end
+    of the route (flipped as needed) while that gap is within max_gap_ft.
+    Returns (pts, notes). A line that doesn't meet an end (a lateral off the middle, or a
+    separate pipeline) is left out and named in the notes."""
+    if not lines:
+        return [], []
+    if len(lines) == 1:
+        return list(lines[0]['pts']), []
+    lens = [_line_length_mi(l['pts']) for l in lines]
+    seed = max(range(len(lines)), key=lambda i: lens[i])
+    route = list(lines[seed]['pts'])
+    used = [seed]
+    left = [i for i in range(len(lines)) if i != seed]
+    gaps = []
+    while left:
+        best = None   # (gap, i, at_start, flip)
+        for i in left:
+            pts = lines[i]['pts']
+            for at_start, end in ((True, route[0]), (False, route[-1])):
+                for flip, tip in ((False, pts[0]), (True, pts[-1])):
+                    g = _gap_ft(end, tip)
+                    if best is None or g < best[0]:
+                        best = (g, i, at_start, flip)
+        g, i, at_start, flip = best
+        if g > max_gap_ft:
+            break
+        pts = list(lines[i]['pts'])
+        # attach so the line's touching tip sits next to the route end
+        if at_start:
+            seg = pts if flip else pts[::-1]          # ends at its touching tip
+            if g < 1.0:
+                seg = seg[:-1]
+            route = seg + route
+        else:
+            seg = pts[::-1] if flip else pts          # starts at its touching tip
+            if g < 1.0:
+                seg = seg[1:]
+            route = route + seg
+        used.append(i)
+        left.remove(i)
+        if g > JOIN_NOTE_GAP_FT:
+            gaps.append(f"{g:,.0f} ft gap bridged where {_label(lines[i], i)} meets the route")
+    notes = []
+    if len(used) > 1:
+        notes.append(f"The file has {len(lines)} lines; {len(used)} were joined end to end into one "
+                     f"{_line_length_mi(route):.2f} mi route ("
+                     + ", ".join(f"{_label(lines[i], i)} {lens[i]:.2f} mi" for i in sorted(used)) + ").")
+    notes += [g[0].upper() + g[1:] + "." for g in gaps]
+    if left:
+        notes.append("Left out, not touching either end of the route (a lateral or a separate line?): "
+                     + ", ".join(f"{_label(lines[i], i)} {lens[i]:.2f} mi" for i in left) + ".")
+    return route, notes
+
+
+def _place_pins(pins: List[dict], lats: np.ndarray, lons: np.ndarray, mps: np.ndarray) -> tuple:
+    """Milepost of each pin on the route (nearest point on the nearest segment)."""
+    placed, notes = [], []
+    if len(lats) < 2:
+        return placed, notes
+    lat0 = math.radians(float(np.mean(lats)))
+    kx, ky = 69.172 * math.cos(lat0), 69.0   # miles per degree, local flat projection
+    x, y = lons * kx, lats * ky
+    far = []
+    for pin in pins:
+        px, py = pin['lon'] * kx, pin['lat'] * ky
+        dx, dy = np.diff(x), np.diff(y)
+        L2 = dx * dx + dy * dy
+        t = np.where(L2 > 0, ((px - x[:-1]) * dx + (py - y[:-1]) * dy) / np.where(L2 > 0, L2, 1), 0)
+        t = np.clip(t, 0, 1)
+        cx, cy = x[:-1] + t * dx, y[:-1] + t * dy
+        d = np.hypot(cx - px, cy - py)
+        k = int(np.argmin(d))
+        off_ft = float(d[k]) * _FT_PER_MI
+        mp = float(mps[k] + t[k] * (mps[k + 1] - mps[k]))
+        if off_ft > PIN_MAX_OFFSET_FT:
+            far.append(f"{pin['name']} ({off_ft / _FT_PER_MI:.1f} mi off)")
+            continue
+        placed.append({'name': pin['name'], 'mp': round(mp, 3), 'offset_ft': round(off_ft)})
+    placed.sort(key=lambda p: p['mp'])
+    if placed:
+        notes.append("Named pins on the route: " + ", ".join(f"{p['name']} MP {p['mp']:.2f}" for p in placed) + ".")
+    if far:
+        notes.append("Named pins left out, too far from the route: " + ", ".join(far) + ".")
+    return placed, notes
+
+
+def _extract_coords_from_kml_root(root) -> List[tuple]:
+    """(lat, lon, elev_m) of the route: every line in the file joined end to end."""
+    return join_lines(_extract_lines(root))[0]
+
+
+def _profile_from_kml_root(root, what: str, file_path: str) -> ProfileData:
+    lines = _extract_lines(root)
+    pts, notes = join_lines(lines)
+    if not pts:
+        raise ValueError(f"No pipeline coordinates found in {what}: {file_path}")
+    profile = _build_profile_from_lat_lon_elev(pts, elev_in_meters=True)
+    profile.source = f"{what}:{os.path.basename(file_path)}"
+    profile.notes = notes
+    if len(lines) > 1:
+        profile.parts = []
+        for l in lines:
+            part = _build_profile_from_lat_lon_elev(l['pts'], elev_in_meters=True)
+            profile.parts.append({'name': l['name'], 'lat': part.lat, 'lon': part.lon,
+                                  'mileposts': part.mileposts, 'elevations_ft': part.elevations_ft,
+                                  'length_mi': part.total_length_mi})
+    profile.pins, more = _place_pins(_extract_pins(root), profile.lat, profile.lon, profile.mileposts)
+    profile.notes += more
+    return profile
 
 
 def elevation_status(elevs: np.ndarray) -> str:
@@ -192,7 +371,8 @@ def _build_profile_from_lat_lon_elev(
 
 def parse_kmz(file_path: str) -> ProfileData:
     """
-    Parse a KMZ file (zipped KML). Extracts the pipeline centerline and elevation profile.
+    Parse a KMZ file (zipped KML). Extracts the pipeline centerline (every line in the file, joined end to end) and
+    elevation profile, plus any named pins near the route.
     Elevation data is in meters in KML (converted to feet).
     """
     with zipfile.ZipFile(file_path, 'r') as z:
@@ -209,13 +389,7 @@ def parse_kmz(file_path: str) -> ProfileData:
     else:
         root = ET.fromstring(kml_data.decode('utf-8', errors='replace'))
 
-    pts = _extract_coords_from_kml_root(root)
-    if not pts:
-        raise ValueError(f"No pipeline coordinates found in KMZ: {file_path}")
-
-    profile = _build_profile_from_lat_lon_elev(pts, elev_in_meters=True)
-    profile.source = f"KMZ:{os.path.basename(file_path)}"
-    return profile
+    return _profile_from_kml_root(root, "KMZ", file_path)
 
 
 def parse_kml(file_path: str) -> ProfileData:
@@ -229,13 +403,7 @@ def parse_kml(file_path: str) -> ProfileData:
     else:
         root = ET.fromstring(kml_data.decode('utf-8', errors='replace'))
 
-    pts = _extract_coords_from_kml_root(root)
-    if not pts:
-        raise ValueError(f"No pipeline coordinates found in KML: {file_path}")
-
-    profile = _build_profile_from_lat_lon_elev(pts, elev_in_meters=True)
-    profile.source = f"KML:{os.path.basename(file_path)}"
-    return profile
+    return _profile_from_kml_root(root, "KML", file_path)
 
 
 # ---------------------------------------------------------------------------

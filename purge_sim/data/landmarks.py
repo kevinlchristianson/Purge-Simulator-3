@@ -20,6 +20,7 @@ KINDS = {
     "aerial_marker": "Aerial marker",
     "ground_marker": "Above-ground marker",
     "crossing": "Crossing",
+    "map_pin": "Map pin",   # a named Point in a KMZ (station, valve...), unclassified
 }
 
 # PxP 'Descriptions' feature codes

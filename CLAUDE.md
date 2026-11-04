@@ -132,7 +132,9 @@ purge_sim/
     gis.py             — Map tab geometry: milepost per route vertex (route_latlon scaled to the
                          profile's milepost span), stations/CVs/boosters/BPCV placed on it, and
                          route_from_file() to add a KMZ route to a scenario without one (direction
-                         picked from the file's elevations when it has any). Profile is untouched
+                         picked from the file's elevations when it has any; for a KMZ with several
+                         lines, the single line that fits the scenario's length if it fits better
+                         than the joined route). Profile is untouched
     settings.py, paths.py — API key/model; bundled vs user dirs (works frozen by PyInstaller)
     static/index.html  — the whole UI, vanilla JS + inline SVG charts, no CDN
     static/vendor/leaflet/ — Leaflet 1.9.4 (BSD-2), vendored for the Map tab so it works offline;
@@ -156,7 +158,10 @@ purge_sim/
     profile_parser.py  — KMZ / KMZ+GPSVisualizer-TXT / client Excel / plain milepost-elevation
                          text parsers for non-ILI data sources. A file with no elevations
                          (most pipeline KMZs) comes back NaN with elevation_status='none',
-                         never a flat 0 ft profile
+                         never a flat 0 ft profile. A KMZ/KML with several lines is joined end to
+                         end (join_lines: longest line first, as drawn; ends within 1 mi); named
+                         Point placemarks come back as pins with mileposts, imported as map-only
+                         'map_pin' landmarks
     pipe_catalog.py    — NPS -> OD, STD/XS wall, API 5L SMYS, flange-class ratings, Barlow check
     fluids.py          — product library (SG, viscosity, vapor pressure + 100 psi margin)
     elevation.py       — built-in elevation lookup for those files: USGS 3DEP point queries

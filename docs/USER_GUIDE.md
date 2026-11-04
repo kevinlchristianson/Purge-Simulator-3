@@ -152,6 +152,17 @@ costs.
   250 ft spacing (US only, needs internet). Look at the elevation line on the Overview tab
   for the number of points, how many were interpolated, and any warning flags (for example
   dead-flat stretches that may be a river or HDD crossing).
+- **KMZs with several lines.** A pipeline KMZ is often drawn as several lines (one per
+  section, meeting at stations). The import joins every line whose ends meet (within a mile)
+  into one route, starting from the longest line in the direction it is drawn. The import
+  notes list the lines joined, any gaps bridged, and any line left out (a lateral off the
+  middle, or a separate pipeline). This lets you model the whole hydraulic system: for
+  example, purge Belle Creek to Elk Creek with the Hydraulic Endpoint at Reno. Named pins in
+  the KMZ (stations, valves) come in as **Map pins** at their mileposts, on the Map tab and
+  as optional Purge Report rows. They are map-only; enter any that are pump stations, check
+  valves, the launch or the pig stop in Job setup. **Add route from KMZ** on the Map tab
+  uses the single line that fits the scenario's length when that fits better than the
+  joined route.
 - **Route direction.** KMZ routes are often drawn backwards. If MP 0 is at the wrong end, fix
   it with the first Job setup question, **Reverse Direction**, not by editing mileposts.
 - **For a PxP sheet:** mileposts are the sheet's distance from the line's origin, so the

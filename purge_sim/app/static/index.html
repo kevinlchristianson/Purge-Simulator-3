@@ -1225,10 +1225,10 @@ const ELEV_RAMP = ["#2c7bb6", "#00a6ca", "#00ccbc", "#90eb9d", "#f9d057", "#f29e
 const MOP_BINS = [[0.5, "#1a9850"], [0.7, "#91cf60"], [0.85, "#fee08b"], [0.95, "#fc8d59"], [1.0, "#d73027"], [Infinity, "#7f0000"]];
 const MK = {pump: ["#d4580b", "Pump station"], check_valve: ["#6e7781", "Check valve"], booster: ["#8250df", "Booster site"], bpcv: ["#cf222e", "BPCV"],
             block_valve: ["#0e7c86", "Block valve"], launcher_receiver: ["#1c2330", "Launcher / receiver"], aerial_marker: ["#bf8700", "Aerial marker"],
-            ground_marker: ["#8c959f", "Above-ground marker"], crossing: ["#0969da", "Crossing"]};
+            ground_marker: ["#8c959f", "Above-ground marker"], crossing: ["#0969da", "Crossing"], map_pin: ["#1a7f37", "Map pin"]};
 // map-only features from the data file, each with a show/hide box (markers are dense, so ground markers start hidden)
-const LANDMARKS = ["block_valve", "launcher_receiver", "aerial_marker", "ground_marker", "crossing"];
-const MK_SIZE = {check_valve: 4, aerial_marker: 3.5, ground_marker: 3, crossing: 4.5, block_valve: 5.5, launcher_receiver: 5.5};
+const LANDMARKS = ["map_pin", "block_valve", "launcher_receiver", "aerial_marker", "ground_marker", "crossing"];
+const MK_SIZE = {check_valve: 4, aerial_marker: 3.5, ground_marker: 3, crossing: 4.5, block_valve: 5.5, launcher_receiver: 5.5, map_pin: 6};
 const showKind = k => pref("show." + k, k === "ground_marker" ? "0" : "1") === "1";
 const M = {map: null, base: null, layers: null, data: null, key: null, step: null, tileErr: 0, hover: null};
 const pref = (k, d) => { try { return localStorage.getItem("purge.map." + k) || d; } catch (e) { return d; } };
