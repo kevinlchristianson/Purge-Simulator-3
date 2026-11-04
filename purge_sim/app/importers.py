@@ -147,6 +147,10 @@ def _from_profile(path: str, fetch_elevation: Optional[bool] = None,
         else:
             elev = source.pop("_profile")
     start, end = float(elev[0][0]), float(elev[-1][0])
+    # named pins (stations, valves) from a KMZ: map-only landmarks, on the final profile's mileposts
+    scale = (end - start) / p.total_length_mi if p.total_length_mi > 0 else 1.0
+    landmarks = [{"mp": round(start + pin["mp"] * scale, 3), "kind": "map_pin", "name": pin["name"]}
+                 for pin in p.pins]
     inputs = ScenarioInputs(
         purge_start_mp=round(start, 3),
         purge_end_mp=round(end, 3),
@@ -157,8 +161,12 @@ def _from_profile(path: str, fetch_elevation: Optional[bool] = None,
         pipe_segments=[{"start_mp": start, "end_mp": end, "od_in": 24.0, "wt_in": 0.313}],
         data_source=data_source,
         data_file=os.path.basename(path),
+        landmarks=landmarks,
     )
-    return inputs, notes + list(source.get("flags", []))
+    if landmarks:
+        notes.append("The named pins are on the map only; enter any that are pump stations, check valves or "
+                     "the launch / pig stop in Job setup.")
+    return inputs, list(p.notes) + notes + list(source.get("flags", []))
 
 
 def scenario_from_file(path: str, kind: str, name: str, fetch_elevation: Optional[bool] = None,

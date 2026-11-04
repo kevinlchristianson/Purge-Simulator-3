@@ -487,3 +487,74 @@ def test_zero_and_out_of_range_coordinates_are_dropped(tmp_path, dem):
     v = ws.map_view()
     assert v["route_length_mi"] < 10 and abs(v["mp_scale"] - 1) < 0.01 and not v["warnings"]
     assert all(f["lat"] is not None for f in v["features"])
+
+
+# ---------------------------------------------------------------- KMZs with several lines
+
+def write_multi_kmz(path, lines, pins=()):
+    """lines: [(name, [(lat, lon), ...])]; pins: [(name, lat, lon)]."""
+    pms = "".join(f'<Placemark><name>{n}</name><LineString><coordinates>'
+                  + " ".join(f"{lo},{la},0" for la, lo in c) + '</coordinates></LineString></Placemark>'
+                  for n, c in lines)
+    pms += "".join(f'<Placemark><name>{n}</name><Point><coordinates>{lo},{la},0</coordinates></Point></Placemark>'
+                   for n, la, lo in pins)
+    kml = ('<?xml version="1.0" encoding="UTF-8"?><kml xmlns="http://www.opengis.net/kml/2.2"><Document>'
+           f'<Folder>{pms}</Folder></Document></kml>')
+    with zipfile.ZipFile(path, "w") as z:
+        z.writestr("doc.kml", kml)
+    return str(path)
+
+
+# Thunderbird Purges.kmz in miniature: two lines drawn outward from a shared junction,
+# one long (south to "Reno"), one shorter (north to "Belle Creek", via "Elk Creek").
+JCT = (45.0, -108.5)
+SOUTH = [JCT, (44.95, -108.52), (44.90, -108.55), (44.85, -108.56)]
+NORTH = [JCT, (45.03, -108.49), (45.06, -108.47)]
+PINS = [("Reno", 44.8501, -108.5601), ("Elk Creek", 45.03, -108.4901), ("Belle Creek", 45.0601, -108.47),
+        ("Far away", 46.0, -108.0)]
+
+
+def test_kmz_lines_are_joined_end_to_end(tmp_path):
+    p = parse_profile(write_multi_kmz(tmp_path / "tb.kmz", [("S", SOUTH), ("N", NORTH)], PINS))
+    # longest line keeps its drawn direction; the other is flipped onto its start
+    assert (p.lat[0], p.lon[0]) == pytest.approx(NORTH[-1]) and (p.lat[-1], p.lon[-1]) == pytest.approx(SOUTH[-1])
+    assert len(p.lat) == len(SOUTH) + len(NORTH) - 1           # the shared junction point once
+    assert "2 were joined" in p.notes[0]
+    names = [x["name"] for x in p.pins]
+    assert names == ["Belle Creek", "Elk Creek", "Reno"]       # in milepost order; "Far away" dropped
+    assert p.pins[0]["mp"] < 0.05 and abs(p.pins[-1]["mp"] - p.total_length_mi) < 0.05
+    assert any("Far away" in n for n in p.notes)
+    assert [q["name"] for q in p.parts] == ["S", "N"]
+    assert sum(q["length_mi"] for q in p.parts) == pytest.approx(p.total_length_mi)
+
+
+def test_kmz_gap_bridged_and_lateral_left_out(tmp_path):
+    a = [(45.0, -108.5), (45.05, -108.5)]
+    b = [(45.0505, -108.5), (45.10, -108.5)]                  # ~180 ft past a's end
+    lateral = [(45.025, -108.45), (45.025, -108.40)]           # off the middle, miles from either end
+    p = parse_profile(write_multi_kmz(tmp_path / "g.kmz", [("A", a), ("B", b), ("Lat", lateral)]))
+    assert len(p.lat) == 4 and p.lat[0] == pytest.approx(45.0) and p.lat[-1] == pytest.approx(45.10)
+    assert any("ft gap bridged" in n for n in p.notes)
+    assert any("Left out" in n and '"Lat"' in n for n in p.notes)
+
+
+def test_import_multi_line_kmz_adds_pins_as_map_landmarks(tmp_path, dem):
+    ws = Workspace()
+    ws.new_from_import(write_multi_kmz(tmp_path / "tb.kmz", [("S", SOUTH), ("N", NORTH)], PINS), "profile", "TB")
+    inp = ws.scenario.inputs
+    end = inp.elevation_profile[-1][0]
+    assert inp.purge_end_mp == pytest.approx(end, abs=1e-3)
+    assert [lm["kind"] for lm in inp.landmarks] == ["map_pin"] * 3
+    assert inp.landmarks[-1]["name"] == "Reno" and abs(inp.landmarks[-1]["mp"] - end) < 0.05
+    assert "2 were joined" in ws.scenario.meta.notes
+    pins = [f for f in ws.map_view()["features"] if f["kind"] == "map_pin"]
+    assert len(pins) == 3 and all(f["lat"] is not None for f in pins)
+
+
+def test_add_route_picks_the_line_that_fits_the_scenario(tmp_path, dem):
+    ws = Workspace()
+    ws.new_from_import(write_kmz(tmp_path / "s.kmz", SOUTH), "profile", "South only")
+    ws.scenario.inputs.route_latlon = []
+    out = ws.attach_route(write_multi_kmz(tmp_path / "tb.kmz", [("S", SOUTH), ("N", NORTH)]), "as_is")
+    assert out["notes"][0].startswith('The file has 2 lines. Used "S"')
+    assert ws.scenario.inputs.route_latlon[-1] == pytest.approx(list(SOUTH[-1]), abs=1e-6)
