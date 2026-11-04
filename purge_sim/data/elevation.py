@@ -31,8 +31,10 @@ import json
 import os
 import sqlite3
 import threading
+import http.client
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
@@ -95,14 +97,44 @@ class USGS3DEP:
         "https://epqs.nationalmap.gov/v1/points?x={lon:.7f}&y={lat:.7f}&units=Feet&output=json",
     )
 
-    def __init__(self, workers: int = 8, timeout_s: float = 20.0, retries: int = 3,
+    def __init__(self, workers: int = 16, timeout_s: float = 10.0, retries: int = 3,
                  urlopen: Optional[Callable] = None):
         self.workers = workers
         self.timeout_s = timeout_s
         self.retries = retries
+        # Speed: each worker keeps one HTTPS connection open and reuses it. A fresh urlopen per
+        # point pays a TCP + TLS handshake to USGS every time, which is most of a lookup's
+        # time. Behind a proxy (or when a test injects urlopen) every request goes via urlopen.
+        self._keepalive = urlopen is None and "https" not in urllib.request.getproxies()
         self._urlopen = urlopen or urllib.request.urlopen
+        self._local = threading.local()
         self._url_idx = 0
         self._lock = threading.Lock()
+
+    def _get(self, url: str) -> bytes:
+        """Response body for url. Raises urllib.error.HTTPError on a non-200 answer."""
+        if not self._keepalive:
+            req = urllib.request.Request(url, headers={"User-Agent": "purge-simulator/1.0"})
+            with self._urlopen(req, timeout=self.timeout_s) as resp:
+                return resp.read()
+        u = urllib.parse.urlsplit(url)
+        conn = getattr(self._local, "conn", None)
+        if conn is None or getattr(self._local, "host", None) != u.netloc:
+            cls = http.client.HTTPSConnection if u.scheme == "https" else http.client.HTTPConnection
+            conn = cls(u.netloc, timeout=self.timeout_s)
+            self._local.conn, self._local.host = conn, u.netloc
+        try:
+            conn.request("GET", u.path + ("?" + u.query if u.query else ""),
+                         headers={"User-Agent": "purge-simulator/1.0", "Connection": "keep-alive"})
+            resp = conn.getresponse()
+            body = resp.read()
+        except Exception:
+            conn.close()
+            self._local.conn = None   # reconnect on the retry
+            raise
+        if resp.status != 200:
+            raise urllib.error.HTTPError(url, resp.status, resp.reason, resp.headers, None)
+        return body
 
     def lookup_one(self, lat: float, lon: float) -> Optional[float]:
         """Elevation in feet, None where 3DEP has no data. Raises ElevationError if unreachable."""
@@ -110,10 +142,8 @@ class USGS3DEP:
         for attempt in range(self.retries + 1):
             idx = self._url_idx
             url = self.URLS[idx].format(lat=lat, lon=lon)
-            req = urllib.request.Request(url, headers={"User-Agent": "purge-simulator/1.0"})
             try:
-                with self._urlopen(req, timeout=self.timeout_s) as resp:
-                    return _parse_epqs_value(json.loads(resp.read().decode("utf-8")))
+                return _parse_epqs_value(json.loads(self._get(url).decode("utf-8")))
             except urllib.error.HTTPError as e:
                 last = e
                 if e.code in (400, 404) and idx + 1 < len(self.URLS):
@@ -121,7 +151,7 @@ class USGS3DEP:
                         if self._url_idx == idx:
                             self._url_idx = idx + 1
                     continue
-            except (urllib.error.URLError, OSError, ValueError) as e:
+            except (urllib.error.URLError, OSError, ValueError, http.client.HTTPException) as e:
                 last = e
             if attempt < self.retries:
                 time.sleep(0.5 * 2 ** attempt)
