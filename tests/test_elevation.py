@@ -194,6 +194,41 @@ def test_usgs_parsing_endpoint_fallback_and_unreachable():
         E.USGS3DEP(workers=2, retries=0, urlopen=down).lookup([(45.0, -108.5)] * 10)
 
 
+def test_keepalive_reuses_one_connection_per_worker():
+    # Each worker keeps its connection open instead of a new TCP/TLS handshake per point.
+    import http.server
+    conns = set()
+
+    class H(http.server.BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+
+        def do_GET(self):
+            conns.add(self.client_address)
+            if "/v1/json" in self.path:
+                body, code = b"gone", 404
+            else:
+                body, code = json.dumps({"value": "1234.5"}).encode(), 200
+            self.send_response(code)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *a):
+            pass
+
+    srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        p = E.USGS3DEP(workers=2, retries=1)
+        p._keepalive = True
+        base = f"http://127.0.0.1:{srv.server_address[1]}"
+        p.URLS = tuple(u.replace("https://epqs.nationalmap.gov", base) for u in E.USGS3DEP.URLS)
+        assert p.lookup([(45.0 + i * 1e-3, -108.5) for i in range(40)]) == [1234.5] * 40
+        assert len(conns) <= 4   # 2 workers (plus a reconnect after the 404 at most)
+    finally:
+        srv.shutdown()
+
+
 # ---------------------------------------------------------------- app paths
 
 def test_import_2d_kmz_looks_up_elevation(tmp_path, dem):
