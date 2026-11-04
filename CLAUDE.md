@@ -161,7 +161,7 @@ purge_sim/
     pipe_catalog.py    — NPS -> OD, STD/XS wall, API 5L SMYS, flange-class ratings, Barlow check
     fluids.py          — product library (SG, viscosity, vapor pressure + 100 psi margin)
     elevation.py       — built-in elevation lookup for those files: USGS 3DEP point queries
-                         (US only, no key), 250 ft default spacing + route vertices + peak
+                         (US only, no key): the ImageServer getSamples batch service (200 points a request), falling back to the one-point EPQS; 250 ft default spacing + route vertices + peak
                          refinement, gap fill/flags, sqlite cache in ~/.purge_sim/. Used by the
                          app's import, its Re-fetch, the assistant's fetch_elevation tool, the
                          Tkinter KMZ load and tools/kmz_elevations.py. Don't fetch elevation
