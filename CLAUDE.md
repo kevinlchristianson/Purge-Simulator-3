@@ -47,8 +47,9 @@ purge_sim/
                          gas at the aim pressure (the column then builds/draws down toward the
                          aim on its own), scaled by the coast taper, max rate below min speed,
                          and ramp-limited (full range over 2 h, 4x faster below min speed).
-                         The launch is resolved with column-fraction steps so the pump ramps up
-                         instead of the pig lurching. False = the old per-step pressure fix.
+                         At launch the pump is already at the rate for target speed at the start
+                         pressure (the crew brings it to rate before releasing the pig), and the
+                         launch is resolved with column-fraction steps so the pig doesn't lurch. False = the old per-step pressure fix.
                          Pack-and-coast is unchanged.
     physics.py         — pure, stateless physics functions (friction, Z-factor, haversine, etc.).
                          Friction factor is Churchill 1977 (darcy_friction_factor / _array): one
