@@ -180,6 +180,10 @@ purge_sim/
                          dual-axis animated profile chart — used by animation.py and the xlsx
                          reports, NOT yet wired into a live results_panel tab, see Open Items)
     scenario_manager.py — directory-backed named-scenario collection, thin wrapper on data/scenario.py
+  portable.py           — portable mode: a PurgeSimData folder next to app.py / the .exe holds
+                         scenarios, outputs, settings and the elevation cache (sets the PURGE_SIM_*
+                         env vars at startup), so the app runs from an external drive. On with
+                         --portable or "Purge Simulator.bat"; automatic once the folder exists
   branding.py           — company branding (Settings > Branding): EnerMech default, plain, or custom
                          name/colors/logo, kept in ~/.purge_sim/settings.json. Feeds the app header,
                          the client html page and the xlsx fills ("brand:<key>" colors). Chart data

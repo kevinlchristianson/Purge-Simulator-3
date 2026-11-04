@@ -16,6 +16,9 @@ import argparse
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+from purge_sim import portable  # noqa: E402
+portable.enable()   # PurgeSimData next to the app -> scenarios/settings live there
+
 from purge_sim.data.scenario import load_scenario
 from purge_sim.engine.simulator import simulate
 from purge_sim.engine.config_builder import build_sim_config
