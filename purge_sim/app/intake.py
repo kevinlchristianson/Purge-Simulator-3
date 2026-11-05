@@ -219,6 +219,14 @@ def _joints_uniform(inp: ScenarioInputs) -> Optional[float]:
 # Defaults: what a blank answer means for this scenario
 # ---------------------------------------------------------------------------
 
+def _legacy_at_stop(sc: Scenario) -> bool:
+    """The scenario's exit pressure is the old pig-stop equivalent of a hydraulic endpoint
+    further on (before the engine modeled the endpoint itself), not a delivery pressure."""
+    at_stop = (sc.meta.intake or {}).get("exit_pressure_at_stop_psig")
+    return (at_stop is not None and getattr(sc.inputs, "fluid_exit_mp", None) is None
+            and abs(float(sc.inputs.exit_pressure_run_psig) - float(at_stop)) < 0.05)
+
+
 def _defaults(sc: Scenario, a: Dict[str, Any]) -> Dict[str, Tuple[Any, str]]:
     """{question id: (value, source)} for every question, given the answers so far.
     source is 'data' (grounded in the scenario or its import), 'derived' (computed from
@@ -231,7 +239,7 @@ def _defaults(sc: Scenario, a: Dict[str, Any]) -> Dict[str, Tuple[Any, str]]:
     d["reverse_route"] = (bool((sc.meta.intake or {}).get("reversed", False)), "data")
     d["purge_start_mp"] = (inp.purge_start_mp, "data")
     d["purge_end_mp"] = (inp.purge_end_mp, "data")
-    d["fluid_exit_mp"] = (None, "data")
+    d["fluid_exit_mp"] = (getattr(inp, "fluid_exit_mp", None), "data")
     d["fluid_exit_at_profile_end"] = (False, "data")
 
     # fluid
@@ -250,7 +258,7 @@ def _defaults(sc: Scenario, a: Dict[str, Any]) -> Dict[str, Tuple[Any, str]]:
     vmin = f.min_liquid_psig if f else None
     if vmin and vmin > 50:
         d["exit_pressure_psig"] = (float(5 * math.ceil(vmin / 5)), "derived")
-    elif fresh or a.get("fluid_exit_mp") or a.get("fluid_exit_at_profile_end"):
+    elif fresh or _legacy_at_stop(sc):
         d["exit_pressure_psig"] = (50.0, "assumed")
     else:
         d["exit_pressure_psig"] = (inp.exit_pressure_run_psig, "data")
@@ -398,6 +406,9 @@ def _reverse_inputs(inp: ScenarioInputs) -> ScenarioInputs:
         new.bpcv = {**inp.bpcv, "mp": _mirror(inp.bpcv["mp"], a, b)}
     if inp.deployed_booster_mps:
         new.deployed_booster_mps = sorted(_mirror(m, a, b) for m in inp.deployed_booster_mps)
+    # the hydraulic endpoint is downstream of the pig stop; after a flip it would sit behind
+    # the launch, so it is cleared (the intake asks for it again)
+    new.fluid_exit_mp = None
     return new
 
 
@@ -599,33 +610,37 @@ def apply(sc: Scenario, answers: Dict[str, Any]) -> Tuple[ScenarioInputs, Dict[s
             at_stop = round(exit_pressure_at_stop(inp, end, float(fluid_exit), delivery), 1)
         except ValueError as e:
             raise IntakeError(str(e))
-        warnings.append(f"The hydraulic endpoint is MP {fluid_exit:g}, past the pig stop at MP {end:g}. The simulator "
-                        f"puts the exit at the pig stop, so it is set to {at_stop:g} psig: {delivery:g} psig delivery "
-                        f"plus that stretch's friction at {tgt:g} mph and the head to clear its terrain.")
+        warnings.append(f"The hydraulic endpoint is MP {fluid_exit:g}, past the pig stop at MP {end:g}. The exit "
+                        f"holds {delivery:g} psig there and the pig pushes the column all the way to it, so at "
+                        f"{tgt:g} mph the line at the pig stop runs about {at_stop:g} psig (that stretch's friction "
+                        f"plus the head to clear its terrain); slower, less.")
     behavior = val("exit_behavior")
     exit_max = a.get("exit_max_pressure_psig")
-    mop_at_stop = float(mop_at(inp, end)[0])
+    x_exit = float(fluid_exit) if (fluid_exit is not None and fluid_exit > end + 1e-6) else end
+    where = "the pig stop" if x_exit == end else f"the hydraulic endpoint (MP {x_exit:g})"
+    mop_at_stop = float(mop_at(inp, x_exit)[0])
     if behavior == "modulating":
         if exit_max is not None:
-            if exit_max < at_stop - 1e-6:
+            if exit_max < delivery - 1e-6:
                 raise IntakeError(f"the maximum endpoint pressure ({exit_max:g} psig) can't be below the "
-                                  f"{at_stop:g} psig the endpoint holds")
+                                  f"{delivery:g} psig the endpoint holds")
             if math.isfinite(mop_at_stop) and exit_max > mop_at_stop + 1e-6:
                 warnings.append(f"The {exit_max:g} psig maximum endpoint pressure is above the {mop_at_stop:g} "
-                                f"psig MOP at the pig stop; the run is capped at MOP there anyway.")
+                                f"psig MOP at {where}; the run is capped at MOP there anyway.")
         elif fresh or any(a.get(k) is not None for k in ("exit_behavior", "exit_max_pressure_psig")):
             assumed_ids.append("exit_max_pressure_psig")
-            assumptions.append("Maximum endpoint pressure: the MOP at the pig stop"
+            assumptions.append(f"Maximum endpoint pressure: the MOP at {where}"
                                + (f" ({mop_at_stop:g} psig)" if math.isfinite(mop_at_stop) else ""))
     else:
-        warnings.append(f"Fixed endpoint: {at_stop:g} psig is held whatever the pig does, so the pig may run over "
+        warnings.append(f"Fixed endpoint: {delivery:g} psig is held whatever the pig does, so the pig may run over "
                         f"{inp.max_speed_mph:g} mph on descents; every step it does is flagged in the results.")
     exit_answered = any(a.get(k) is not None for k in ("exit_pressure_psig", "exit_type", "fluid_exit_mp",
                                                "fluid_exit_at_profile_end", "fluid", "exit_behavior",
                                                "exit_max_pressure_psig"))
     if fresh or exit_answered:
         # past jobs all held a constant delivery pressure to the end of the run
-        inp.exit_pressure_run_psig = inp.exit_pressure_end_psig = float(at_stop)
+        inp.exit_pressure_run_psig = inp.exit_pressure_end_psig = float(delivery)
+        inp.fluid_exit_mp = float(fluid_exit) if (fluid_exit is not None and fluid_exit > end + 1e-6) else None
         inp.exit_pressure_behavior = "constant_run"
         inp.throttle_down_miles = 0.0
         inp.exit_behavior = behavior
@@ -680,12 +695,14 @@ def notes_block(inp: ScenarioInputs, report: dict) -> str:
     seg = inp.pipe_segments
     pipe = ", ".join(f'{s["od_in"]:.3f}" x {s["wt_in"]:.3f}" (MP {s["start_mp"]:g}-{s["end_mp"]:g})' for s in seg[:4])
     pre = report.get("precheck") or {}
+    fx = getattr(inp, "fluid_exit_mp", None)
+    at = f" at the hydraulic endpoint MP {fx:g}" if fx is not None else ""
     if inp.exit_behavior == "fixed":
-        exit_txt = f"exit {inp.exit_pressure_run_psig:g} psig fixed"
+        exit_txt = f"exit {inp.exit_pressure_run_psig:g} psig{at} fixed"
     else:
-        exit_txt = (f"exit {inp.exit_pressure_run_psig:g} psig modulating up to "
+        exit_txt = (f"exit {inp.exit_pressure_run_psig:g} psig{at} modulating up to "
                     + (f"{inp.exit_max_pressure_psig:g} psig" if inp.exit_max_pressure_psig is not None
-                       else "MOP at the stop"))
+                       else "MOP at the exit"))
     lines = [NOTES_BEGIN,
              f"Pig MP {inp.purge_start_mp:g} -> {inp.purge_end_mp:g}; {exit_txt}. "
              f"{inp.fluid_name}, SG {inp.fluid_sg:g}, {inp.fluid_viscosity_cst:g} cSt. Pipe {pipe}.",

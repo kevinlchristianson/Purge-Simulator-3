@@ -144,7 +144,9 @@ def compute_hgl(step, cfg, elevation_at=None) -> HGLProfile:
 
     # Milepost grid: elevation points in range + pig + exit, unique & sorted.
     grid = set(float(m) for m in elev_prof[:, 0] if start <= m <= end)
-    grid.update([start, end, pig_mp, float(step.exit_mp)])
+    grid.update([start, end, pig_mp])
+    if float(step.exit_mp) <= end:      # a tank inlet past the pig stop is off this chart
+        grid.add(float(step.exit_mp))
     mp = np.array(sorted(grid), dtype=float)
 
     elevation_ft = np.array([elevation_at(x) for x in mp], dtype=float)
@@ -175,6 +177,9 @@ def compute_hgl(step, cfg, elevation_at=None) -> HGLProfile:
                                             cfg.fluid_viscosity_cst, cfg.fluid_roughness_ft) / grad
 
         tank_psig = getattr(cfg, 'exit_pressure_run_psig', float(step.exit_psig))
+        # the tank inlet sits past the pig stop when the liquid leaves further on
+        _fx = getattr(cfg, 'fluid_exit_mp', None)
+        tank_mp = float(_fx) if (_fx is not None and float(_fx) > end) else end
         bpcv = getattr(cfg, 'bpcv', None)
         bpcv_mp = bpcv.mp if (bpcv is not None and pig_mp < bpcv.mp) else None
         bpcv_sp = tank_psig
@@ -198,7 +203,7 @@ def compute_hgl(step, cfg, elevation_at=None) -> HGLProfile:
 
         ahead_mp = [float(mp[i]) for i in ahead]
         hgl_pts = build_liquid_hgl(ahead_mp, pig_mp, float(step.pig_face_psig), pumps,
-                                   bpcv_mp, bpcv_sp, end, tank_psig,
+                                   bpcv_mp, bpcv_sp, tank_mp, tank_psig,
                                    elevation_at, _fric_head, grad, clamp_to_ground=False)
         for i, (_m, h) in zip(ahead, hgl_pts):
             pressure[i] = (h - elevation_ft[i]) * grad

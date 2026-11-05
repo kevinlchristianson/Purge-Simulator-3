@@ -118,7 +118,8 @@ purge_sim/
                          [(hours, scfm), ...] (ScenarioInputs.injection_schedule, [[h, scfm], ...]),
                          capped only by drive cap / spread pressure / MOP (SimStep.injection_held_back)
     config_builder.py   — build_sim_config(ScenarioInputs) -> SimConfig; the one place a scenario
-                         becomes an engine config (headless runner, tests and the app all use it)
+                         becomes an engine config (headless runner, tests and the app all use it).
+                         Drops pump stations past the exit (the pig stop, or fluid_exit_mp)
   app/                  — standalone app (python app.py), standard-library HTTP server
     workspace.py       — open scenario, edits (validated; hard rule 4 enforced on edits), runs,
                          result views, exports, plan_rate_schedule / apply_rate_schedule (the
@@ -284,13 +285,14 @@ packaging/              — PyInstaller spec + Windows build script for the stan
    direction, the liquid exit past the pig stop, job-type classification and pack-and-coast
    sizing. Still with the engineer: which detected stations really pump vs BPCV, and the
    final strategy call.
-4. **Liquid exit past the pig stop is not in the engine.** The simulator puts the exit at
-   `purge_end_mp`. Scenarios whose product leaves further on (Laurel: pig stop MP 4.5,
-   tank farm MP 33.3; GL-08: Border BV vs Billings) carried `liquid_exit_mp` in the JSON,
-   which the loader drops, and hold only the delivery pressure at the pig stop. The intake
-   now converts this to an equivalent exit pressure at the pig stop
-   (`precheck.exit_pressure_at_stop`: ~400 psig for Laurel vs the 50 psig in its scenario).
-   The bundled Laurel/GL-08 scenarios have not been changed; revisit them.
+4. **Liquid exit past the pig stop.** Now in the engine: `fluid_exit_mp` (ScenarioInputs /
+   SimConfig, the Job setup "Hydraulic Endpoint") puts the tank inlet past the pig stop; the
+   exit holds `exit_pressure_run_psig` there and the pig pushes the column out to it at its own
+   speed (`simulator.exit_end_mp`; roadmap, precheck, HGL and station filter follow). The intake
+   used to bake the stretch into the exit pressure at the pig stop at target speed (Thunderbird
+   Belle Creek to Elk Creek showed 1100.3 psig); old saved scenarios migrate when Job setup is
+   applied again. The bundled Laurel/GL-08 scenarios carry an old `liquid_exit_mp` key the loader
+   still drops (different name on purpose, so their results don't move); revisit them.
 
 ---
 
