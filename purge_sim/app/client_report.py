@@ -22,7 +22,7 @@ from typing import List, Optional
 import numpy as np
 
 from ..engine.hgl import compute_hgl, elevation_lookup
-from ..engine.log_export import exit_condition_text
+from ..engine.log_export import exit_condition_text, injection_text
 from ..engine.purge_report import _deployed_boosters, purge_report_rows, report_features
 from ..engine.simulator import SimResults
 from .. import branding
@@ -81,6 +81,7 @@ def _basis(res: SimResults, inputs) -> List[list]:
         ["Max injection", (f"{cfg.max_injection_psig:,.0f} psig, " if math.isfinite(cfg.max_injection_psig) else "")
          + f"{cfg.max_injection_scfm:,.0f} SCFM"],
         ["Endpoint pressure", exit_condition_text(cfg)],
+        ["N2 injection", injection_text(cfg)],
         ["N2 temperature", f"{cfg.n2_temperature_f:g} °F"],
     ]
     if cfg.mop_joints:

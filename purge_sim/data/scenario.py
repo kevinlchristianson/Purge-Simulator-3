@@ -97,6 +97,11 @@ class ScenarioInputs:
     # Operating margin below MOP for the drive/injection/boosters. 1.0 = up to MOP;
     # 0.90 = hold a hard 10% below MOP at all times.
     drive_ceiling_fraction: float = 1.0
+    # Fixed N2 injection schedule: [[hours, scfm], ...] back to back from the pig release,
+    # then the pump is off. When set it replaces the strategy's own pumping (lean or
+    # pack-and-coast) so the crew holds a rate. Made by the steady-injection planner
+    # (Overview tab > Plan steady injection, or the assistant); null = the strategy decides.
+    injection_schedule: Optional[List[list]] = None
 
     # Exit / endpoint. exit_pressure_run_psig is the MINIMUM inlet pressure the tank / final
     # exit holds. (exit_pressure_end_psig, exit_pressure_behavior and throttle_down_miles are

@@ -252,6 +252,14 @@ TOOLS: List[dict] = [
             "required": ["nps"], "additionalProperties": False},
     },
     {
+        "name": "plan_injection_schedule",
+        "description": "Find the constant N2 injection-rate schedule with the fewest rate changes that still holds every rule (completes, MOP, no venting, no new slack-line risk, no stalls, speed limits, the pressure cap never holds the pump back, not much slower). Runs the job the strategy's own way, then tries one flat rate with the same N2 over the same injection time, then two rates, three, four, until one passes. Takes several runs (seconds to minutes each). Returns the plan in plain words for the pump operator and LN2 logistics ('5,700 SCFM for 9.2 h, then stop'), the rules checked, and the rejected tries. apply=true writes the winning schedule into the open scenario (unsaved) so Run and the reports use it. The winning run is shown as the results.",
+        "input_schema": {"type": "object", "properties": {
+            "max_steps": {"type": "integer", "minimum": 1, "maximum": 6, "description": "Most rates to allow (default 4)."},
+            "apply": {"type": "boolean"}},
+            "additionalProperties": False},
+    },
+    {
         "name": "save_scenario_as",
         "description": "Save the open scenario to the user's scenarios folder under a new name, with notes recording the rationale. The library files scenarios as Client > Pipeline > Scenario; client and pipeline default to the open scenario's. Never overwrites an existing file. Only do this when the user asks.",
         "input_schema": {"type": "object", "properties": {
@@ -380,6 +388,12 @@ def execute_tool(ws: Workspace, name: str, args: Dict[str, Any]) -> Any:
         return ws.precheck()
     if name == "pipe_lookup":
         return _pipe_lookup(args)
+    if name == "plan_injection_schedule":
+        out = ws.plan_rate_schedule(int(args.get("max_steps") or 4))
+        if args.get("apply") and out.get("schedule"):
+            out["applied"] = ws.apply_rate_schedule()
+            out["note"] = "The schedule is now the open scenario's injection_schedule (unsaved); every run and report uses it. Set injection_schedule to null to go back to the strategy's own pumping."
+        return out
     if name == "save_scenario_as":
         return ws.save_as(args["name"], args.get("notes"), overwrite=False, client=args.get("client"),
                           pipeline=args.get("pipeline"), details=args.get("details"))

@@ -275,6 +275,26 @@ Click **Run**. Long routes can take a few minutes. Then read the **Overview** ta
 
 ---
 
+### Step 6: Plan a steady injection rate
+
+The engine's own controllers trim the nitrogen pump every few minutes, which is exact in
+the model and impossible to run: a pump operator can't follow it and the LN2 supervisor
+can't schedule tankers against it. After a run, press **Plan steady injection** on the
+Overview tab (or ask the assistant). It takes the run's total N2 and injection time and
+tries **one flat rate**; if that breaks a rule (slack line, MOP, venting, a stall, the
+speed limits, a pressure cap holding the pump back, or a much slower purge), it tries two
+rates, then three, then four, each the closest fit to how the run actually pumped, with a
+little more or less N2 as fallbacks. The first schedule that passes every rule is the plan,
+written out plainly, for example *5,700 SCFM for 9.2 h, then stop* or *3,300 SCFM for
+0.3 h, then 2,100 SCFM for 3.3 h, then stop*. The plan's own run replaces the results so
+you can look at it, and **Use this schedule in the scenario** writes it into the inputs
+(`injection_schedule`, under N2 & injection), so Run and every report pump exactly that.
+Clear the field to go back to the strategy's own pumping. If a scenario with a schedule
+ever shows *held back* steps, a pressure limit stopped the pump from holding its rate
+there: plan again.
+
+---
+
 ## 5. Getting the most out of the assistant
 
 ### What it can and can't do

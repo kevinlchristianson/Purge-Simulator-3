@@ -119,6 +119,8 @@ def build_sim_config(inp: ScenarioInputs) -> SimConfig:
         injection_ramp_scfm_per_hr=getattr(inp, 'injection_ramp_scfm_per_hr', None),
         drive_setpoint_slew_psi_per_hr=getattr(inp, 'drive_setpoint_slew_psi_per_hr', None),
         drive_ceiling_fraction=inp.drive_ceiling_fraction,
+        injection_schedule=([(float(h), float(r)) for h, r in inp.injection_schedule]
+                            if getattr(inp, 'injection_schedule', None) else None),
         bpcv=bpcv,
         n_spreads=inp.n_spreads,
         mob_time_hr=inp.mob_time_hr,

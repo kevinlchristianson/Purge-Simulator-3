@@ -115,6 +115,11 @@ class App:
         if route == ("POST", "/api/run"):
             ws.start_run()
             return 200, {"ok": True}
+        if route == ("POST", "/api/rate_plan"):
+            ws.start_rate_plan(int(j().get("max_steps") or 4))
+            return 200, {"ok": True}
+        if route == ("POST", "/api/rate_plan/apply"):
+            return 200, {"changed": ws.apply_rate_schedule()}
         if route == ("GET", "/api/results"):
             res = ws.require_results()
             return 200, {"summary": results_summary(res), "series": results_series(res),

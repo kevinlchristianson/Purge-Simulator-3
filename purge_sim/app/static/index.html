@@ -522,7 +522,7 @@ function renderOverview() {
     ${elevLine(sc)}${legacyExitHtml(sc)}</div>`;
   const r = S.results;
   if (!r) {
-    html += `<div class="empty">No results yet. Press <b>Run</b>.</div>`;
+    html += `<div class="empty">No results yet. Press <b>Run</b>.</div>` + ratePlanHtml(null);
   } else {
     const s = r.summary;
     if (S.state.results_stale) html += `<div class="flag warn">Inputs changed since this run. Run again to update the results.</div>`;
@@ -542,11 +542,33 @@ function renderOverview() {
     const flags = s.flags || [];
     html += flags.length ? flags.map(f => `<div class="flag bad">${esc(f)}</div>`).join("")
                          : `<div class="flag good">No venting, no slack-line risk, no MOP violations, pig never over max speed.</div>`;
+    html += ratePlanHtml(s);
     if (s.booster_plan) html += `<div class="card"><b>Booster plan</b><div class="small">${s.booster_plan.sites_mp.map(m => "MP " + fmt(m, 2) + (s.booster_plan.reasons[String(m)] ? ": " + esc(s.booster_plan.reasons[String(m)]) : "")).join("<br>") || "None deployed"}</div>
       ${s.booster_plan.notes.length ? `<div class="small muted">${s.booster_plan.notes.map(esc).join("<br>")}</div>` : ""}</div>`;
     if (s.roadmap_report) html += `<details class="card"><summary><b>Pressure roadmap</b></summary><pre>${esc(s.roadmap_report)}</pre></details>`;
   }
   $("#ovBody").innerHTML = html;
+  const planBtn = $("#btnPlanRate"), applyBtn = $("#btnApplyRate");
+  if (planBtn) planBtn.onclick = async () => { try { await api("/api/rate_plan", {body: {}}); poll(); } catch (e) { toast(e.message); } };
+  if (applyBtn) applyBtn.onclick = async () => { try { await api("/api/rate_plan/apply", {body: {}}); toast("Schedule applied to the scenario. Run again or save."); poll(true); } catch (e) { toast(e.message); } };
+}
+
+// The steady-injection planner: a schedule the crew can hold (one rate, or the fewest
+// changes) that still passes every rule. Lives on the Overview below the run flags.
+function ratePlanHtml(s) {
+  const plan = S.state && S.state.rate_plan, running = S.state && S.state.job.state === "running";
+  const x = S.scenario.scalars, current = s && s.injection_schedule_text;
+  let h = `<div class="card"><b>Steady injection</b> <span class="small muted">a rate the pump operator can hold and the LN2 supervisor can schedule deliveries to</span>`;
+  if (current) h += `<div class="small">This run pumped a fixed schedule: <b>${esc(current)}</b>${s.injection_held_back_steps ? ` <span class="bad">(held back on ${s.injection_held_back_steps} steps)</span>` : ""}.</div>`;
+  else if (x.injection_schedule) h += `<div class="small">The scenario carries a fixed schedule; run to see it.</div>`;
+  if (plan) {
+    h += `<pre class="small" style="white-space:pre-wrap">${esc(plan.text)}</pre>`;
+    if (plan.attempts && plan.attempts.length > 1) h += `<details><summary class="small">Every try (${plan.attempts.length})</summary><table class="small"><tr><th>Try</th><th>Schedule</th><th>N2 (SCF)</th><th>Hours</th><th>Result</th></tr>${plan.attempts.map(a => `<tr><td>${esc(a.label)}</td><td>${esc(a.schedule_text)}</td><td>${fmt(a.n2_scf)}</td><td>${fmt(a.duration_hr, 1)}</td><td>${a.passed ? "passed" : esc(a.violations.join("; "))}</td></tr>`).join("")}</table></details>`;
+  }
+  h += `<div style="margin-top:6px"><button id="btnPlanRate" ${running ? "disabled" : ""}>${plan ? "Plan again" : "Plan steady injection"}</button> `;
+  if (plan && plan.schedule) h += `<button id="btnApplyRate" ${running ? "disabled" : ""}>Use this schedule in the scenario</button> `;
+  h += `<span class="small muted">Runs the job the strategy's way, then tries one flat rate with the same N2, then two rates, three, four, until every rule passes. A scenario with a schedule set (Inputs > N2 &amp; injection) pumps exactly that; clear it to go back to the strategy.</span></div></div>`;
+  return h;
 }
 
 // ---------------------------------------------------------------- scenario name, filing and notes
@@ -750,7 +772,7 @@ function setupReportHtml(r) {
 const GROUPS = [
   ["Route", ["purge_start_mp", "purge_end_mp"]],
   ["Fluid", ["fluid_name", "fluid_sg", "fluid_viscosity_cst", "fluid_roughness_ft"]],
-  ["N2 & injection", ["n2_temperature_f", "max_injection_psig", "max_injection_scfm", "smooth_injection", "injection_ramp_scfm_per_hr", "drive_setpoint_slew_psi_per_hr", "n2_budget_scf", "drive_mop_fraction"]],
+  ["N2 & injection", ["n2_temperature_f", "max_injection_psig", "max_injection_scfm", "smooth_injection", "injection_ramp_scfm_per_hr", "drive_setpoint_slew_psi_per_hr", "n2_budget_scf", "drive_mop_fraction", "injection_schedule"]],
   ["Pressure limits", ["maop_psig", "max_drive_psig", "drive_ceiling_fraction", "mop_warning_fraction"]],
   ["Exit", ["exit_behavior", "exit_pressure_run_psig", "exit_max_pressure_psig"]],
   ["Pig speed", ["min_speed_mph", "target_speed_mph", "max_speed_mph"]],
@@ -780,6 +802,7 @@ function renderInputs() {
       let ctl;
       if (CHOICES[k]) ctl = `<select data-k="${k}">${CHOICES[k].map(o => `<option ${o === v ? "selected" : ""}>${o}</option>`).join("")}</select>`;
       else if (typeof v === "boolean") ctl = `<select data-k="${k}" data-bool="1"><option ${v ? "selected" : ""}>true</option><option ${!v ? "selected" : ""}>false</option></select>`;
+      else if (k === "injection_schedule") ctl = `<input data-k="${k}" data-sched="1" value="${v ? esc(v.map(p => `${p[0]} h @ ${p[1]}`).join(", ")) : ""}" placeholder="none (the strategy decides)" title="hours @ SCFM, comma separated, e.g. 4 h @ 6000, 5.2 h @ 5000">`;
       else ctl = `<input data-k="${k}" value="${v == null ? "" : esc(v)}" placeholder="${v == null ? "none" : ""}" ${typeof v === "string" ? 'data-str="1"' : ""}>`;
       return `<div class="field"><label title="${k}">${k.replace(/_/g, " ")}</label>${ctl}</div>`;
     }).join("") + `</details>`;
@@ -789,6 +812,7 @@ function renderInputs() {
   el.querySelectorAll("[data-k]").forEach(inp => inp.onchange = async () => {
     const k = inp.dataset.k; let v = inp.value.trim();
     if (inp.dataset.bool) v = v === "true";
+    else if (inp.dataset.sched) v = v === "" ? null : v.split(",").map(p => { const m = p.match(/([\d.]+)\s*h?\s*@\s*([\d.]+)/); return m ? [Number(m[1]), Number(m[2])] : [NaN, NaN]; });
     else if (!inp.dataset.str && !CHOICES[k]) v = v === "" ? null : Number(v);
     inp.parentElement.classList.remove("err");
     try { await api("/api/scenario/update", {body: {changes: {[k]: v}}}); await poll(); }

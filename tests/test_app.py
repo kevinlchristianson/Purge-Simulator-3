@@ -480,3 +480,22 @@ def test_portable_mode_keeps_data_next_to_app(tmp_path, monkeypatch):
     assert paths.settings_path() == branding.settings_path()
     assert paths.settings_path().startswith(root)
     assert elevation.default_cache_path().startswith(root)
+
+
+# ---------------------------------------------------------------- steady-injection planner
+
+def test_plan_injection_schedule_tool_applies_to_open_scenario():
+    ws = Workspace()
+    ws.load(SHORT)
+    out = execute_tool(ws, "plan_injection_schedule", {"max_steps": 2, "apply": True})
+    assert out["reference"]["n2_scf"] > 0 and out["attempts"]
+    if out["schedule"]:
+        assert ws.scenario.inputs.injection_schedule == out["schedule"]
+        assert ws.results is not None and ws.state()["rate_plan"]["schedule"] == out["schedule"]
+        assert "then stop" in out["schedule_text"]
+    else:
+        assert ws.scenario.inputs.injection_schedule is None
+    with pytest.raises(InputError):
+        ws.update_inputs({"injection_schedule": [[1.0, ws.scenario.inputs.max_injection_scfm * 2]]})
+    ws.update_inputs({"injection_schedule": None})
+    assert ws.scenario.inputs.injection_schedule is None
