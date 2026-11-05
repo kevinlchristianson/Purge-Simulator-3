@@ -248,8 +248,11 @@ packaging/              — PyInstaller spec + Windows build script for the stan
    "Slack Line Risk" column) — the run keeps going, it doesn't abort or get hidden. Every
    validated job so far holds this with margin (zero slack steps) at the default 25 psig floor.
    Accepting nonzero slack for a specific job is a real client-facing engineering call, made by
-   explicitly lowering `min_liquid_psig` with Kevin's sign-off — never by suppressing or
-   reinterpreting the flag itself.
+   explicitly lowering `slack_floor_psig` (ScenarioInputs / SimConfig, default 25 psig, the
+   lowest liquid pressure allowed at any high point ahead of the pig; negative = vacuum, down
+   to -14.7) with Kevin's sign-off — never by suppressing or reinterpreting the flag itself.
+   Liquefied gases (butane, propane, NGL) can never be set below 25 psig: the app's edit
+   check (workspace.slack_floor_problem) refuses it.
 3. **The BPCV only drops the HGL, never lifts it.** It is a backpressure valve, not a pump —
    it sets exit backpressure and can clamp excess pressure, but cannot add head.
 4. **Booster suction floor is 200 psi hard / 100 psi willing** — never model a booster

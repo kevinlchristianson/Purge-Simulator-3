@@ -238,7 +238,7 @@ def build_roadmap(
             exit_psig = cfg.exit_pressure_run_psig
             exit_elev = elevation_at(end)
         _b, _l = clearance_candidates(x, E_x, exit_mp, exit_psig, exit_elev,
-                                      mp, elev, cfg.fluid_sg)
+                                      mp, elev, cfg.fluid_sg, cfg.slack_floor_psig)
         floor[i] = float(np.max(_b + fric_per_ft * _l))
 
     # Drive ceiling = GAS-side MOP only (the N2 column behind the pig vs. local pipe MOP).

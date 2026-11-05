@@ -124,6 +124,13 @@ class ScenarioInputs:
     max_speed_mph: float = 6.0
     target_speed_mph: float = 2.0
 
+    # Slack line: the lowest liquid pressure (psig) the column may see at any high point
+    # ahead of the pig before the step is flagged slack-line risk (hard rule 2). 25 psig is
+    # the default; below 0 is vacuum (down to -14.7, full vacuum), and below the product's
+    # vapor pressure the column separates. Liquefied gases (butane, propane, NGL) can't go
+    # below their vapor pressure + 100 psi (the app refuses the edit).
+    slack_floor_psig: float = 25.0
+
     # MAOP / drive envelope
     maop_psig: Optional[float] = None
     max_drive_psig: Optional[float] = None

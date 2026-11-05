@@ -42,6 +42,12 @@ GRAVITY_WINDOW_MI = 0.5
 SLACK_FLOOR_PSIG = 25.0
 
 
+def _slack_floor(inp) -> float:
+    """The job's slack floor (ScenarioInputs.slack_floor_psig), default 25 psig."""
+    v = getattr(inp, "slack_floor_psig", None)
+    return SLACK_FLOOR_PSIG if v is None else float(v)
+
+
 def _geometry(inp: ScenarioInputs) -> PipeGeometry:
     g = PipeGeometry()
     for s in inp.pipe_segments:
@@ -119,7 +125,7 @@ def precheck(inp: ScenarioInputs, min_liquid_psig: Optional[float] = None) -> di
     def required(x: float, v: float) -> float:
         xm, xp = exit_for(x)
         return required_drive_to_clear(x, float(elev_at(x)), xm, xp, float(elev_at(xm)), tm, te,
-                                       _id_ft(geom, x), v, sg, visc, rough)
+                                       _id_ft(geom, x), v, sg, visc, rough, _slack_floor(inp))
 
     req = np.array([required(x, v_tgt) for x in grid])
     i_peak = int(np.argmax(req))
@@ -282,7 +288,8 @@ def precheck(inp: ScenarioInputs, min_liquid_psig: Optional[float] = None) -> di
             findings.append(f"Volatile product: the column must stay at or above {_r(min_liquid_psig)} psig. "
                             f"With {_r(exit_psig)} psig at the exit, the liquid at MP {tm[j]:.2f} drops to about "
                             f"{_r(float(flowing[j]))} psig while flowing at {inp.target_speed_mph:g} mph; raise the "
-                            f"exit pressure. The simulator's own slack check only holds 25 psig at peaks.")
+                            f"exit pressure. The simulator's own slack check only holds "
+                            f"{_r(_slack_floor(inp))} psig at peaks (slack floor).")
 
     # ---- endpoint control: can the exit hold the pig at max speed?
     # The exit (running pump suction, BPCV or tank inlet downstream of the pig) holds a minimum
@@ -420,14 +427,14 @@ def _endpoint_hold(inp, grid, elev_at, tm, te, geom, exit_for, stations, bpcv_mp
 
     def required_at(x, v, xm, xp):
         return required_drive_to_clear(x, float(elev_at(x)), xm, xp, float(elev_at(xm)), tm, te,
-                                       _id_ft(geom, x), v, sg, visc, rough)
+                                       _id_ft(geom, x), v, sg, visc, rough, _slack_floor(inp))
 
     budget = inp.n2_budget_scf
     pack_frac = float(getattr(inp, "drive_mop_fraction", 0.9) or 0.9)
     best = None
     for i, x in enumerate(grid):
         xm, xmin, xmax, kind = window(float(x))
-        face = SLACK_FLOOR_PSIG
+        face = max(0.0, _slack_floor(inp))   # the N2 face itself never goes below 0 psig
         cause = "gravity on the descent"
         if budget:
             v_ft3 = float(vol_behind[i])
@@ -488,4 +495,4 @@ def exit_pressure_at_stop(inp: ScenarioInputs, stop_mp: float, exit_mp: float, d
     v = mph_to_fts(inp.target_speed_mph) * pipe_area_ft2(od0, wt0) / pipe_area_ft2(od1, wt1)
     return required_drive_to_clear(stop_mp, elev_at(stop_mp), exit_mp, delivery_psig, elev_at(exit_mp),
                                    tm, te, (od1 - 2 * wt1) / 12.0, v, inp.fluid_sg,
-                                   inp.fluid_viscosity_cst, inp.fluid_roughness_ft)
+                                   inp.fluid_viscosity_cst, inp.fluid_roughness_ft, _slack_floor(inp))

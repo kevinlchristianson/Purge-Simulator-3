@@ -106,6 +106,37 @@ def test_edit_validation_and_booster_floor():
     assert ws.scenario.inputs.spread_suction_min_psig == 150.0
 
 
+def test_slack_floor_setting():
+    """The allowable slack pressure: vacuum is fine for crude/diesel, never for a
+    liquefied gas, never past full vacuum, and the run reports the floor it used."""
+    ws = Workspace()
+    ws.load(SHORT)
+    assert ws.scenario.inputs.slack_floor_psig == 25.0
+    ws.update_inputs({"slack_floor_psig": -5})                 # vacuum on a crude line
+    with pytest.raises(InputError, match="full vacuum"):
+        ws.update_inputs({"slack_floor_psig": -20})
+    with pytest.raises(InputError, match="liquefied gas"):
+        ws.update_inputs({"fluid_name": "Butane (commercial spec)"})   # -5 psig floor on butane
+    assert ws.scenario.inputs.fluid_name != "Butane (commercial spec)"
+    ws.update_inputs({"slack_floor_psig": 25, "fluid_name": "Butane (commercial spec)"})
+    with pytest.raises(InputError, match="liquefied gas"):
+        ws.update_inputs({"slack_floor_psig": 10})
+    ws.update_inputs({"slack_floor_psig": 160})                # raising it is always fine
+    from purge_sim.app.workspace import results_summary
+    assert results_summary(ws.run())["slack_floor_psig"] == 160.0
+
+
+def test_slack_floor_reaches_the_engine():
+    from purge_sim.data.scenario import load_scenario
+    from purge_sim.engine.config_builder import build_sim_config
+    from purge_sim.engine.simulator import simulate
+    sc = load_scenario(os.path.join(REPO_ROOT, "scenarios", "MedBow", "medbow_sinclair_bartlett.json"))
+    base = simulate(build_sim_config(sc.inputs))
+    sc.inputs.slack_floor_psig = 400.0       # far above what the job holds at its peaks
+    high = simulate(build_sim_config(sc.inputs))
+    assert high.total_scf_n2 > base.total_scf_n2 * 1.3
+
+
 def test_signed_off_low_floor_stays_editable():
     ws = Workspace()
     ws.load(LOW_FLOOR)
