@@ -126,7 +126,7 @@ footer { color: var(--muted); font-size: 12.5px; padding: 18px 0 34px; }
   <section id="summary"><h2>Summary</h2><div id="kpis" class="kpis"></div><div id="flags"></div><div id="boosters"></div></section>
   <section id="profile"><h2>Pipeline profile</h2>
     <div class="card">
-      <p class="small muted" style="margin:0 0 8px">Pressure along the whole line at one moment of the purge: nitrogen behind the pig, liquid ahead of it. Ground elevation and the hydraulic grade line (liquid pressure as feet of head above the pipe) are on the right-hand axis. Drag the slider or press Play to step through the run.</p>
+      <p class="small muted" style="margin:0 0 8px">Pressure along the whole line at one moment of the purge: nitrogen behind the pig, liquid ahead of it. Ground elevation and the hydraulic grade line (liquid pressure as feet of head above the pipe) are on the right-hand axis, drawn to the same scale as pressure, so the grade line sits above the ground by exactly the liquid pressure. Drag the slider or press Play to step through the run.</p>
       <div class="controls"><button id="play">Play</button><input type="range" id="step" min="0" max="0" value="0" aria-label="Time in the run"></div>
       <div class="readout" id="readout"></div>
       <div class="legend" id="pfLegend"></div>
@@ -218,7 +218,18 @@ function lineChart(el, opts) {
     if (!isFinite(lo)) return null; if (hi === lo) { hi += 1; lo -= 1; }
     const pad = (hi - lo) * 0.06; return [opts.zeroBase && axis !== "elev" && lo >= 0 ? 0 : lo - pad, hi + pad];
   };
-  const L = range("left"), R = range("right"), E = range("elev");
+  let L = range("left"), R = range("right"), E = range("elev");
+  // headLock: {axis, grad}: that feet axis moves with the psig axis at grad psi/ft, its floor at the
+  // lowest ground, so the HGL sits above the ground by exactly the liquid pressure drawn on the psig axis
+  const hl = opts.headLock, HR = hl && {right: R, elev: E}[hl.axis];
+  if (HR && L) {
+    const ft = [];
+    for (const s of opts.series) if (s.axis === hl.axis) for (const v of s.y) if (v != null) ft.push(v);
+    const datum = Math.min(...ft), psi = ft.map(v => (v - datum) * hl.grad);
+    const lo = Math.min(L[0], 0), hi = Math.max(L[1], Math.max(...psi) * 1.06);
+    L = [lo, hi]; const lk = [datum + lo / hl.grad, datum + hi / hl.grad];
+    if (hl.axis === "right") R = lk; else E = lk;
+  }
   if (L) m.l = Math.max(m.l, 22 + 6.5 * Math.max(...niceTicks(L[0], L[1], 5).map(t => tickFmt(t).length)));   // room for "12,000,000"
   const sx = v => m.l + (v - xlo) / ((xhi - xlo) || 1) * (W - m.l - m.r);
   const sy = (v, r) => H - m.b - (v - r[0]) / (r[1] - r[0]) * (H - m.t - m.b);
@@ -367,7 +378,7 @@ function drawProfile() {
     .concat((f.stations || []).map((s, k) => ({x: s.mp, label: s.name, row: 1 + (k % 2), name: "Pump station: " + s.name})))
     .concat(facilityMarkers("mp", 1).filter(mk => !mk.name.startsWith("Pump station")));
   $("#pfLegend").innerHTML = legend(series.concat(markerLegend().filter(k => k.name !== "Pump station")));
-  lineChart($("#pfChart"), {x: P.mp, xLabel: "Milepost", yLabel: "psig", y2Label: "Elevation / HGL (ft)", series, markers, title: "Pipeline profile"});
+  lineChart($("#pfChart"), {x: P.mp, xLabel: "Milepost", yLabel: "psig", y2Label: "Elevation / HGL (ft)", series, markers, title: "Pipeline profile", headLock: {axis: "right", grad}});
   $("#readout").innerHTML = `<b>${fmt(f.t, 1)} hr</b> into the run · pig at <b>MP ${fmt(f.pig, 2)}</b> moving <b>${fmt(f.speed, 2)} mph</b> · N2 drive <b>${fmt(f.face)} psig</b> · exit <b>${fmt(f.exit_psig)} psig</b> at MP ${fmt(f.exit_mp, 2)}`
     + (f.added > 0 ? ` (holding ${fmt(f.added)} psi over its ${fmt(f.exit_min)} psig minimum)` : "")
     + (f.over ? ` · <span style="color:var(--bad)">over max speed</span>` : "")
