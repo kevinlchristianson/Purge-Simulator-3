@@ -175,6 +175,9 @@ def build_roadmap(
     v_min  = mph_to_fts(cfg.min_speed_mph)
     start  = cfg.purge_start_mp
     end    = cfg.purge_end_mp
+    # the tank inlet / final exit: past the pig stop when the liquid leaves further on
+    _fx    = getattr(cfg, 'fluid_exit_mp', None)
+    x_end  = float(_fx) if (_fx is not None and float(_fx) > end) else end
 
     # Bay boundaries: booster stations partition the gas column. The pig-adjacent
     # N2 stays inside one bay until the pig reaches the next station, so the gas
@@ -234,9 +237,9 @@ def build_roadmap(
             exit_psig = float(sta_suc[exit_mp])
             exit_elev = elevation_at(exit_mp)
         else:
-            exit_mp   = end
+            exit_mp   = x_end
             exit_psig = cfg.exit_pressure_run_psig
-            exit_elev = elevation_at(end)
+            exit_elev = elevation_at(x_end)
         _b, _l = clearance_candidates(x, E_x, exit_mp, exit_psig, exit_elev,
                                       mp, elev, cfg.fluid_sg, cfg.slack_floor_psig)
         floor[i] = float(np.max(_b + fric_per_ft * _l))

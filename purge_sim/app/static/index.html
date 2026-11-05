@@ -770,7 +770,7 @@ function setupReportHtml(r) {
 
 // ---------------------------------------------------------------- inputs
 const GROUPS = [
-  ["Route", ["purge_start_mp", "purge_end_mp"]],
+  ["Route", ["purge_start_mp", "purge_end_mp", "fluid_exit_mp"]],
   ["Fluid", ["fluid_name", "fluid_sg", "fluid_viscosity_cst", "fluid_roughness_ft"]],
   ["N2 & injection", ["n2_temperature_f", "max_injection_psig", "max_injection_scfm", "smooth_injection", "injection_ramp_scfm_per_hr", "drive_setpoint_slew_psi_per_hr", "n2_budget_scf", "drive_mop_fraction", "injection_schedule"]],
   ["Pressure limits", ["maop_psig", "max_drive_psig", "drive_ceiling_fraction", "mop_warning_fraction", "slack_floor_psig"]],
@@ -787,7 +787,8 @@ const LEGACY_EXIT = ["exit_pressure_behavior", "exit_pressure_end_psig", "thrott
 const CHOICES = {exit_pressure_behavior: EXIT_OPTS, exit_behavior: ["modulating", "fixed"]};
 const GROUP_HINTS = {
   "Pressure limits": "<b>Slack floor psig</b> is the allowable slack pressure: the lowest liquid pressure at any high point ahead of the pig before a step is flagged slack-line risk (default 25 psig). Below 0 is vacuum (down to -14.7, full vacuum); below the product's vapor pressure the column separates. Lowering it is an engineering call for the job. Liquefied gases (butane, propane, NGL) can't go below 25 psig.",
-  Exit: "The exit is whatever is nearest downstream of the pig: a running pump station's suction, the BPCV, or the tank inlet. It holds <b>exit pressure run psig</b> as its minimum. <b>Modulating</b> raises it to hold the pig at max speed, up to <b>exit max pressure psig</b> (blank = the MOP at the pig stop; a station's limit is its max suction, the BPCV's its downstream MOP). <b>Fixed</b> holds the minimum and the run flags every step the pig is over max speed.",
+  Route: "<b>fluid exit mp</b> is the hydraulic endpoint: where the liquid actually leaves, when that is past the pig stop (blank = at the pig stop). Set it on Job setup as Hydraulic Endpoint.",
+  Exit: "The exit is whatever is nearest downstream of the pig: a running pump station's suction, the BPCV, or the tank inlet. It holds <b>exit pressure run psig</b> as its minimum. The tank inlet is at the pig stop, or at <b>fluid exit mp</b> (Route) when the liquid leaves further on; then this is the pressure there, and the pig pushes the column all the way out to it. <b>Modulating</b> raises it to hold the pig at max speed, up to <b>exit max pressure psig</b> (blank = the MOP at the exit; a station's limit is its max suction, the BPCV's its downstream MOP). <b>Fixed</b> holds the minimum and the run flags every step the pig is over max speed.",
 };
 function renderInputs() {
   const el = $("#tab-inputs");
@@ -803,7 +804,7 @@ function renderInputs() {
       let ctl;
       if (CHOICES[k]) ctl = `<select data-k="${k}">${CHOICES[k].map(o => `<option ${o === v ? "selected" : ""}>${o}</option>`).join("")}</select>`;
       else if (typeof v === "boolean") ctl = `<select data-k="${k}" data-bool="1"><option ${v ? "selected" : ""}>true</option><option ${!v ? "selected" : ""}>false</option></select>`;
-      else if (k === "injection_schedule") ctl = `<input data-k="${k}" data-sched="1" value="${v ? esc(v.map(p => `${p[0]} h @ ${p[1]}`).join(", ")) : ""}" placeholder="none (the strategy decides)" title="hours @ SCFM, comma separated, e.g. 4 h @ 6000, 5.2 h @ 5000">`;
+      else if (k === "injection_schedule") ctl = `<input data-k="${k}" data-sched="1" value="${v ? esc(v.map(p => `${+Number(p[0]).toFixed(2)} h @ ${+Number(p[1]).toFixed(0)}`).join(", ")) : ""}" placeholder="none (the strategy decides)" title="hours @ SCFM, comma separated, e.g. 4 h @ 6000, 5.2 h @ 5000">`;
       else ctl = `<input data-k="${k}" value="${v == null ? "" : esc(v)}" placeholder="${v == null ? "none" : ""}" ${typeof v === "string" ? 'data-str="1"' : ""}>`;
       return `<div class="field"><label title="${k}">${k.replace(/_/g, " ")}</label>${ctl}</div>`;
     }).join("") + `</details>`;

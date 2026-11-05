@@ -138,10 +138,28 @@ def test_reverse_route_moves_every_milepost():
 
 def test_liquid_exit_past_the_pig_stop():
     ws = _ws(_fresh_kmz_scenario())
-    ws.apply_intake({**EXAMPLE, "purge_end_mp": 20, "fluid_exit_mp": 36})
+    r = ws.apply_intake({**EXAMPLE, "purge_end_mp": 20, "fluid_exit_mp": 36})
     inp = ws.scenario.inputs
     assert inp.purge_end_mp == 20
-    assert inp.exit_pressure_run_psig > 50 + 16 * 0.5    # 16 mi of 6" diesel friction at least
+    # the exit holds its 50 psig at the real endpoint, and the engine pushes the column out to it
+    assert inp.exit_pressure_run_psig == 50 and inp.fluid_exit_mp == 36
+    at_stop = ws.scenario.meta.intake["exit_pressure_at_stop_psig"]
+    assert at_stop > 50 + 16 * 0.5    # 16 mi of 6" diesel friction at least
+    assert any("hydraulic endpoint is MP 36" in w for w in r["warnings"])
+    assert "50 psig at the hydraulic endpoint MP 36" in ws.scenario.meta.notes
+    # applying the job setup again (any answer) leaves the 50 psig alone
+    ws.apply_intake({"target_speed_mph": 2})
+    assert ws.scenario.inputs.exit_pressure_run_psig == 50 and ws.scenario.inputs.fluid_exit_mp == 36
+    # the engine sees the tank inlet at MP 36: the pig needs the stretch's friction too
+    from purge_sim.engine.config_builder import build_sim_config
+    from purge_sim.engine.precheck import precheck
+    cfg = build_sim_config(ws.scenario.inputs)
+    assert cfg.fluid_exit_mp == 36
+    pre = precheck(ws.scenario.inputs)
+    assert pre["exit_mp"] == 36
+    ws.apply_intake({"fluid_exit_mp": 20})       # at the pig stop: back to an exit there
+    assert ws.scenario.inputs.fluid_exit_mp is None
+    assert precheck(ws.scenario.inputs)["required_drive_psig"]["at_launch"] < pre["required_drive_psig"]["at_launch"]
     with pytest.raises(InputError, match="before the pig stop"):
         ws.apply_intake({"fluid_exit_mp": 10})
 
@@ -166,7 +184,7 @@ def test_endpoint_receiver_and_modulating_behavior():
     # modulating is the norm: the endpoint holds 50 psig and may raise it as far as MOP
     assert inp.exit_behavior == "modulating" and inp.exit_max_pressure_psig is None
     assert any(x.startswith("Maximum endpoint pressure: the MOP at the pig stop (900 psig)") for x in r["assumptions"])
-    assert "modulating up to MOP at the stop" in ws.scenario.meta.notes
+    assert "modulating up to MOP at the exit" in ws.scenario.meta.notes
     v = intake.view(ws.scenario)
     q = {x["id"]: x for x in v["questions"]}
     assert q["exit_max_pressure_psig"]["relevant"] and v["missing"] == []
@@ -275,3 +293,17 @@ def test_assistant_setup_tools():
     assert p["min_grade_for_mop"] == "X52" and p["od_in"] == 10.75
     with pytest.raises(InputError):
         execute_tool(ws, "pipe_lookup", {"nps": "7"})
+
+
+def test_old_pig_stop_equivalent_exit_is_migrated():
+    """Scenarios saved before the engine modeled the hydraulic endpoint carry the pig-stop
+    equivalent (e.g. 1100.3 psig) as the exit pressure. Applying the job setup again puts
+    the 50 psig delivery back at the endpoint instead of keeping the old number."""
+    ws = _ws(_fresh_kmz_scenario())
+    ws.apply_intake({**EXAMPLE, "purge_end_mp": 20, "fluid_exit_mp": 36})
+    sc = ws.scenario
+    at_stop = sc.meta.intake["exit_pressure_at_stop_psig"]
+    sc.inputs.exit_pressure_run_psig = sc.inputs.exit_pressure_end_psig = at_stop   # as the old intake saved it
+    sc.inputs.fluid_exit_mp = None
+    ws.apply_intake({"target_speed_mph": 3})
+    assert sc.inputs.exit_pressure_run_psig == 50 and sc.inputs.fluid_exit_mp == 36

@@ -118,6 +118,12 @@ class ScenarioInputs:
     # The most the tank / final exit can hold (psig). None = the MOP at the pig stop. A pump
     # station's limit is its max_suction_psig; the BPCV's follows from its downstream MOP.
     exit_max_pressure_psig: Optional[float] = None
+    # The hydraulic endpoint: where the liquid actually leaves, when that is past the pig stop
+    # (e.g. the pig stops at a block valve and the product goes on to a tank farm or station
+    # miles further on). The tank inlet / final exit sits there and exit_pressure_run_psig is
+    # its minimum; the pig pushes the column out to it. None = the exit is at the pig stop.
+    # The elevation profile must reach it.
+    fluid_exit_mp: Optional[float] = None
 
     # Pig speed
     min_speed_mph: float = 0.5

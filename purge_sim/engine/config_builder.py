@@ -21,6 +21,14 @@ from .physics import fts_to_bph, mph_to_fts, pipe_area_ft2
 from .mop_check import MOPJoint
 
 
+def fluid_exit_mp(inp: ScenarioInputs):
+    """The hydraulic endpoint when it is past the pig stop, else None (exit at the stop)."""
+    fx = getattr(inp, 'fluid_exit_mp', None)
+    if fx is None or float(fx) <= float(inp.purge_end_mp) + 1e-6:
+        return None
+    return float(fx)
+
+
 def build_sim_config(inp: ScenarioInputs) -> SimConfig:
     geom = PipeGeometry()
     for s in inp.pipe_segments:
@@ -30,16 +38,18 @@ def build_sim_config(inp: ScenarioInputs) -> SimConfig:
 
     cvs = [CheckValve(mp=cv['mp'], name=cv['name']) for cv in inp.check_valves]
 
-    # A pump station past the pig stop is not part of this purge: the pig never reaches it
-    # and the liquid beyond the stop is carried by the exit pressure (see
-    # precheck.exit_pressure_at_stop). Left in, the engine would push the pig toward that
-    # station's suction instead of the exit at the stop (GL-09: Lavina at MP 239.5 vs the
-    # stop at MP 220, 30 psig instead of 583).
+    # A pump station past the tank inlet / final exit is not part of this purge: the liquid
+    # never reaches it. With the exit at the pig stop that means every station past the stop
+    # (GL-09: Lavina at MP 239.5 vs the stop at MP 220; left in, the pig pushed toward its
+    # 30 psig suction instead of the 583 psig exit). When the liquid leaves further on
+    # (fluid_exit_mp), a running station between the stop and that exit takes the column
+    # on its suction, as it would in the field.
+    exit_mp = fluid_exit_mp(inp)
     pss = [
         PumpStationConfig(mp=ps['mp'], name=ps['name'], suction_psig=ps['suction_psig'],
                           max_suction_psig=ps.get('max_suction_psig'))
         for ps in inp.pump_stations
-        if ps['mp'] < inp.purge_end_mp
+        if ps['mp'] < (exit_mp if exit_mp is not None else inp.purge_end_mp)
     ]
 
     # Per-booster overrides (max_flow_scfm / discharge_psig / suction_min_psig) fall back
@@ -98,6 +108,7 @@ def build_sim_config(inp: ScenarioInputs) -> SimConfig:
         exit_behavior=getattr(inp, 'exit_behavior', 'modulating'),
         exit_max_pressure_psig=getattr(inp, 'exit_max_pressure_psig', None),
         slack_floor_psig=float(getattr(inp, 'slack_floor_psig', 25.0)),
+        fluid_exit_mp=exit_mp,
         min_speed_mph=inp.min_speed_mph,
         max_speed_mph=inp.max_speed_mph,
         target_speed_mph=inp.target_speed_mph,
