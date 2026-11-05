@@ -99,12 +99,29 @@ def precheck(inp: ScenarioInputs, min_liquid_psig: Optional[float] = None) -> di
         grid = np.array([start])
     e_end = float(elev_at(end))
     exit_psig = float(inp.exit_pressure_run_psig)
+    # the tank inlet / final exit: at the pig stop, or past it when the liquid leaves further
+    # on (fluid_exit_mp); then the terrain out to it counts for the column the pig pushes
+    x_end = end
+    fx = getattr(inp, "fluid_exit_mp", None)
+    if fx is not None and float(fx) > end + 1e-6:
+        x_end = float(fx)
+        if x_end > float(prof[-1, 0]) + 1e-6:
+            raise ValueError(f"the elevation profile ends at MP {prof[-1, 0]:.3f}, before the hydraulic "
+                             f"endpoint at MP {x_end:.3f}")
+    if x_end > end:
+        selx = (prof[:, 0] > end) & (prof[:, 0] < x_end)
+        tmx = np.concatenate([tm, prof[selx, 0], [x_end]])
+        tex = np.concatenate([te, prof[selx, 1], [float(elev_at(x_end))]])
+    else:
+        tmx, tex = tm, te
+    e_x = float(elev_at(x_end))
     v_tgt = mph_to_fts(inp.target_speed_mph)
 
     # The pig pushes to the next running pump station ahead (its suction), else the BPCV,
     # else the exit at the pig stop: the same order as pump_stations.effective_exit_condition.
     # The BPCV set point is only known during the run; the exit pressure stands in for it.
-    stations = sorted((float(p["mp"]), float(p["suction_psig"])) for p in inp.pump_stations)
+    stations = sorted((float(p["mp"]), float(p["suction_psig"])) for p in inp.pump_stations
+                      if float(p["mp"]) < x_end)   # as the engine: none past the exit
     bpcv_mp = float(inp.bpcv["mp"]) if inp.bpcv else None
     has_control = bool(stations) or bpcv_mp is not None
 
@@ -114,11 +131,11 @@ def precheck(inp: ScenarioInputs, min_liquid_psig: Optional[float] = None) -> di
                 return mp, suc
         if bpcv_mp is not None and bpcv_mp > x:
             return bpcv_mp, exit_psig
-        return end, exit_psig
+        return x_end, exit_psig
 
     def required(x: float, v: float) -> float:
         xm, xp = exit_for(x)
-        return required_drive_to_clear(x, float(elev_at(x)), xm, xp, float(elev_at(xm)), tm, te,
+        return required_drive_to_clear(x, float(elev_at(x)), xm, xp, float(elev_at(xm)), tmx, tex,
                                        _id_ft(geom, x), v, sg, visc, rough)
 
     req = np.array([required(x, v_tgt) for x in grid])
@@ -273,7 +290,7 @@ def precheck(inp: ScenarioInputs, min_liquid_psig: Optional[float] = None) -> di
     if min_liquid_psig is not None:
         # liquid pressure at each point while the column flows to the exit at target speed
         fpf_x = np.array([liquid_friction_loss_psi(1.0, _id_ft(geom, x), v_tgt, sg, visc, rough) for x in tm])
-        flowing = exit_psig + grad * (e_end - te) + fpf_x * (end - tm) * 5280.0
+        flowing = exit_psig + grad * (e_x - te) + fpf_x * (x_end - tm) * 5280.0
         j = int(np.argmin(flowing))
         vapor = {"min_liquid_psig": _r(min_liquid_psig), "exit_psig": _r(exit_psig),
                  "lowest_liquid_psig": _r(float(flowing[j])), "at_mp": round(float(tm[j]), 2),
@@ -295,7 +312,7 @@ def precheck(inp: ScenarioInputs, min_liquid_psig: Optional[float] = None) -> di
     # only the run itself shows.
     hold = None
     try:
-        hold = _endpoint_hold(inp, grid, elev_at, tm, te, geom, exit_for, stations, bpcv_mp, end,
+        hold = _endpoint_hold(inp, grid, elev_at, tmx, tex, geom, exit_for, stations, bpcv_mp, x_end,
                               exit_psig, caps_grid, vol_behind)
     except Exception:   # an estimate; never let it stop the check
         hold = None
@@ -335,7 +352,7 @@ def precheck(inp: ScenarioInputs, min_liquid_psig: Optional[float] = None) -> di
 
     return {
         "span_mi": round(end - start, 3),
-        "exit_mp": round(end, 3),
+        "exit_mp": round(x_end, 3),
         "exit_psig": _r(exit_psig),
         "line_volume_bbl": _r(seg_vol / 5.6146),
         "line_volume_ft3": _r(seg_vol),
@@ -346,6 +363,7 @@ def precheck(inp: ScenarioInputs, min_liquid_psig: Optional[float] = None) -> di
         "friction_psi_per_mi": _r(fpf * 5280.0, 1),
         "friction_share_at_launch": round(friction_share, 2),
         "exit_note": ("next pump station / BPCV ahead of the pig, then the pig stop" if has_control
+                      else f"the hydraulic endpoint at MP {x_end:g}, past the pig stop" if x_end > end
                       else "the pig stop (purge_end_mp), as in the simulator"),
         "required_drive_psig": {"at_launch": _r(req[0]), "peak": _r(req[i_peak]), "peak_mp": round(float(grid[i_peak]), 2)},
         "drive_cap_psig": _r(cap),

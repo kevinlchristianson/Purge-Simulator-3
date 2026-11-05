@@ -180,11 +180,19 @@ def _check_rules(old: ScenarioInputs, new: ScenarioInputs, changed: set) -> None
     if changed & {"min_speed_mph", "max_speed_mph", "target_speed_mph"}:
         if new.min_speed_mph <= 0 or new.max_speed_mph < new.min_speed_mph:
             raise InputError("speeds must satisfy 0 < min_speed_mph <= max_speed_mph")
+    if changed & {"fluid_exit_mp", "purge_end_mp"} and new.fluid_exit_mp is not None:
+        if new.fluid_exit_mp <= new.purge_end_mp:
+            raise InputError(f"fluid_exit_mp (the hydraulic endpoint, MP {new.fluid_exit_mp:g}) must be past the "
+                             f"pig stop at MP {new.purge_end_mp:g}, or null for an exit at the pig stop")
+        prof = new.elevation_profile
+        if prof and new.fluid_exit_mp > float(prof[-1][0]) + 1e-6:
+            raise InputError(f"fluid_exit_mp {new.fluid_exit_mp:g} is past the end of the elevation profile "
+                             f"(MP {float(prof[-1][0]):g})")
     if changed & {"exit_max_pressure_psig", "exit_pressure_run_psig"} \
             and new.exit_max_pressure_psig is not None \
             and new.exit_max_pressure_psig < new.exit_pressure_run_psig:
         raise InputError("exit_max_pressure_psig can't be below exit_pressure_run_psig, the minimum the "
-                         "exit holds (or null for the MOP at the pig stop)")
+                         "exit holds (or null for the MOP at the exit)")
     if "pump_stations" in changed:
         for p in new.pump_stations:
             mx = p.get("max_suction_psig")

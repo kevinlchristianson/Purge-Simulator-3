@@ -45,6 +45,10 @@ def exit_condition_text(cfg) -> str:
         lim = f"{float(mx):.0f} psig" if mx is not None else "the MOP at the exit"
         txt = (f"holds {run_p:.1f} psig minimum, modulating up to {lim} to hold "
                f"{getattr(cfg, 'max_speed_mph', 0.0):g} mph")
+    fx = getattr(cfg, "fluid_exit_mp", None)
+    if fx is not None and float(fx) > float(getattr(cfg, "purge_end_mp", 0.0)):
+        txt += (f"; tank inlet at the hydraulic endpoint MP {float(fx):.2f}, past the pig stop at "
+                f"MP {cfg.purge_end_mp:.2f}")
     legacy = legacy_exit_schedule(cfg)
     return txt + (f"; {legacy}" if legacy else "")
 

@@ -149,6 +149,11 @@ class SimConfig:
     # A pump station's limit is PumpStationConfig.max_suction_psig; the BPCV's is the set
     # point its downstream MOP allows (bpcv.compute_bpcv_set_point).
     exit_max_pressure_psig: Optional[float] = None
+    # Where the liquid actually leaves (the hydraulic endpoint), when it is past the pig stop:
+    # the tank inlet / final exit sits here and holds exit_pressure_run_psig as its minimum,
+    # and the pig pushes the whole column out to it at its own speed (friction and terrain
+    # past the stop included). None = the exit is at the pig stop (purge_end_mp).
+    fluid_exit_mp: Optional[float] = None
 
     # --- Pig speed limits ---
     min_speed_mph: float = 0.5
@@ -387,6 +392,15 @@ def time_frame_indices(times_hr: List[float], n_frames: int) -> List[int]:
 # Main simulator
 # ---------------------------------------------------------------------------
 
+def exit_end_mp(cfg) -> float:
+    """Milepost of the tank inlet / final exit: the hydraulic endpoint when the liquid leaves
+    past the pig stop (SimConfig.fluid_exit_mp), else the pig stop."""
+    fx = getattr(cfg, 'fluid_exit_mp', None)
+    if fx is not None and float(fx) > cfg.purge_end_mp:
+        return float(fx)
+    return float(cfg.purge_end_mp)
+
+
 def compute_initial_n2_pressure(
     cfg: SimConfig,
     elevation_at: Callable[[float], float],
@@ -408,7 +422,7 @@ def compute_initial_n2_pressure(
         exit_mp   = cfg.bpcv.mp
         exit_psig = cfg.bpcv.set_point_psig
     else:
-        exit_mp   = cfg.purge_end_mp
+        exit_mp   = exit_end_mp(cfg)
         exit_psig = cfg.exit_pressure_run_psig
 
     L_ft    = max(0.0, exit_mp - cfg.purge_start_mp) * 5280.0
@@ -972,7 +986,7 @@ def simulate(cfg: SimConfig, progress_cb: Optional[Callable[[float], None]] = No
         # a station shutdown reads the minimum; only the speed solve and what is displayed see
         # the raised pressure, so the N2 controller never fights the throttle.
         bpcv_mp   = cfg.bpcv.mp if cfg.bpcv else None
-        tankage_mp = cfg.purge_end_mp
+        tankage_mp = exit_end_mp(cfg)
         exit_psig, _exit_dev_max, exit_mp, exit_desc = effective_exit_window(
             station_states, pig_mp,
             bpcv_set_point_psig, bpcv_mp,
@@ -1214,7 +1228,7 @@ def simulate(cfg: SimConfig, progress_cb: Optional[Callable[[float], None]] = No
                 _ult_mp_tl   = _bpcv_mp_tl
                 _ult_psig_tl = bpcv_set_point_psig if bpcv_set_point_psig is not None else cfg.exit_pressure_run_psig
             else:
-                _ult_mp_tl   = cfg.purge_end_mp
+                _ult_mp_tl   = exit_end_mp(cfg)
                 _ult_psig_tl = cfg.exit_pressure_run_psig
 
             _cur_exit_sta = next_active_station(station_states, pig_mp)
@@ -1630,7 +1644,7 @@ def simulate(cfg: SimConfig, progress_cb: Optional[Callable[[float], None]] = No
             _ult_mp   = bpcv_mp
         else:
             _ult_psig = cfg.exit_pressure_run_psig
-            _ult_mp   = cfg.purge_end_mp
+            _ult_mp   = exit_end_mp(cfg)
 
         # Cap effective pig-face at the injection-rate-limited sustainable pressure.
         # The initial N2 fill at 900 psig is transient — once the pig moves, injection
@@ -1662,7 +1676,7 @@ def simulate(cfg: SimConfig, progress_cb: Optional[Callable[[float], None]] = No
             _ult_mp = cfg.bpcv.mp
             _ult_p  = bpcv_set_point_psig if bpcv_set_point_psig is not None else cfg.exit_pressure_run_psig
         else:
-            _ult_mp = cfg.purge_end_mp
+            _ult_mp = exit_end_mp(cfg)
             _ult_p  = cfg.exit_pressure_run_psig
         station_pressures = _compute_station_pressures(
             station_states, pig_mp, pig_face_psig,
