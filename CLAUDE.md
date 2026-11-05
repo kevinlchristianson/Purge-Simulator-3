@@ -109,11 +109,21 @@ purge_sim/
                          speed against gravity / the packed column vs what it can add, and the
                          overspeed if not); exit_pressure_at_stop() for a liquid exit past the
                          pig stop
+    rate_planner.py     — steady-injection planner: runs the job the strategy's way, then tries one
+                         flat SP rate (same N2, same injection time), then the fewest extra rates
+                         (least-squares fit to the reference's cumulative N2, +/-5-10% N2 fallbacks)
+                         until every rule passes (completes, MOP, no vent, slack/stall/speed no worse
+                         than the reference, pressure cap never holds the pump back, <=10% slower).
+                         The engine pumps a schedule exactly via SimConfig.injection_schedule
+                         [(hours, scfm), ...] (ScenarioInputs.injection_schedule, [[h, scfm], ...]),
+                         capped only by drive cap / spread pressure / MOP (SimStep.injection_held_back)
     config_builder.py   — build_sim_config(ScenarioInputs) -> SimConfig; the one place a scenario
                          becomes an engine config (headless runner, tests and the app all use it)
   app/                  — standalone app (python app.py), standard-library HTTP server
     workspace.py       — open scenario, edits (validated; hard rule 4 enforced on edits), runs,
-                         result views, exports. The UI and the assistant act only through it.
+                         result views, exports, plan_rate_schedule / apply_rate_schedule (the
+                         steady-injection planner; Overview card, /api/rate_plan, assistant tool
+                         plan_injection_schedule). The UI and the assistant act only through it.
                          Library is filed Client > Pipeline > Scenario from meta.client /
                          meta.pipeline (else the folders, else "Unfiled"); user saves go to
                          <Client>/<Pipeline>/ under PurgeSimScenarios. Delete moves a user file to

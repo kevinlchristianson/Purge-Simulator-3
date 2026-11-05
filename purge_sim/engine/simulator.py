@@ -19,7 +19,7 @@ from __future__ import annotations
 import math
 import time
 from dataclasses import dataclass, field
-from typing import List, Optional, Dict, Any, Callable
+from typing import List, Optional, Dict, Any, Callable, Tuple
 
 import numpy as np
 from scipy.interpolate import interp1d
@@ -207,6 +207,15 @@ class SimConfig:
     n2_budget_scf: Optional[float] = None
     drive_mop_fraction: float = 0.9
 
+    # FIXED RATE SCHEDULE (the steady-injection planner, engine/rate_planner.py): SP pumps
+    # exactly these rates, [(hours, scfm), ...] back to back from t = 0, then stops. It
+    # replaces whatever the strategy above would have pumped (lean or pack-and-coast), so the
+    # crew holds a rate instead of trimming it every few minutes. The only thing that cuts
+    # it is a pressure limit: SP never pumps the column past the drive cap / spread pressure
+    # / MOP cap, and a step it has to hold back is flagged (SimStep.injection_held_back), as
+    # the crew would have to change rate there. None = the strategy's own controller.
+    injection_schedule: Optional[List[Tuple[float, float]]] = None
+
     # --- MAOP / drive envelope ---
     maop_psig: float = 1200.0
     max_drive_psig: float = 1000.0        # operator-chosen max N2 drive behind pig
@@ -294,6 +303,11 @@ class SimStep:
     # this is a label for the reader, not a switch in the math.
     reynolds: float = 0.0
     flow_regime: str = ""
+
+    # Fixed rate schedule only (SimConfig.injection_schedule): the rate the schedule called
+    # for this step, and whether a pressure limit made SP pump less than that.
+    scheduled_scfm: Optional[float] = None
+    injection_held_back: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -696,6 +710,24 @@ def _compute_station_pressures(
                 'status': 'shutdown',
             })
     return out
+
+
+def schedule_average_scfm(schedule: List[Tuple[float, float]], t0: float, t1: float) -> float:
+    """Average SP rate (SCFM) a fixed schedule [(hours, scfm), ...] calls for over [t0, t1]
+    hours from the start; 0 once the schedule has run out."""
+    if t1 <= t0:
+        t1 = t0 + 1e-9
+    scf_min = 0.0     # SCFM x hours
+    start = 0.0
+    for hours, scfm in schedule:
+        end = start + max(0.0, float(hours))
+        lo, hi = max(t0, start), min(t1, end)
+        if hi > lo:
+            scf_min += float(scfm) * (hi - lo)
+        start = end
+        if start >= t1:
+            break
+    return scf_min / (t1 - t0)
 
 
 def simulate(cfg: SimConfig, progress_cb: Optional[Callable[[float], None]] = None,
@@ -1403,6 +1435,22 @@ def simulate(cfg: SimConfig, progress_cb: Optional[Callable[[float], None]] = No
         if cfg.n2_budget_scf is not None and total_scf_injected >= cfg.n2_budget_scf:
             scf_inject = 0.0
 
+        # FIXED RATE SCHEDULE: SP pumps the scheduled rate (its average over this step), and
+        # nothing else, except where that would push the column past a pressure limit.
+        scheduled_scfm: Optional[float] = None
+        injection_held_back = False
+        if cfg.injection_schedule is not None:
+            scheduled_scfm = min(cfg.max_injection_scfm,
+                                 schedule_average_scfm(cfg.injection_schedule, t_hr, t_hr + dt_hr))
+            scf_inject = scheduled_scfm * dt_hr * 60.0
+            _p_cap = min(cfg.max_injection_psig, cfg.max_drive_psig,
+                         mop_cap if (math.isfinite(mop_cap) and mop_cap > 0) else math.inf)
+            if math.isfinite(_p_cap) and scf_inject > 0:
+                _room = max(0.0, inj_seg.scf_at_pressure(_p_cap) - inj_seg.scf)
+                if scf_inject > _room + 1e-6:
+                    injection_held_back = scf_inject - _room > 0.01 * scf_inject
+                    scf_inject = _room
+
         inj_seg.add_scf(scf_inject)
         total_scf_injected += scf_inject
 
@@ -1672,6 +1720,8 @@ def simulate(cfg: SimConfig, progress_cb: Optional[Callable[[float], None]] = No
             endpoint_added_psi=pig_result.endpoint_added_psi,
             overspeed=pig_result.overspeed,
             overspeed_mph=pig_result.overspeed_mph,
+            scheduled_scfm=scheduled_scfm,
+            injection_held_back=injection_held_back,
         )
         step.reynolds = liquid_reynolds((od_in - 2.0 * wt_in) / 12.0,
                                         mph_to_fts(pig_result.pig_speed_mph), cfg.fluid_viscosity_cst)

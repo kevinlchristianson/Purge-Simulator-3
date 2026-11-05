@@ -24,7 +24,7 @@ from typing import List, Optional, Tuple
 import numpy as np
 
 from .simulator import SimResults, SimConfig, SimStep
-from .log_export import legacy_exit_schedule
+from .log_export import legacy_exit_schedule, injection_text
 from .hgl import compute_hgl
 from .physics import pipe_area_ft2
 from ..branding import xlsx_color
@@ -478,6 +478,7 @@ def _sheet_inputs(wb, cfg, scenario_name, pi):
         ("Min Speed (mph)",                  f"{cfg.min_speed_mph:.2f}"),
         ("Max Speed (mph)",                  f"{cfg.max_speed_mph:.2f}"),
         ("N2 Budget (SCF)",                  f"{cfg.n2_budget_scf:,.0f}" if cfg.n2_budget_scf else "unlimited"),
+        ("N2 Injection",                     injection_text(cfg)),
         ("--- INFRASTRUCTURE ---", ""),
         ("Pump Stations",                    f"{len(cfg.pump_stations)}"),
         ("Check Valves",                     f"{len(cfg.check_valves)}"),

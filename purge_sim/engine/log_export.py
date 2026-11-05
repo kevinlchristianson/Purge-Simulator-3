@@ -49,6 +49,18 @@ def exit_condition_text(cfg) -> str:
     return txt + (f"; {legacy}" if legacy else "")
 
 
+def injection_text(cfg) -> str:
+    """How SP is pumped: the fixed schedule when the scenario carries one, else the strategy."""
+    sched = getattr(cfg, "injection_schedule", None)
+    if sched:
+        from .rate_planner import schedule_text
+        return "fixed schedule: " + schedule_text(sched)
+    if getattr(cfg, "n2_budget_scf", None):
+        return (f"pack and coast: pack at {cfg.drive_mop_fraction:.0%} of MOP until "
+                f"{cfg.n2_budget_scf:,.0f} SCF, then coast")
+    return "lean: the rate that holds target speed, trimmed as the run goes"
+
+
 def export_run_log(results: SimResults, path: str, scenario_name: str = "") -> None:
     """
     Write a full run log to `path`.
@@ -94,6 +106,7 @@ def export_run_log(results: SimResults, path: str, scenario_name: str = "") -> N
         f"  N2 initial P:      {cfg.n2_initial_pressure_psig:.1f} psig  (auto-calculated)",
         f"  Max injection:     {cfg.max_injection_scfm:.0f} SCFM"
         + (f" / {cfg.max_injection_psig:.1f} psig" if math.isfinite(cfg.max_injection_psig) else ""),
+        f"  N2 injection:      {injection_text(cfg)}",
         f"  MAOP:              " + (f"{cfg.maop_psig:.1f} psig" if math.isfinite(cfg.maop_psig) else "unconstrained (MOP profile applies)"),
         f"  Max drive:         " + (f"{cfg.max_drive_psig:.1f} psig" if math.isfinite(cfg.max_drive_psig) else "unconstrained"),
         f"  Fluid:             SG={cfg.fluid_sg}, visc={cfg.fluid_viscosity_cst} cSt, rough={cfg.fluid_roughness_ft} ft",

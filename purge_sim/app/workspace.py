@@ -101,6 +101,21 @@ def _coerce(name: str, value: Any, current: Any) -> Any:
             out.append(clean)
         return out
 
+    if name == "injection_schedule":
+        if value is None:
+            return None
+        if not isinstance(value, list):
+            raise InputError("injection_schedule must be a list of [hours, scfm] pairs or null")
+        out = []
+        for i, item in enumerate(value):
+            if not isinstance(item, (list, tuple)) or len(item) != 2:
+                raise InputError(f"injection_schedule[{i}] must be [hours, scfm]")
+            h, r = _num(f"injection_schedule[{i}].hours", item[0]), _num(f"injection_schedule[{i}].scfm", item[1])
+            if h <= 0 or r < 0:
+                raise InputError(f"injection_schedule[{i}]: hours must be > 0 and scfm >= 0")
+            out.append([h, r])
+        return out or None
+
     if name == "deployed_booster_mps":
         if value is None:
             return None
@@ -176,6 +191,11 @@ def _check_rules(old: ScenarioInputs, new: ScenarioInputs, changed: set) -> None
             if mx is not None and mx < p["suction_psig"]:
                 raise InputError(f"pump station {p.get('name')} max_suction_psig {mx:g} is below its "
                                  f"suction_psig {p['suction_psig']:g}")
+    if "injection_schedule" in changed and new.injection_schedule:
+        top = max(r for _, r in new.injection_schedule)
+        if top > new.max_injection_scfm:
+            raise InputError(f"injection_schedule asks for {top:,.0f} SCFM; the spread's max_injection_scfm "
+                             f"is {new.max_injection_scfm:,.0f}")
     if "dt_hr" in changed and new.dt_hr <= 0:
         raise InputError("dt_hr must be positive")
 
@@ -362,7 +382,17 @@ def results_summary(res: SimResults) -> dict:
             "overspeed_mph_max": _f(fastest.overspeed_mph, 2) if fastest else 0.0,
             "overspeed_mp_range": [_f(over[0].pig_mp), _f(over[-1].pig_mp)] if over else None,
         })
+        held = [s for s in steps if s.injection_held_back]
+        if getattr(cfg, "injection_schedule", None):
+            from ..engine.rate_planner import schedule_text
+            out["injection_schedule"] = [[h, r] for h, r in cfg.injection_schedule]
+            out["injection_schedule_text"] = schedule_text(cfg.injection_schedule)
+            out["injection_held_back_steps"] = len(held)
         flags = []
+        if held:
+            flags.append(f"the fixed injection schedule was held below its rate by a pressure limit on "
+                         f"{len(held)} steps (from MP {held[0].pig_mp:.1f}): the crew would have to change "
+                         f"rate there; plan the schedule again")
         if res.total_scf_vented > 0:
             flags.append(f"N2 vented ({res.total_scf_vented:,.0f} SCF): red flag under hard rule 1, fix by control")
         if slack:
@@ -449,6 +479,8 @@ class Workspace:
         self.results_scenario: Optional[Scenario] = None   # the inputs that produced self.results
         self.job = {"state": "idle", "progress": 0.0, "message": "", "error": None, "started": None}
         self.revision = 0   # bumps on every change, so the UI knows to refresh
+        self.rate_plan: Optional[dict] = None       # last steady-injection plan (plan_to_dict)
+        self.rate_plan_for: Optional[str] = None    # scenario name it was made for
 
     # ---- scenario library -------------------------------------------------
 
@@ -819,6 +851,80 @@ class Workspace:
             self.revision += 1
         return res
 
+    def plan_rate_schedule(self, max_steps: int = 4) -> dict:
+        """Find the constant-rate N2 schedule with the fewest rate changes that holds every
+        rule (engine/rate_planner.py): runs the job the strategy's way, then tries one flat
+        rate, then two, three... The plan is kept on the workspace; apply_rate_schedule()
+        puts the winning schedule into the open scenario. Synchronous (used by the assistant
+        and by start_rate_plan's worker)."""
+        from ..engine.rate_planner import plan_steady_injection, plan_to_dict
+        with self.lock:
+            sc = self.require()
+            if self.job["state"] == "running" and threading.current_thread().name != "sim-plan":
+                raise InputError("a simulation is already running")
+            cfg = build_sim_config(sc.inputs)
+            cfg.injection_schedule = None
+            name = sc.meta.name
+            snapshot = copy.deepcopy(sc)
+            self.job = {"state": "running", "progress": 0.0, "message": f"Planning steady injection for {name}",
+                        "error": None, "started": time.time()}
+            self.revision += 1
+
+        def _cb(msg: str, frac: float):
+            self.job["progress"] = float(frac)
+            self.job["message"] = msg
+            self.revision += 1
+
+        try:
+            plan = plan_steady_injection(cfg, max_steps=max_steps, progress_cb=_cb)
+        except Exception as e:
+            with self.lock:
+                self.job.update(state="error", error=f"{type(e).__name__}: {e}",
+                                message=traceback.format_exc(limit=3))
+                self.revision += 1
+            raise
+        view = plan_to_dict(plan)
+        with self.lock:
+            self.rate_plan, self.rate_plan_for = view, name
+            # the winning schedule's run (or the strategy run when none passed) becomes the result
+            res = plan.best.results if plan.best and plan.best.results else plan.reference_results
+            self.results, self.results_for, self.results_stale = res, name, False
+            self.results_scenario = snapshot
+            if plan.best:
+                self.results_scenario.inputs.injection_schedule = [[h, r] for h, r in plan.best.schedule]
+            self.job.update(state="done", progress=1.0,
+                            message=("Steady injection: " + view["schedule_text"]) if plan.best
+                                    else "No constant-rate schedule passed every rule")
+            self.revision += 1
+        return view
+
+    def start_rate_plan(self, max_steps: int = 4) -> None:
+        with self.lock:
+            self.require()
+            if self.job["state"] == "running":
+                raise InputError("a simulation is already running")
+            self.job = {"state": "running", "progress": 0.0, "message": "Starting", "error": None,
+                        "started": time.time()}
+
+        def _worker():
+            try:
+                self.plan_rate_schedule(max_steps)
+            except Exception:
+                pass   # recorded in self.job
+
+        threading.Thread(target=_worker, name="sim-plan", daemon=True).start()
+
+    def apply_rate_schedule(self) -> List[dict]:
+        """Put the last plan's schedule into the open scenario (unsaved), so Run and every
+        report use it."""
+        with self.lock:
+            sc = self.require()
+            if not self.rate_plan or not self.rate_plan.get("schedule"):
+                raise InputError("no steady-injection schedule to apply; plan one first")
+            if self.rate_plan_for != sc.meta.name:
+                raise InputError(f"the plan was made for {self.rate_plan_for!r}, not the open scenario")
+            return self.update_inputs({"injection_schedule": self.rate_plan["schedule"]})
+
     def start_run(self) -> None:
         with self.lock:
             self.require()
@@ -935,6 +1041,7 @@ class Workspace:
                 "has_results": self.results is not None,
                 "results_for": self.results_for,
                 "results_stale": self.results_stale,
+                "rate_plan": self.rate_plan if (sc and self.rate_plan_for == sc.meta.name) else None,
                 "job": {k: v for k, v in self.job.items() if k != "started"},
             }
 
