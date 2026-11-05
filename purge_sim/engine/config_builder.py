@@ -107,6 +107,7 @@ def build_sim_config(inp: ScenarioInputs) -> SimConfig:
         throttle_down_miles=inp.throttle_down_miles,
         exit_behavior=getattr(inp, 'exit_behavior', 'modulating'),
         exit_max_pressure_psig=getattr(inp, 'exit_max_pressure_psig', None),
+        slack_floor_psig=float(getattr(inp, 'slack_floor_psig', 25.0)),
         fluid_exit_mp=exit_mp,
         min_speed_mph=inp.min_speed_mph,
         max_speed_mph=inp.max_speed_mph,

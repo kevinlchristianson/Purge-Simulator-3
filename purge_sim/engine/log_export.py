@@ -107,6 +107,8 @@ def export_run_log(results: SimResults, path: str, scenario_name: str = "") -> N
         f"  Purge route:       MP {cfg.purge_start_mp:.3f} → {cfg.purge_end_mp:.3f}",
         f"  Target speed:      {cfg.target_speed_mph} mph",
         f"  Speed limits:      {cfg.min_speed_mph} – {cfg.max_speed_mph} mph",
+        f"  Slack floor:       {getattr(cfg, 'slack_floor_psig', 25.0):g} psig at high points ahead of the pig"
+        + (" (default)" if getattr(cfg, 'slack_floor_psig', 25.0) == 25.0 else " (set for this job)"),
         f"  N2 initial P:      {cfg.n2_initial_pressure_psig:.1f} psig  (auto-calculated)",
         f"  Max injection:     {cfg.max_injection_scfm:.0f} SCFM"
         + (f" / {cfg.max_injection_psig:.1f} psig" if math.isfinite(cfg.max_injection_psig) else ""),

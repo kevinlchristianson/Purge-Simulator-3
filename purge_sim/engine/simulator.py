@@ -155,6 +155,11 @@ class SimConfig:
     # past the stop included). None = the exit is at the pig stop (purge_end_mp).
     fluid_exit_mp: Optional[float] = None
 
+    # --- Slack line ---
+    # Lowest liquid pressure (psig) the column ahead of the pig may have at any high point;
+    # the drive that can't hold it at min speed flags slack_line_risk. Negative = vacuum.
+    slack_floor_psig: float = 25.0
+
     # --- Pig speed limits ---
     min_speed_mph: float = 0.5
     max_speed_mph: float = 6.0
@@ -590,6 +595,7 @@ def _compute_station_pressures(
     elevation_at,
     ultimate_mp: Optional[float] = None,
     ultimate_psig: Optional[float] = None,
+    slack_floor_psig: float = 25.0,
 ) -> List[dict]:
     """
     Estimate pressure at each pump station for the current timestep.
@@ -644,7 +650,7 @@ def _compute_station_pressures(
     # to the next anchor (next pump suction, or the BPCV / tankage). The BPCV is NOT a pump —
     # it only sets the downstream backpressure; it never lifts the upstream HGL.
     grad = sg * 62.4 / 144.0
-    margin_psi = 25.0    # keep the liquid column comfortably full (~68 ft of head) over peaks
+    margin_psi = slack_floor_psig   # keep the liquid column full over peaks (default 25 psig)
 
     def _peak_clear_discharge(a_mp: float, b_mp: float) -> float:
         # Min discharge pressure at a_mp keeping HGL >= terrain+margin over [a_mp, b_mp].
@@ -1050,7 +1056,7 @@ def simulate(cfg: SimConfig, progress_cb: Optional[Callable[[float], None]] = No
             elevation_at,
             bpcv_gas_constraint_psig=bpcv_gas_constraint,
             mop_drive_ceiling_psig=mop_ceiling,
-            terrain_mp=_mj_mp, terrain_elev=_mj_elev, slack_margin_psi=25.0,
+            terrain_mp=_mj_mp, terrain_elev=_mj_elev, slack_margin_psi=cfg.slack_floor_psig,
             exit_max_psig=exit_max,
         )
 
@@ -1665,7 +1671,7 @@ def simulate(cfg: SimConfig, progress_cb: Optional[Callable[[float], None]] = No
             roughness_ft=cfg.fluid_roughness_ft,
             elevation_at=elevation_at,
             sim_time_hr=t_hr,
-            terrain_mp=_mj_mp, terrain_elev=_mj_elev, slack_margin_psi=25.0,
+            terrain_mp=_mj_mp, terrain_elev=_mj_elev, slack_margin_psi=cfg.slack_floor_psig,
         )
 
         # --- MOP check and station pressures ---
@@ -1689,6 +1695,7 @@ def simulate(cfg: SimConfig, progress_cb: Optional[Callable[[float], None]] = No
                                 area_ft2),
             elevation_at=elevation_at,
             ultimate_mp=_ult_mp, ultimate_psig=_ult_p,
+            slack_floor_psig=cfg.slack_floor_psig,
         )
         mop_liq = check_mop_liquid_side(
             pig_mp, pig_face_psig, mop_joints,

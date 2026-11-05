@@ -773,7 +773,7 @@ const GROUPS = [
   ["Route", ["purge_start_mp", "purge_end_mp", "fluid_exit_mp"]],
   ["Fluid", ["fluid_name", "fluid_sg", "fluid_viscosity_cst", "fluid_roughness_ft"]],
   ["N2 & injection", ["n2_temperature_f", "max_injection_psig", "max_injection_scfm", "smooth_injection", "injection_ramp_scfm_per_hr", "drive_setpoint_slew_psi_per_hr", "n2_budget_scf", "drive_mop_fraction", "injection_schedule"]],
-  ["Pressure limits", ["maop_psig", "max_drive_psig", "drive_ceiling_fraction", "mop_warning_fraction"]],
+  ["Pressure limits", ["maop_psig", "max_drive_psig", "drive_ceiling_fraction", "mop_warning_fraction", "slack_floor_psig"]],
   ["Exit", ["exit_behavior", "exit_pressure_run_psig", "exit_max_pressure_psig"]],
   ["Pig speed", ["min_speed_mph", "target_speed_mph", "max_speed_mph"]],
   ["Booster spreads", ["n_spreads", "mob_time_hr", "spread_discharge_psig", "spread_suction_min_psig", "spread_max_flow_scfm"]],
@@ -786,6 +786,7 @@ const LEGACY_EXIT = ["exit_pressure_behavior", "exit_pressure_end_psig", "thrott
 // Fixed-choice inputs rendered as a dropdown (the rest are typed).
 const CHOICES = {exit_pressure_behavior: EXIT_OPTS, exit_behavior: ["modulating", "fixed"]};
 const GROUP_HINTS = {
+  "Pressure limits": "<b>Slack floor psig</b> is the allowable slack pressure: the lowest liquid pressure at any high point ahead of the pig before a step is flagged slack-line risk (default 25 psig). Below 0 is vacuum (down to -14.7, full vacuum); below the product's vapor pressure the column separates. Lowering it is an engineering call for the job. Liquefied gases (butane, propane, NGL) can't go below 25 psig.",
   Route: "<b>fluid exit mp</b> is the hydraulic endpoint: where the liquid actually leaves, when that is past the pig stop (blank = at the pig stop). Set it on Job setup as Hydraulic Endpoint.",
   Exit: "The exit is whatever is nearest downstream of the pig: a running pump station's suction, the BPCV, or the tank inlet. It holds <b>exit pressure run psig</b> as its minimum. The tank inlet is at the pig stop, or at <b>fluid exit mp</b> (Route) when the liquid leaves further on; then this is the pressure there, and the pig pushes the column all the way out to it. <b>Modulating</b> raises it to hold the pig at max speed, up to <b>exit max pressure psig</b> (blank = the MOP at the exit; a station's limit is its max suction, the BPCV's its downstream MOP). <b>Fixed</b> holds the minimum and the run flags every step the pig is over max speed.",
 };

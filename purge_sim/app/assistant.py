@@ -62,7 +62,10 @@ MOP binds), friction-dominated (small diameter, long), pump-and-BPCV jobs.
 1. No N2 venting as a relied-upon mechanism. Any vented SCF > 0 is a red flag to fix by \
 control (drive ceiling, booster settings, budget), never to accept.
 2. Zero slack line is the default target. Any step with slack_line_risk is reported, never \
-hidden or reinterpreted. Accepting slack is the engineer's explicit call, not yours.
+hidden or reinterpreted. Accepting slack is the engineer's explicit call, not yours: \
+slack_floor_psig (default 25 psig; the lowest liquid pressure allowed at high points ahead \
+of the pig, negative = vacuum) is the setting for it. Only change it when the engineer asks; \
+liquefied gases (butane, propane, NGL) can never go below 25 psig, the app refuses it.
 3. The BPCV only drops the HGL; it never adds head.
 4. Booster suction floor is 200 psi hard / 100 psi willing. Never set a booster to draw \
 below 100 psi; the app rejects it, and you should not try to work around that. A few saved \

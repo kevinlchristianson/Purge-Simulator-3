@@ -204,6 +204,8 @@ def _check_rules(old: ScenarioInputs, new: ScenarioInputs, changed: set) -> None
         if top > new.max_injection_scfm:
             raise InputError(f"injection_schedule asks for {top:,.0f} SCFM; the spread's max_injection_scfm "
                              f"is {new.max_injection_scfm:,.0f}")
+    if "slack_floor_psig" in changed or "fluid_name" in changed:
+        slack_floor_problem(new)
     if "dt_hr" in changed and new.dt_hr <= 0:
         raise InputError("dt_hr must be positive")
 
@@ -221,6 +223,24 @@ def _check_rules(old: ScenarioInputs, new: ScenarioInputs, changed: set) -> None
                 raise InputError(
                     f"booster {b.get('name')} suction_min_psig {s:g} is below the {floor:g} psi "
                     f"floor (hard rule 4); needs explicit engineering sign-off for this job.")
+
+
+def slack_floor_problem(inp: ScenarioInputs) -> None:
+    """Raise InputError if the job's slack floor is one the product can't take: below full
+    vacuum for anything, or, for a liquefied gas (vapor pressure above atmospheric: butane,
+    propane, NGL), below its vapor pressure + 100 psi, since that product flashes instead
+    of pulling a slack line. Crude, diesel and the like may go to vacuum."""
+    from ..data import fluids
+    v = float(inp.slack_floor_psig)
+    if v < -fluids.ATM_PSI:
+        raise InputError(f"slack_floor_psig {v:g} is below full vacuum ({-fluids.ATM_PSI:g} psig)")
+    key = fluids.match(inp.fluid_name)
+    f = fluids.FLUIDS.get(key) if key else None
+    if f and f.vapor_psia and f.vapor_psia > fluids.ATM_PSI and v < 25.0 and v < f.min_liquid_psig:
+        raise InputError(
+            f"{f.name} is a liquefied gas: a slack line or vacuum is never allowed. slack_floor_psig "
+            f"can't be lowered below the 25 psig default (it should be at least its vapor pressure + "
+            f"{fluids.VAPOR_MARGIN_PSI:g} psi, about {f.min_liquid_psig:g} psig).")
 
 
 def apply_changes(inputs: ScenarioInputs, changes: Dict[str, Any]) -> tuple[ScenarioInputs, List[dict]]:
@@ -370,6 +390,7 @@ def results_summary(res: SimResults) -> dict:
             "worst_mop_margin_psig": _f(worst.worst_mop_margin, 1) if worst else None,
             "worst_mop_mp": _f(worst.worst_mop_mp) if worst else None,
             "slack_line_risk_steps": len(slack),
+            "slack_floor_psig": _f(cfg.slack_floor_psig, 1),
             "slack_line_risk_mp_range": [_f(slack[0].pig_mp), _f(slack[-1].pig_mp)] if slack else None,
         })
         # Exit modulation: steps the exit raised its inlet pressure to hold max speed, the most
@@ -404,7 +425,8 @@ def results_summary(res: SimResults) -> dict:
         if res.total_scf_vented > 0:
             flags.append(f"N2 vented ({res.total_scf_vented:,.0f} SCF): red flag under hard rule 1, fix by control")
         if slack:
-            flags.append(f"slack-line risk on {len(slack)} steps (hard rule 2)")
+            flags.append(f"slack-line risk on {len(slack)} steps (hard rule 2; liquid below the "
+                         f"{cfg.slack_floor_psig:g} psig slack floor at a high point)")
         if over:
             flags.append(f"pig over max speed on {len(over)} steps (up to {fastest.overspeed_mph:.2f} mph over, "
                          f"MP {over[0].pig_mp:.1f} to {over[-1].pig_mp:.1f}): the exit "
