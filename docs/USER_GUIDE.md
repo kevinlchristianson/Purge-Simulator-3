@@ -376,7 +376,9 @@ Also check:
   elevation (ft) on a right-hand axis of every chart. On the milepost charts it is the profile
   along the route; on the time charts it is the ground under the pig at that moment. Each axis
   fits its own data, and the right-hand axes share the left axis's gridlines. The box stays
-  ticked between runs.
+  ticked between runs. Dashed minor gridlines sit halfway between the major ones; time charts
+  have a vertical gridline at every hour. On the profile charts the feet (head) axis is tied
+  to the psig axis, so its labels sit on the psig gridlines.
 - **Charts, second axis row:** under the mileposts, every milepost chart shows in brackets
   the elapsed time (hours) when the pig reached that milepost; under the hours, the time
   charts show the pig's milepost at that hour. Same on the client HTML page. The speed chart

@@ -1149,7 +1149,7 @@ function lineChart(opts) {
   for (const [key, r] of [["R", R], ["E", E]]) {
     if (!r) continue;
     if (datum != null && key === (hl.axis === "right" ? "R" : "E")) {
-      const lk = [datum + L[0] / hl.grad, datum + L[1] / hl.grad]; ax[key] = {r: lk, step: niceStep((lk[1] - lk[0]) / 7), free: true};
+      const lk = [datum + L[0] / hl.grad, datum + L[1] / hl.grad]; ax[key] = {r: lk, step: ax.L.step / hl.grad, dec: 0};   // labels on the psig gridlines
     } else ax[key] = LF ? alignAxis(r, LF.k) : fitAxis(r, 7, opts.zeroBase && r[0] === 0);
   }
   R = ax.R && ax.R.r; E = ax.E && ax.E.r;
@@ -1157,18 +1157,27 @@ function lineChart(opts) {
   const sx = v => m.l + (v - xlo) / ((xhi - xlo) || 1) * (W - m.l - m.r);
   const sy = (v, r) => H - m.b - (v - r[0]) / (r[1] - r[0]) * (H - m.t - m.b);
   let g = "";
-  const xt = niceTicks(xlo, xhi, 14), xd = stepDec(xt.length > 1 ? xt[1] - xt[0] : 1);
+  const yTicks = a => { const out = []; for (let i = 0; i <= Math.round((a.r[1] - a.r[0]) / a.step + 1e-9); i++) out.push(+(a.r[0] + i * a.step).toFixed(10)); return out; };
+  // xEvery (hours on the time charts): a gridline at every whole unit, labels on the nice ticks among them
+  let xt = niceTicks(xlo, xhi, 14);
+  const xe = opts.xEvery, everyN = xe ? Math.floor(xhi / xe) - Math.ceil(xlo / xe) + 1 : 0;
+  if (xe && everyN > 1 && (W - m.l - m.r) / everyN >= 40) { xt.length = 0; for (let k = Math.ceil(xlo / xe - 1e-9); k * xe <= xhi + 1e-9; k++) xt.push(k * xe); }
+  const xd = stepDec(xt.length > 1 ? xt[1] - xt[0] : 1);
+  if (xe && everyN <= 120) for (let k = Math.ceil(xlo / xe - 1e-9); k * xe <= xhi + 1e-9; k++)
+    g += `<line x1="${sx(k * xe)}" x2="${sx(k * xe)}" y1="${m.t}" y2="${H - m.b}" stroke="var(--muted)" stroke-opacity=".3"/>`;
+  // minor horizontal gridlines halfway between the major ones
+  if (L) for (const t of yTicks(ax.L).slice(1)) { const y = sy(t - ax.L.step / 2, L); g += `<line x1="${m.l}" x2="${W - m.r}" y1="${y}" y2="${y}" stroke="var(--border)" stroke-dasharray="3 3"/>`; }
   for (const t of xt) {
-    g += `<line x1="${sx(t)}" x2="${sx(t)}" y1="${m.t}" y2="${H - m.b}" stroke="var(--border)"/><text x="${sx(t)}" y="${H - m.b + 15}" text-anchor="middle">${fmt(t, xd)}</text>`;
+    if (!(xe && everyN <= 120)) g += `<line x1="${sx(t)}" x2="${sx(t)}" y1="${m.t}" y2="${H - m.b}" stroke="var(--muted)" stroke-opacity=".3"/>`;
+    g += `<text x="${sx(t)}" y="${H - m.b + 15}" text-anchor="middle">${fmt(t, xd)}</text>`;
     const v = x2 && x2.at(t);
     if (v != null && isFinite(v)) g += `<text x="${sx(t)}" y="${H - m.b + 28}" text-anchor="middle" style="fill:var(--muted)">(${fmt(v, x2.nd ?? 1)})</text>`;
   }
-  const yTicks = a => { const out = []; for (let i = 0; i <= Math.round((a.r[1] - a.r[0]) / a.step + 1e-9); i++) out.push(+(a.r[0] + i * a.step).toFixed(10)); return out; };
-  if (L) for (const t of yTicks(ax.L)) g += `<line x1="${m.l}" x2="${W - m.r}" y1="${sy(t, L)}" y2="${sy(t, L)}" stroke="var(--border)"/><text x="${m.l - 6}" y="${sy(t, L) + 4}" text-anchor="end">${fmt(t, stepDec(ax.L.step))}</text>`;
-  const rTicks = a => a.free ? niceTicks(a.r[0], a.r[1], 7) : yTicks(a);
-  if (R) for (const t of rTicks(ax.R)) g += `<text x="${W - m.r + 6}" y="${sy(t, R) + 4}">${fmt(t, stepDec(ax.R.step))}</text>`;
+  if (L) for (const t of yTicks(ax.L)) g += `<line x1="${m.l}" x2="${W - m.r}" y1="${sy(t, L)}" y2="${sy(t, L)}" stroke="var(--muted)" stroke-opacity=".3"/><text x="${m.l - 6}" y="${sy(t, L) + 4}" text-anchor="end">${fmt(t, stepDec(ax.L.step))}</text>`;
+  const rTicks = yTicks;
+  if (R) for (const t of rTicks(ax.R)) g += `<text x="${W - m.r + 6}" y="${sy(t, R) + 4}">${fmt(t, ax.R.dec ?? stepDec(ax.R.step))}</text>`;
   const ex = W - m.r + (R ? 60 : 6);
-  if (E) for (const t of rTicks(ax.E)) g += `<text x="${ex}" y="${sy(t, E) + 4}" style="fill:var(--ground)">${fmt(t, stepDec(ax.E.step))}</text>`;
+  if (E) for (const t of rTicks(ax.E)) g += `<text x="${ex}" y="${sy(t, E) + 4}" style="fill:var(--ground)">${fmt(t, ax.E.dec ?? stepDec(ax.E.step))}</text>`;
   if (!L && (R || E)) for (const t of rTicks(ax.R || ax.E)) g += `<line x1="${m.l}" x2="${W - m.r}" y1="${sy(t, R || E)}" y2="${sy(t, R || E)}" stroke="var(--border)"/>`;
   g += `<text x="${(m.l + W - m.r) / 2}" y="${H - 4}" text-anchor="middle">${esc(opts.xLabel || "")}${x2 ? "  " + esc(x2.label) : ""}</text>`;
   if (opts.yLabel) g += `<text transform="translate(13 ${(H - m.b + m.t) / 2}) rotate(-90)" text-anchor="middle">${esc(opts.yLabel)}</text>`;
@@ -1238,10 +1247,10 @@ function renderCharts() {
      <div class="card"><b>Pressures along the route</b>${lineChart({x: s.pig_mp, xLabel: "Pig milepost", yLabel: "psig", elevLabel: "Elevation ft", x2: tRow,
        series: [{name: "Pig face", y: s.pig_face_psig, color: "var(--s1)"}, {name: "Injection", y: s.injection_psig, color: "var(--s2)"},
                 {name: "Exit", y: s.exit_psig, color: "var(--s3)", dash: "4 3"}, ...exitMin, ...elev("Elevation (ft)")]})}</div>
-     <div class="card"><b>N2 over time</b>${lineChart({x: s.t_hr, xLabel: "Hours", yLabel: "SCF in line", y2Label: "Injection SCFM", zeroBase: true, x2: mRow,
+     <div class="card"><b>N2 over time</b>${lineChart({x: s.t_hr, xLabel: "Hours", yLabel: "SCF in line", y2Label: "Injection SCFM", zeroBase: true, x2: mRow, xEvery: 1,
        series: [{name: "N2 inventory (SCF)", y: s.total_scf, color: "var(--s4)"}, {name: "Injection rate (SCFM)", y: s.injection_scfm, color: "var(--s2)", axis: "right"},
                 ...elev("Elevation under pig (ft)")]})}</div>
-     <div class="card"><b>Pig position over time</b>${lineChart({x: s.t_hr, xLabel: "Hours", yLabel: "Milepost", x2: mRow,
+     <div class="card"><b>Pig position over time</b>${lineChart({x: s.t_hr, xLabel: "Hours", yLabel: "Milepost", x2: mRow, xEvery: 1,
        series: [{name: "Pig MP", y: s.pig_mp, color: "var(--s1)"}, ...elev("Elevation under pig (ft)")]})}</div>
      ${hasElev ? `<div class="card"><b>Hydraulic grade line</b>
        <div style="display:flex;gap:10px;align-items:center"><input type="range" id="chHglStep" min="0" max="${playSteps().length - 1}" value="${playFrame()}" style="flex:1"></div>

@@ -234,8 +234,7 @@ function alignAxis(r, k) {
   a -= spare * step; if (lo >= 0 && a < 0) a = 0;
   return {r: [a, a + k * step], step, k};
 }
-const axisTicks = a => a.free ? niceTicks(a.r[0], a.r[1], 7)
-  : Array.from({length: Math.round((a.r[1] - a.r[0]) / a.step + 1e-9) + 1}, (_, i) => +(a.r[0] + i * a.step).toFixed(10));
+const axisTicks = a => Array.from({length: Math.round((a.r[1] - a.r[0]) / a.step + 1e-9) + 1}, (_, i) => +(a.r[0] + i * a.step).toFixed(10));
 // Elapsed time under the milepost axis (first time the pig reaches each milepost), or the pig milepost under the time axis
 function crossAt(xs, ys, x) {   // first point where xs passes x (xs may stall or run either way)
   if (!xs || !xs.length) return null;
@@ -285,22 +284,31 @@ function lineChart(el, opts) {
   for (const [key, r] of [["R", R], ["E", E]]) {
     if (!r) continue;
     if (datum != null && key === (hl.axis === "right" ? "R" : "E")) {
-      const lk = [datum + L[0] / hl.grad, datum + L[1] / hl.grad]; ax[key] = {r: lk, step: niceStep((lk[1] - lk[0]) / 7), free: true};
+      const lk = [datum + L[0] / hl.grad, datum + L[1] / hl.grad]; ax[key] = {r: lk, step: ax.L.step / hl.grad, dec: 0};   // labels on the psig gridlines
     } else ax[key] = LF ? alignAxis(r, LF.k) : fitAxis(r, 7, opts.zeroBase && r[0] === 0);
   }
   R = ax.R && ax.R.r; E = ax.E && ax.E.r;
-  const tf = a => t => fmt(t, stepDec(a.step));
+  const tf = a => t => fmt(t, a.dec ?? stepDec(a.step));
   if (L) m.l = Math.max(m.l, 22 + 6.5 * Math.max(...axisTicks(ax.L).map(t => tf(ax.L)(t).length)));   // room for "12,000,000"
   const sx = v => m.l + (v - xlo) / ((xhi - xlo) || 1) * (W - m.l - m.r);
   const sy = (v, r) => H - m.b - (v - r[0]) / (r[1] - r[0]) * (H - m.t - m.b);
   let g = "";
-  const xt = niceTicks(xlo, xhi, Math.max(5, Math.round(W / 64))), xd = stepDec(xt.length > 1 ? xt[1] - xt[0] : 1);
+  // xEvery (hours on the time charts): a gridline at every whole unit, labels on the nice ticks among them
+  let xt = niceTicks(xlo, xhi, Math.max(5, Math.round(W / 64)));
+  const xe = opts.xEvery, everyN = xe ? Math.floor(xhi / xe) - Math.ceil(xlo / xe) + 1 : 0;
+  if (xe && everyN > 1 && (W - m.l - m.r) / everyN >= 40) { xt.length = 0; for (let k = Math.ceil(xlo / xe - 1e-9); k * xe <= xhi + 1e-9; k++) xt.push(k * xe); }
+  const xd = stepDec(xt.length > 1 ? xt[1] - xt[0] : 1);
+  if (xe && everyN <= 120) for (let k = Math.ceil(xlo / xe - 1e-9); k * xe <= xhi + 1e-9; k++)
+    g += `<line x1="${sx(k * xe)}" x2="${sx(k * xe)}" y1="${m.t}" y2="${H - m.b}" stroke="var(--muted)" stroke-opacity=".3"/>`;
+  // minor horizontal gridlines halfway between the major ones
+  if (L) for (const t of axisTicks(ax.L).slice(1)) { const y = sy(t - ax.L.step / 2, L); g += `<line x1="${m.l}" x2="${W - m.r}" y1="${y}" y2="${y}" stroke="var(--grid)" stroke-dasharray="3 3"/>`; }
   for (const t of xt) {
-    g += `<line x1="${sx(t)}" x2="${sx(t)}" y1="${m.t}" y2="${H - m.b}" stroke="var(--grid)"/><text x="${sx(t)}" y="${H - m.b + 16}" text-anchor="middle">${fmt(t, xd)}</text>`;
+    if (!(xe && everyN <= 120)) g += `<line x1="${sx(t)}" x2="${sx(t)}" y1="${m.t}" y2="${H - m.b}" stroke="var(--muted)" stroke-opacity=".3"/>`;
+    g += `<text x="${sx(t)}" y="${H - m.b + 16}" text-anchor="middle">${fmt(t, xd)}</text>`;
     const v = x2 && x2.at(t);
     if (v != null && isFinite(v)) g += `<text x="${sx(t)}" y="${H - m.b + 30}" text-anchor="middle" style="fill:var(--muted)">(${fmt(v, x2.nd ?? 1)})</text>`;
   }
-  if (L) for (const t of axisTicks(ax.L)) g += `<line x1="${m.l}" x2="${W - m.r}" y1="${sy(t, L)}" y2="${sy(t, L)}" stroke="var(--grid)"/><text x="${m.l - 7}" y="${sy(t, L) + 4}" text-anchor="end">${tf(ax.L)(t)}</text>`;
+  if (L) for (const t of axisTicks(ax.L)) g += `<line x1="${m.l}" x2="${W - m.r}" y1="${sy(t, L)}" y2="${sy(t, L)}" stroke="var(--muted)" stroke-opacity=".3"/><text x="${m.l - 7}" y="${sy(t, L) + 4}" text-anchor="end">${tf(ax.L)(t)}</text>`;
   if (R) for (const t of axisTicks(ax.R)) g += `<text x="${W - m.r + 7}" y="${sy(t, R) + 4}">${tf(ax.R)(t)}</text>`;
   if (E) for (const t of axisTicks(ax.E)) g += `<text x="${W - m.r + (R ? 62 : 7)}" y="${sy(t, E) + 4}" style="fill:var(--ground)">${tf(ax.E)(t)}</text>`;
   g += `<line x1="${m.l}" x2="${W - m.r}" y1="${H - m.b}" y2="${H - m.b}" stroke="var(--border)"/>`;
@@ -421,11 +429,11 @@ const CHARTS = [
    opts: () => ({x: SE.pig_mp, xLabel: "Pig milepost", yLabel: "mph", x2: TIME_ROW, markers: facilityMarkers("mp"),
      series: [{name: "Pig speed", y: SE.pig_speed_mph, color: "var(--gas)", nd: 2, unit: "mph"}, ...maxSpeedSeries, ...overSeries, ...elevSeries("Elevation")]})},
   {title: "Nitrogen over time", note: "N2 in the line (left axis) and the injection rate (right axis).",
-   opts: () => ({x: SE.t_hr, xLabel: "Hours", xnd: 1, x2: MP_ROW, yLabel: "SCF in line", y2Label: "Injection SCFM", zeroBase: true, markers: facilityMarkers("time"), series: [
+   opts: () => ({x: SE.t_hr, xLabel: "Hours", xnd: 1, x2: MP_ROW, xEvery: 1, yLabel: "SCF in line", y2Label: "Injection SCFM", zeroBase: true, markers: facilityMarkers("time"), series: [
      {name: "N2 in line", y: SE.total_scf, color: "var(--s4)", unit: "SCF", fill: true},
      {name: "Injection rate", y: SE.injection_scfm, color: "var(--s2)", axis: "right", unit: "SCFM"}, ...elevSeries("Elevation under the pig")]})},
   {title: "Pig position over time",
-   opts: () => ({x: SE.t_hr, xLabel: "Hours", xnd: 1, x2: MP_ROW, yLabel: "Milepost", markers: facilityMarkers("time"),
+   opts: () => ({x: SE.t_hr, xLabel: "Hours", xnd: 1, x2: MP_ROW, xEvery: 1, yLabel: "Milepost", markers: facilityMarkers("time"),
      series: [{name: "Pig milepost", y: SE.pig_mp, color: "var(--gas)", nd: 2}, ...elevSeries("Elevation under the pig")]})},
 ];
 $("#chartList").innerHTML = CHARTS.map((c, i) => `<div class="card"><h3>${esc(c.title)}</h3>${c.note ? `<div class="small muted">${esc(c.note)}</div>` : ""}<div class="legend" id="lg${i}"></div><div class="chart" id="ch${i}"></div></div>`).join("");
