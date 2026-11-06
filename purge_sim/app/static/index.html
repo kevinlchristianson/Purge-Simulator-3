@@ -1061,18 +1061,67 @@ function wireInfra(el) {
 }
 
 // ---------------------------------------------------------------- charts (SVG)
+const NICE = [1, 2, 2.5, 5, 10];
+function niceStep(raw) {
+  const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+  return NICE.map(m => m * mag).find(s => s >= raw * (1 - 1e-9)) || raw;
+}
 function niceTicks(lo, hi, n = 5) {
   if (!(hi > lo)) { hi = lo + 1; }
-  const step0 = (hi - lo) / n, mag = Math.pow(10, Math.floor(Math.log10(step0)));
-  const step = [1, 2, 2.5, 5, 10].map(m => m * mag).find(s => s >= step0) || step0;
-  const out = []; for (let v = Math.ceil(lo / step) * step; v <= hi + step * 1e-9; v += step) out.push(+v.toFixed(10));
+  const step = niceStep((hi - lo) / n);
+  const out = []; for (let v = Math.ceil(lo / step - 1e-9) * step; v <= hi + step * 1e-9; v += step) out.push(+v.toFixed(10));
   return out;
+}
+// decimals a tick step needs: 0.25 -> 2, 0.5 -> 1, 250 -> 0
+const stepDec = step => { for (let d = 0; d < 5; d++) if (Math.abs(step * 10 ** d - Math.round(step * 10 ** d)) < 1e-6) return d; return 4; };
+// Fit an axis to its data: a little padding, then out to whole tick steps, so the data fills the chart
+function fitAxis(r, n, keepZero) {
+  let [lo, hi] = r; const pad = (hi - lo) * 0.04;
+  lo = keepZero && lo === 0 ? 0 : lo - pad; hi += pad;
+  const step = niceStep((hi - lo) / n);
+  lo = Math.floor(lo / step + 1e-9) * step; hi = Math.ceil(hi / step - 1e-9) * step;
+  if (r[0] >= 0 && lo < 0) lo = 0;
+  return {r: [lo, hi], step, k: Math.round((hi - lo) / step)};
+}
+// A second axis on the same gridlines: k intervals of a nice step that hold the data, centred on it
+function alignAxis(r, k) {
+  let [lo, hi] = r; if (hi === lo) { hi += 1; lo -= 1; }
+  let step = niceStep((hi - lo) / k), a, b;
+  for (let tries = 0; tries < 40; tries++) {
+    a = Math.floor(lo / step + 1e-9) * step;
+    if (a + k * step >= hi - 1e-9 * step) break;
+    step = niceStep(step * 1.0001);
+  }
+  const spare = Math.floor((a + k * step - hi) / step / 2 + 1e-9);
+  a -= spare * step; if (lo >= 0 && a < 0) a = 0;
+  return {r: [a, a + k * step], step, k};
+}
+// Elapsed time under the milepost axis (first time the pig reaches each milepost), or the
+// pig milepost under the time axis. Read from the run's pig_mp and t_hr series.
+function crossAt(xs, ys, x) {   // first point where xs passes x (xs may stall or run either way)
+  if (!xs || !xs.length) return null;
+  if (xs[0] === x) return ys[0];
+  for (let i = 1; i < xs.length; i++) {
+    const a = xs[i - 1], b = xs[i]; if (a == null || b == null || a === b) continue;
+    if ((a - x) * (b - x) <= 0) return ys[i - 1] + (x - a) / (b - a) * (ys[i] - ys[i - 1]);
+  }
+  return null;
+}
+function timeRow() {
+  const s = S.results && S.results.series; if (!s || !s.pig_mp || !s.t_hr) return null;
+  return {label: "(Elapsed Time, Hrs)", at: x => crossAt(s.pig_mp, s.t_hr, x), nd: 1};
+}
+function mpRow() {
+  const s = S.results && S.results.series; if (!s || !s.pig_mp || !s.t_hr) return null;
+  return {label: "(Pig Milepost)", at: t => crossAt(s.t_hr, s.pig_mp, t), nd: 1};
 }
 function lineChart(opts) {
   // opts: {x: [], series: [{name, y: [], color, axis: "left"|"right"|"elev", dash, fill}], xLabel, yLabel, y2Label, elevLabel,
-  //        markers: [{x, label}], area: {y, color}}. "elev" is a feet axis on the right, outside the "right" axis when both are used.
+  //        markers: [{x, label}], area: {y, color}, x2: {label, at(x), nd}}. "elev" is a feet axis on the right, outside the
+  //        "right" axis when both are used. x2 adds a second row of values under the x ticks (elapsed time under mileposts).
   const hasR = opts.series.some(s => s.axis === "right"), hasE = opts.series.some(s => s.axis === "elev");
-  const W = 900, H = 260, m = {l: 58, r: hasR && hasE ? 112 : hasR || hasE ? 58 : 16, t: 12, b: 34};
+  const x2 = opts.x2;
+  const W = 900, H = x2 ? 280 : 260, m = {l: 58, r: hasR && hasE ? 112 : hasR || hasE ? 58 : 16, t: 12, b: x2 ? 48 : 34};
   const xs = opts.x.filter(v => v != null);
   if (!xs.length) return `<div class="empty">No data</div>`;
   const xlo = Math.min(...xs), xhi = Math.max(...xs);
@@ -1081,29 +1130,47 @@ function lineChart(opts) {
     if (axis === "left" && opts.area) for (const v of opts.area.y) if (v != null) vals.push(v);
     if (!vals.length) return null;
     let lo = Math.min(...vals), hi = Math.max(...vals); if (hi === lo) { hi += 1; lo -= 1; }
-    const pad = (hi - lo) * 0.06; return [opts.zeroBase && axis !== "elev" && lo >= 0 ? 0 : lo - pad, hi + pad];
+    return [opts.zeroBase && axis !== "elev" && lo >= 0 ? 0 : lo, hi];
   };
   let L = range("left"), R = range("right"), E = range("elev");
   // headLock: {axis, grad}: that feet axis moves with the psig axis at grad psi/ft, its floor at the
   // lowest ground, so the HGL sits above the ground by exactly the liquid pressure drawn on the psig axis
   const hl = opts.headLock, HR = hl && {right: R, elev: E}[hl.axis];
+  let datum = null;
   if (HR && L) {
     const ft = [];
     for (const s of opts.series) if (s.axis === hl.axis) for (const v of s.y) if (v != null) ft.push(v);
-    const datum = Math.min(...ft), psi = ft.map(v => (v - datum) * hl.grad);
-    const lo = Math.min(L[0], 0), hi = Math.max(L[1], Math.max(...psi) * 1.06);
-    L = [lo, hi]; const lk = [datum + lo / hl.grad, datum + hi / hl.grad];
-    if (hl.axis === "right") R = lk; else E = lk;
+    datum = Math.min(...ft); const psi = ft.map(v => (v - datum) * hl.grad);
+    L = [Math.min(L[0], 0), Math.max(L[1], Math.max(...psi))];
   }
+  // every axis gets ~7 gridlines; the right-hand axes share the left axis's gridlines
+  const LF = L && fitAxis(L, 7, L[0] === 0), ax = {};
+  if (LF) { L = LF.r; ax.L = LF; }
+  for (const [key, r] of [["R", R], ["E", E]]) {
+    if (!r) continue;
+    if (datum != null && key === (hl.axis === "right" ? "R" : "E")) {
+      const lk = [datum + L[0] / hl.grad, datum + L[1] / hl.grad]; ax[key] = {r: lk, step: niceStep((lk[1] - lk[0]) / 7), free: true};
+    } else ax[key] = LF ? alignAxis(r, LF.k) : fitAxis(r, 7, opts.zeroBase && r[0] === 0);
+  }
+  R = ax.R && ax.R.r; E = ax.E && ax.E.r;
+  if (L) m.l = Math.max(m.l, 20 + 6.2 * Math.max(...[L[0], L[1]].map(t => fmt(t, stepDec(ax.L.step)).length)));   // room for "4,000,000"
   const sx = v => m.l + (v - xlo) / ((xhi - xlo) || 1) * (W - m.l - m.r);
   const sy = (v, r) => H - m.b - (v - r[0]) / (r[1] - r[0]) * (H - m.t - m.b);
   let g = "";
-  for (const t of niceTicks(xlo, xhi, 8)) g += `<line x1="${sx(t)}" x2="${sx(t)}" y1="${m.t}" y2="${H - m.b}" stroke="var(--border)"/><text x="${sx(t)}" y="${H - m.b + 15}" text-anchor="middle">${fmt(t, Math.abs(t) < 10 && t % 1 ? 1 : 0)}</text>`;
-  if (L) for (const t of niceTicks(L[0], L[1], 5)) g += `<line x1="${m.l}" x2="${W - m.r}" y1="${sy(t, L)}" y2="${sy(t, L)}" stroke="var(--border)"/><text x="${m.l - 6}" y="${sy(t, L) + 4}" text-anchor="end">${fmt(t, Math.abs(t) < 10 && t % 1 ? 1 : 0)}</text>`;
-  if (R) for (const t of niceTicks(R[0], R[1], 5)) g += `<text x="${W - m.r + 6}" y="${sy(t, R) + 4}">${fmt(t, Math.abs(t) < 10 && t % 1 ? 1 : 0)}</text>`;
+  const xt = niceTicks(xlo, xhi, 14), xd = stepDec(xt.length > 1 ? xt[1] - xt[0] : 1);
+  for (const t of xt) {
+    g += `<line x1="${sx(t)}" x2="${sx(t)}" y1="${m.t}" y2="${H - m.b}" stroke="var(--border)"/><text x="${sx(t)}" y="${H - m.b + 15}" text-anchor="middle">${fmt(t, xd)}</text>`;
+    const v = x2 && x2.at(t);
+    if (v != null && isFinite(v)) g += `<text x="${sx(t)}" y="${H - m.b + 28}" text-anchor="middle" style="fill:var(--muted)">(${fmt(v, x2.nd ?? 1)})</text>`;
+  }
+  const yTicks = a => { const out = []; for (let i = 0; i <= Math.round((a.r[1] - a.r[0]) / a.step + 1e-9); i++) out.push(+(a.r[0] + i * a.step).toFixed(10)); return out; };
+  if (L) for (const t of yTicks(ax.L)) g += `<line x1="${m.l}" x2="${W - m.r}" y1="${sy(t, L)}" y2="${sy(t, L)}" stroke="var(--border)"/><text x="${m.l - 6}" y="${sy(t, L) + 4}" text-anchor="end">${fmt(t, stepDec(ax.L.step))}</text>`;
+  const rTicks = a => a.free ? niceTicks(a.r[0], a.r[1], 7) : yTicks(a);
+  if (R) for (const t of rTicks(ax.R)) g += `<text x="${W - m.r + 6}" y="${sy(t, R) + 4}">${fmt(t, stepDec(ax.R.step))}</text>`;
   const ex = W - m.r + (R ? 60 : 6);
-  if (E) for (const t of niceTicks(E[0], E[1], 5)) g += `<text x="${ex}" y="${sy(t, E) + 4}" style="fill:var(--ground)">${fmt(t, Math.abs(t) < 10 && t % 1 ? 1 : 0)}</text>`;
-  g += `<text x="${(m.l + W - m.r) / 2}" y="${H - 4}" text-anchor="middle">${esc(opts.xLabel || "")}</text>`;
+  if (E) for (const t of rTicks(ax.E)) g += `<text x="${ex}" y="${sy(t, E) + 4}" style="fill:var(--ground)">${fmt(t, stepDec(ax.E.step))}</text>`;
+  if (!L && (R || E)) for (const t of rTicks(ax.R || ax.E)) g += `<line x1="${m.l}" x2="${W - m.r}" y1="${sy(t, R || E)}" y2="${sy(t, R || E)}" stroke="var(--border)"/>`;
+  g += `<text x="${(m.l + W - m.r) / 2}" y="${H - 4}" text-anchor="middle">${esc(opts.xLabel || "")}${x2 ? "  " + esc(x2.label) : ""}</text>`;
   if (opts.yLabel) g += `<text transform="translate(13 ${(H - m.b + m.t) / 2}) rotate(-90)" text-anchor="middle">${esc(opts.yLabel)}</text>`;
   if (opts.y2Label && R) g += `<text transform="translate(${E ? W - 62 : W - 8} ${(H - m.b + m.t) / 2}) rotate(90)" text-anchor="middle">${esc(opts.y2Label)}</text>`;
   if (E) g += `<text transform="translate(${W - 8} ${(H - m.b + m.t) / 2}) rotate(90)" text-anchor="middle" style="fill:var(--ground)">${esc(opts.elevLabel || "Elevation ft")}</text>`;
@@ -1139,7 +1206,7 @@ function lineChart(opts) {
   }
   const legend = opts.series.concat(opts.area ? [{name: opts.area.name, color: opts.area.color}] : []).filter(s => s.name)
     .map(s => `<span><i style="background:${s.color}"></i>${esc(s.name)}</span>`).join("");
-  return `<div class="legend">${legend}</div><svg class="chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="${esc(opts.title || "")}">${g}</svg>`;
+  return `<div class="legend">${legend}</div><svg class="chart" viewBox="0 0 ${W} ${H}" style="height:${H}px" preserveAspectRatio="none" role="img" aria-label="${esc(opts.title || "")}">${g}</svg>`;
 }
 
 const chartPref = (k, d) => { try { return localStorage.getItem("purge.charts." + k) || d; } catch (e) { return d; } };
@@ -1150,30 +1217,31 @@ function renderCharts() {
   if (!S.results) { el.innerHTML = `<div class="empty">Run the scenario to see charts.</div>`; return; }
   const s = S.results.series, showElev = chartPref("elev", "0") === "1";
   const pigElev = s.pig_elevation_ft || [], hasElev = pigElev.some(v => v != null);
-  const grad = (s.fluid_sg || 1) * PSI_PER_FT_WATER;
   // elevation under the pig: along the route on the milepost charts, over time on the time charts
   const elev = name => showElev && hasElev ? [{name, y: pigElev, color: "var(--ground)", axis: "elev", width: 1.2, fill: true}] : [];
-  const faceHgl = s.pig_face_psig.map((p, i) => p == null || pigElev[i] == null ? null : pigElev[i] + p / grad);
   // the exit's work: where it rose above its minimum to hold max speed, and where it could not
   const sm = S.results.summary || {};
   const over = (s.overspeed || []).some(Boolean) ? [{name: "Over max speed", y: s.pig_speed_mph.map((v, i) => s.overspeed[i] ? v : null), color: "var(--bad)", dots: true}] : [];
-  const maxLine = sm.max_speed_mph != null ? [{name: `Max speed (${sm.max_speed_mph} mph)`, y: s.pig_mp.map(() => sm.max_speed_mph), color: "var(--muted)", dash: "6 3", width: 1}] : [];
+  // the max speed line only sets the scale when the pig runs near it; otherwise the speed axis fits the
+  // pig's own speeds and the legend says the limit is above the chart
+  const vmax = Math.max(0, ...s.pig_speed_mph.filter(v => v != null)), maxNear = sm.max_speed_mph != null && sm.max_speed_mph <= vmax * 1.25;
+  const maxLine = sm.max_speed_mph == null ? [] : maxNear ? [{name: `Max speed (${sm.max_speed_mph} mph)`, y: s.pig_mp.map(() => sm.max_speed_mph), color: "var(--muted)", dash: "6 3", width: 1}]
+    : [{name: `Max speed ${sm.max_speed_mph} mph (above the chart)`, y: [], color: "var(--muted)"}];
+  const tRow = timeRow(), mRow = mpRow();
   const exitMin = (s.exit_psig || []).some((v, i) => v - ((s.exit_min_psig || [])[i] ?? v) > 0.5) ? [{name: "Exit minimum", y: s.exit_min_psig, color: "var(--s3)", dash: "1 3", width: 1.2}] : [];
   el.innerHTML =
     `<div class="card" style="display:flex;gap:16px;align-items:center;flex-wrap:wrap">
        <label class="small"><input type="checkbox" id="chElev" ${showElev ? "checked" : ""} ${hasElev ? "" : "disabled"}> Show elevation profile on each chart (right axis, ft)</label>
        ${hasElev ? "" : `<span class="small muted">This run has no elevation profile.</span>`}</div>
-     <div class="card"><b>Pig speed along the route</b>${lineChart({x: s.pig_mp, xLabel: "Pig milepost", yLabel: "mph",
+     <div class="card"><b>Pig speed along the route</b>${lineChart({x: s.pig_mp, xLabel: "Pig milepost", yLabel: "mph", x2: tRow,
        series: [{name: "Pig speed", y: s.pig_speed_mph, color: "var(--s1)"}, ...maxLine, ...over, ...elev("Elevation (ft)")]})}</div>
-     <div class="card"><b>Pressures along the route</b>${lineChart({x: s.pig_mp, xLabel: "Pig milepost", yLabel: "psig", elevLabel: "Elevation / head ft",
-       headLock: showElev && hasElev ? {axis: "elev", grad} : null,
+     <div class="card"><b>Pressures along the route</b>${lineChart({x: s.pig_mp, xLabel: "Pig milepost", yLabel: "psig", elevLabel: "Elevation ft", x2: tRow,
        series: [{name: "Pig face", y: s.pig_face_psig, color: "var(--s1)"}, {name: "Injection", y: s.injection_psig, color: "var(--s2)"},
-                {name: "Exit", y: s.exit_psig, color: "var(--s3)", dash: "4 3"}, ...exitMin, ...elev("Elevation (ft)"),
-                ...(showElev && hasElev ? [{name: "HGL at pig face (ft)", y: faceHgl, color: "var(--hgl)", axis: "elev", width: 1.6}] : [])]})}</div>
-     <div class="card"><b>N2 over time</b>${lineChart({x: s.t_hr, xLabel: "Hours", yLabel: "SCF in line", y2Label: "Injection SCFM", zeroBase: true,
+                {name: "Exit", y: s.exit_psig, color: "var(--s3)", dash: "4 3"}, ...exitMin, ...elev("Elevation (ft)")]})}</div>
+     <div class="card"><b>N2 over time</b>${lineChart({x: s.t_hr, xLabel: "Hours", yLabel: "SCF in line", y2Label: "Injection SCFM", zeroBase: true, x2: mRow,
        series: [{name: "N2 inventory (SCF)", y: s.total_scf, color: "var(--s4)"}, {name: "Injection rate (SCFM)", y: s.injection_scfm, color: "var(--s2)", axis: "right"},
                 ...elev("Elevation under pig (ft)")]})}</div>
-     <div class="card"><b>Pig position over time</b>${lineChart({x: s.t_hr, xLabel: "Hours", yLabel: "Milepost",
+     <div class="card"><b>Pig position over time</b>${lineChart({x: s.t_hr, xLabel: "Hours", yLabel: "Milepost", x2: mRow,
        series: [{name: "Pig MP", y: s.pig_mp, color: "var(--s1)"}, ...elev("Elevation under pig (ft)")]})}</div>
      ${hasElev ? `<div class="card"><b>Hydraulic grade line</b>
        <div style="display:flex;gap:10px;align-items:center"><input type="range" id="chHglStep" min="0" max="${playSteps().length - 1}" value="${playFrame()}" style="flex:1"></div>
@@ -1200,7 +1268,7 @@ function hglHeadChart(p) {
                   {name: "N2 pressure as liquid head (behind pig)", y: gas, color: "var(--gas)", width: 1.4, dash: "5 3"}];
   if (p.mop_mp.length) series.push({name: "MOP grade line", y: p.mp.map((x, i) => head(interp(p.mop_mp, p.mop_psig, x), i)), color: "var(--mop)", dash: "5 3", width: 1.2});
   if (p.fullSystem) series.push(...slackSeries(p, head));
-  return lineChart({x: p.mp, xLabel: "Milepost", yLabel: "Elevation / head ft", series, markers: profileMarkers(p)});
+  return lineChart({x: p.mp, xLabel: "Milepost", yLabel: "Elevation / head ft", series, markers: profileMarkers(p), x2: timeRow()});
 }
 
 // ---------------------------------------------------------------- profile (live HGL scrubber)
@@ -1273,7 +1341,7 @@ function hglChart(p) {
   if (hgl.some(v => v != null)) series.push({name: "Hydraulic grade line (ft)", y: hgl, color: "var(--hgl)", axis: "right", width: 2, dash: "7 3"});
   if (p.fullSystem) series.push(...slackSeries(p, v => v));
   return lineChart({x: p.mp, xLabel: "Milepost", yLabel: "psig", y2Label: "Elevation / HGL ft", series, headLock: {axis: "right", grad},
-    markers: profileMarkers(p), floaters: rateFloaters(p)});
+    markers: profileMarkers(p), x2: timeRow(), floaters: rateFloaters(p)});
 }
 // N2 injection and liquid flow at this moment, as gauges at the chart edges (as in the GIF and client page)
 function rateFloaters(p) {
@@ -1533,7 +1601,7 @@ function elevChart() {
   const d = M.data;
   if (!d || !d.mp || !d.mp.length) return `<div id="mapElev"></div>`;
   const marks = (d.features || []).filter(f => f.kind !== "check_valve" && !f.landmark).map(f => ({x: f.mp, label: f.kind === "purge_start" ? "launch" : f.kind === "purge_end" ? "pig stop" : f.name}));
-  return lineChart({x: d.mp, xLabel: "Milepost", yLabel: "Elevation ft", series: [{name: "Ground elevation", y: d.elevation_ft, color: "var(--ground)", width: 1.6}], markers: marks});
+  return lineChart({x: d.mp, xLabel: "Milepost", yLabel: "Elevation ft", series: [{name: "Ground elevation", y: d.elevation_ft, color: "var(--ground)", width: 1.6}], markers: marks, x2: timeRow()});
 }
 async function loadElevChartIntoEmptyMap() {
   // without a route the map data has no profile; fetch the elevation view instead
