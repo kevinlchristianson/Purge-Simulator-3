@@ -29,6 +29,8 @@ from ..data.elevation import DEFAULT_SPACING_FT, ElevationError, describe_source
 from ..data.scenario import Scenario, ScenarioInputs, load_scenario, save_scenario
 from ..engine.config_builder import build_sim_config
 from ..engine.simulator import SimResults, simulate
+from ..engine.hgl import hydraulic_end_mp
+from ..engine.physics import fts_to_bph, mph_to_fts, pipe_area_ft2
 from ..engine.log_export import legacy_exit_schedule
 from . import paths
 
@@ -455,6 +457,33 @@ def results_summary(res: SimResults) -> dict:
         except Exception:
             pass
     return out
+
+
+def hydraulic_system_view(step, cfg, max_points: int = 1200) -> dict:
+    """Profile of one step from the launch out to the hydraulic endpoint (fluid_exit_mp),
+    for a purge that stops short of it: the purged segment plus the liquid-full line beyond
+    the pig stop, with the lowest liquid pressure past the stop against the slack floor."""
+    from ..engine.hgl import compute_hgl
+    h = compute_hgl(step, cfg, full_system=True)
+    idx = downsample_idx(len(h.mp), max_points)
+    floor = float(getattr(cfg, "slack_floor_psig", 25.0))
+    past = np.where((h.mp > cfg.purge_end_mp + 1e-6) & ~h.is_gas)[0]
+    low = None
+    if past.size:
+        k = past[int(np.argmin(h.pressure_psig[past]))]
+        p = float(h.pressure_psig[k])
+        low = {"mp": _f(h.mp[k]), "psig": _f(p, 1), "elevation_ft": _f(h.elevation_ft[k], 0),
+               "below_floor": bool(p < floor - 0.05)}
+    # the lowest point past the stop must stay in the downsampled grid, or the chart hides it
+    if past.size:
+        idx = sorted(set(idx) | {int(past[int(np.argmin(h.pressure_psig[past]))])})
+    return {
+        "mp": [_f(h.mp[i]) for i in idx],
+        "elevation_ft": [_f(h.elevation_ft[i], 1) for i in idx],
+        "pressure_psig": [_f(h.pressure_psig[i], 1) for i in idx],
+        "is_gas": [bool(h.is_gas[i]) for i in idx],
+        "downstream_low": low,
+    }
 
 
 def results_series(res: SimResults, max_points: int = 1500) -> dict:
@@ -997,6 +1026,7 @@ class Workspace:
             j_idx = downsample_idx(len(cfg.mop_joints), max_points)
             mop_mp = [_f(cfg.mop_joints[i].mp) for i in j_idx]
             mop_p = [_f(cfg.mop_joints[i].mop_psig, 1) for i in j_idx]
+        hyd_end = hydraulic_end_mp(cfg)
         return {
             "step_index": step_index,
             "fluid_sg": _f(cfg.fluid_sg, 4),
@@ -1015,6 +1045,16 @@ class Workspace:
             "pressure_psig": [_f(h.pressure_psig[i], 1) for i in idx],
             "is_gas": [bool(h.is_gas[i]) for i in idx],
             "mop_mp": mop_mp, "mop_psig": mop_p,
+            "pig_stop_mp": _f(cfg.purge_end_mp), "hydraulic_end_mp": _f(hyd_end),
+            # rate floaters on the profile chart: N2 injection and liquid flow, and their maxima
+            "injection_scfm": _f(max(0.0, step.injection_scfm or 0.0), 0),
+            "injection_max_scfm": _f(max(1.0, getattr(cfg, "max_injection_scfm", 5000.0) or 5000.0), 0),
+            "flow_bph": _f(fts_to_bph(mph_to_fts(max(0.0, step.pig_speed_mph)), pipe_area_ft2(*cfg.pipe_geometry.od_wt_at(step.pig_mp))), 0),
+            "flow_max_bph": _f(fts_to_bph(mph_to_fts(max(getattr(cfg, "max_speed_mph", 5.0) or 5.0, 1.0)),
+                                          pipe_area_ft2(*cfg.pipe_geometry.od_wt_at(cfg.purge_start_mp))), 0),
+            "slack_floor_psig": _f(getattr(cfg, "slack_floor_psig", 25.0), 1),
+            # the whole hydraulic system out to the endpoint, when the purge stops short of it
+            "system": (hydraulic_system_view(step, cfg, max_points) if hyd_end is not None else None),
             "stations": [{"mp": _f(s["mp"]), "name": s.get("name", ""), "status": s.get("status", ""),
                           "discharge_psig": _f(s.get("discharge_psig"), 1)}
                          for s in step.station_pressures],

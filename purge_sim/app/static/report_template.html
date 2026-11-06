@@ -13,7 +13,7 @@
   /* Brand (Settings > Branding): defaults are EnerMech; the page script sets the chosen brand. */
   --brand-primary: #00489a; --brand-mid: #084766; --brand-secondary: #128d36; --brand-highlight: #23a63d;
   --good: #1a7f37; --warn: #9a6700; --bad: #cf222e;
-  --gas: #00489a; --liquid: #1e9638; --mop: #cf222e; --ground: #8c7a5b; --hgl: #0e7c86; --s2: #d4580b; --s4: #8250df;
+  --gas: #00489a; --liquid: #1e9638; --mop: #cf222e; --ground: #8c7a5b; --hgl: #0e7c86; --s2: #d4580b; --s4: #8250df; --flow: #bf3989;
   --grid: #e6e9ee; --shadow: 0 1px 3px rgba(16,24,40,.08);
 }
 @media (prefers-color-scheme: dark) {
@@ -21,7 +21,7 @@
     --bg: #0f1318; --panel: #161b22; --panel-2: #1c232c; --border: #2d3540;
     --text: #e6edf3; --muted: #9aa6b4; --accent: #6ea8fe; --hero-shade: rgba(0,0,0,.28); --hero-text: #e6edf3;
     --good: #3fb950; --warn: #d29922; --bad: #f85149;
-    --gas: #5b9cf0; --liquid: #3cc35a; --mop: #f85149; --ground: #b3a17e; --hgl: #39c5cf; --s2: #f0883e; --s4: #a371f7;
+    --gas: #5b9cf0; --liquid: #3cc35a; --mop: #f85149; --ground: #b3a17e; --hgl: #39c5cf; --s2: #f0883e; --s4: #a371f7; --flow: #db61a2;
     --grid: #232a33; --shadow: none;
   }
 }
@@ -29,7 +29,7 @@
   --bg: #0f1318; --panel: #161b22; --panel-2: #1c232c; --border: #2d3540;
   --text: #e6edf3; --muted: #9aa6b4; --accent: #6ea8fe; --hero-shade: rgba(0,0,0,.28); --hero-text: #e6edf3;
   --good: #3fb950; --warn: #d29922; --bad: #f85149;
-  --gas: #5b9cf0; --liquid: #3cc35a; --mop: #f85149; --ground: #b3a17e; --hgl: #39c5cf; --s2: #f0883e; --s4: #a371f7;
+  --gas: #5b9cf0; --liquid: #3cc35a; --mop: #f85149; --ground: #b3a17e; --hgl: #39c5cf; --s2: #f0883e; --s4: #a371f7; --flow: #db61a2;
   --grid: #232a33; --shadow: none;
 }
 * { box-sizing: border-box; }
@@ -133,6 +133,13 @@ footer { color: var(--muted); font-size: 12.5px; padding: 18px 0 34px; }
       <div class="chart" id="pfChart"></div>
       <div id="pfStations" class="scroll"></div>
     </div>
+    <div class="card" id="sysCard" hidden>
+      <h3 id="sysTitle" style="margin:0 0 6px"></h3>
+      <p class="small muted" id="sysIntro" style="margin:0 0 8px"></p>
+      <div class="readout" id="sysReadout"></div>
+      <div class="legend" id="sysLegend"></div>
+      <div class="chart" id="sysChart"></div>
+    </div>
   </section>
   <section id="charts"><h2>Charts</h2>
     <div class="chartopts noprint">
@@ -203,7 +210,8 @@ const tickFmt = t => fmt(t, Math.abs(t) < 10 && t % 1 ? 1 : 0);
 const css = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 
 // opts: {x, series: [{name, y, color, axis: "left"|"right"|"elev", dash, width, nd, unit}], xLabel, yLabel, y2Label, elevLabel,
-//        zeroBase, markers: [{x, label, name, color, solid, dash, row}], height}
+//        zeroBase, markers: [{x, label, name, color, solid, dash, row}], height,
+//        floaters: [{side: "left"|"right", frac (0..1 of its max), label, color, shape: "tri"|"dot"}]}
 // "elev" is a feet axis on the right, outside the "right" axis when a chart has both.
 function lineChart(el, opts) {
   const W = Math.max(320, el.clientWidth || 900), H = opts.height || Math.round(Math.min(320, Math.max(220, W * 0.36)));
@@ -260,6 +268,17 @@ function lineChart(el, opts) {
     const c = mk.color || "var(--muted)";
     g += `<line x1="${sx(mk.x)}" x2="${sx(mk.x)}" y1="${m.t}" y2="${H - m.b}" stroke="${c}" stroke-dasharray="${mk.solid ? "" : mk.dash || "3 3"}" stroke-width="${mk.solid ? 2 : mk.width || 1}"/>`;
     if (mk.label) g += `<text x="${sx(mk.x) + 4}" y="${m.t + 11 + (mk.row || 0) * 12}" style="fill:${c}">${esc(mk.label)}</text>`;
+  }
+  // rate floaters: a gauge track at each edge of the plot, 0 at the bottom, max at 80% up
+  for (const fl of opts.floaters || []) {
+    const left = fl.side !== "right", x = left ? m.l + 12 : W - m.r - 12;
+    const y0 = H - m.b - 6, y1 = m.t + (H - m.t - m.b) * 0.14, y = y0 - Math.max(0, Math.min(1, fl.frac || 0)) * (y0 - y1);
+    g += `<line x1="${x}" x2="${x}" y1="${y0}" y2="${y1}" stroke="${fl.color}" stroke-opacity=".18" stroke-width="6" stroke-linecap="round"/>`;
+    g += fl.shape === "tri" ? `<path d="M${x} ${y - 7} L${x + 7} ${y + 5} L${x - 7} ${y + 5} Z" fill="${fl.color}" stroke="var(--panel)" stroke-width="1.2"/>`
+                            : `<circle cx="${x}" cy="${y}" r="6.5" fill="${fl.color}" stroke="var(--panel)" stroke-width="1.2"/>`;
+    const tw = fl.label.length * 6.4 + 14, bx = left ? x + 12 : x - 12 - tw;
+    g += `<rect x="${bx}" y="${y - 10}" width="${tw}" height="20" rx="5" fill="var(--panel)" fill-opacity=".94" stroke="${fl.color}"/>`
+      + `<text x="${bx + tw / 2}" y="${y + 4}" text-anchor="middle" style="fill:${fl.color};font-weight:600">${esc(fl.label)}</text>`;
   }
   g += `<line class="hair" x1="0" x2="0" y1="${m.t}" y2="${H - m.b}" stroke="var(--muted)" visibility="hidden"/>`;
   el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="${esc(opts.title || "")}">${g}</svg><div class="tip"></div>`;
@@ -359,32 +378,66 @@ $("#optMarks").onchange = () => { setPref("marks", $("#optMarks").checked ? "1" 
 
 // ---------------------------------------------------------------- pipeline profile
 let frame = Math.max(0, Math.floor((P.frames.length - 1) / 2));
-function drawProfile() {
-  const f = P.frames[frame]; if (!f) { $("#pfChart").innerHTML = `<p class="muted small">No profile data</p>`; return; }
+// One moment of the run on a milepost grid G ({mp, elev, mop}); f carries that grid's pressures.
+function rateFloaters(f) {   // N2 injection and liquid flow at this moment, as in the GIF
+  if (f.inj == null && f.bph == null) return [];
+  return [{side: "left", shape: "tri", color: "var(--good)", frac: (f.inj || 0) / (P.inj_max || 1), label: `N2 injection ${fmt(f.inj)} SCFM`},
+          {side: "right", shape: "dot", color: "var(--flow)", frac: (f.bph || 0) / (P.flow_max || 1), label: `Liquid flow ${fmt(f.bph)} BPH`}];
+}
+function profileChart(el, legendEl, G, f, pig, extra, markers, title, rates) {
   const gx = [], gy = [], lx = [], ly = [];
-  P.mp.forEach((x, i) => { if (x <= f.pig) { gx.push(x); gy.push(f.p[i]); } else { lx.push(x); ly.push(f.p[i]); } });
-  if (f.gas_end != null) { gx.push(f.pig); gy.push(f.gas_end); }
-  if (f.liq_start != null) { lx.unshift(f.pig); ly.unshift(f.liq_start); }
+  G.mp.forEach((x, i) => { if (x <= pig) { gx.push(x); gy.push(f.p[i]); } else { lx.push(x); ly.push(f.p[i]); } });
+  if (f.gas_end != null) { gx.push(pig); gy.push(f.gas_end); }
+  if (f.liq_start != null) { lx.unshift(pig); ly.unshift(f.liq_start); }
   const series = [
     {name: "N2 pressure (behind pig)", x: gx, y: gy, color: "var(--gas)", width: 2.2, unit: "psig"},
     {name: "Liquid pressure (ahead of pig)", x: lx, y: ly, color: "var(--liquid)", width: 2.2, unit: "psig"}];
-  if (P.mop) series.push({name: "MOP", x: P.mp, y: P.mop, color: "var(--mop)", dash: "6 4", width: 1.3, unit: "psig"});
-  series.push({name: "Elevation", x: P.mp, y: P.elev, color: "var(--ground)", axis: "right", width: 1.3, unit: "ft", fill: true});
+  if (G.mop) series.push({name: "MOP", x: G.mp, y: G.mop, color: "var(--mop)", dash: "6 4", width: 1.3, unit: "psig"});
+  series.push({name: "Elevation", x: G.mp, y: G.elev, color: "var(--ground)", axis: "right", width: 1.3, unit: "ft", fill: true});
   // hydraulic grade line ahead of the pig: ground + liquid pressure as head (0.433 psi/ft x SG)
   const grad = (P.sg || 1) * 62.4 / 144, hx = [], hy = [];
-  P.mp.forEach((x, i) => { if (x > f.pig && f.p[i] != null && P.elev[i] != null) { hx.push(x); hy.push(P.elev[i] + f.p[i] / grad); } });
+  G.mp.forEach((x, i) => { if (x > pig && f.p[i] != null && G.elev[i] != null) { hx.push(x); hy.push(G.elev[i] + f.p[i] / grad); } });
   if (hx.length) series.push({name: "Hydraulic grade line", x: hx, y: hy, color: "var(--hgl)", axis: "right", width: 2, dash: "7 3", unit: "ft"});
+  series.push(...extra(lx, ly));
+  legendEl.innerHTML = legend(series.concat(markerLegend().filter(k => k.name !== "Pump station")));
+  lineChart(el, {x: G.mp, xLabel: "Milepost", yLabel: "psig", y2Label: "Elevation / HGL (ft)", series, markers, title, headLock: {axis: "right", grad},
+                 floaters: rateFloaters(rates || f)});
+}
+function drawProfile() {
+  const f = P.frames[frame]; if (!f) { $("#pfChart").innerHTML = `<p class="muted small">No profile data</p>`; return; }
   const markers = [{x: f.pig, label: "Pig", color: "var(--text)", solid: true}]
     .concat((f.stations || []).map((s, k) => ({x: s.mp, label: s.name, row: 1 + (k % 2), name: "Pump station: " + s.name})))
     .concat(facilityMarkers("mp", 1).filter(mk => !mk.name.startsWith("Pump station")));
-  $("#pfLegend").innerHTML = legend(series.concat(markerLegend().filter(k => k.name !== "Pump station")));
-  lineChart($("#pfChart"), {x: P.mp, xLabel: "Milepost", yLabel: "psig", y2Label: "Elevation / HGL (ft)", series, markers, title: "Pipeline profile", headLock: {axis: "right", grad}});
+  profileChart($("#pfChart"), $("#pfLegend"), P, f, f.pig, () => [], markers, "Pipeline profile");
   $("#readout").innerHTML = `<b>${fmt(f.t, 1)} hr</b> into the run · pig at <b>MP ${fmt(f.pig, 2)}</b> moving <b>${fmt(f.speed, 2)} mph</b> · N2 drive <b>${fmt(f.face)} psig</b> · exit <b>${fmt(f.exit_psig)} psig</b> at MP ${fmt(f.exit_mp, 2)}`
     + (f.added > 0 ? ` (holding ${fmt(f.added)} psi over its ${fmt(f.exit_min)} psig minimum)` : "")
     + (f.over ? ` · <span style="color:var(--bad)">over max speed</span>` : "")
     + (f.slack ? ` · <span style="color:var(--bad)">slack-line risk</span>` : "");
   $("#pfStations").innerHTML = (f.stations || []).length ? `<table style="margin-top:8px"><thead><tr><th>Pump station</th><th class="n">MP</th><th>Status at this moment</th></tr></thead><tbody>`
     + f.stations.map(s => `<tr><td>${esc(s.name)}</td><td class="n">${fmt(s.mp, 2)}</td><td><span class="pill ${esc(s.status)}">${esc(s.status)}</span></td></tr>`).join("") + `</tbody></table>` : "";
+  drawSystem(f);
+}
+// The purge stops short of the hydraulic endpoint: the same moment again over the whole line out
+// to it, so the high points past the pig stop show whether the liquid over them holds.
+function drawSystem(f) {
+  const Y = P.system, sf = Y && Y.frames[frame];
+  $("#sysCard").hidden = !sf; if (!sf) return;
+  const fl = Y.floor != null ? Y.floor : 25, lo = sf.low;
+  $("#sysTitle").textContent = `Whole hydraulic system, launch to the hydraulic endpoint at MP ${fmt(Y.end_mp, 2)}`;
+  $("#sysIntro").textContent = `The purge stops at MP ${fmt(Y.stop_mp, 2)}; the liquid beyond it stays in the line out to the endpoint. Same moment as the chart above. The dotted red line is the ${fmt(fl)} psig slack floor, the lowest liquid pressure allowed at a high point.`;
+  $("#sysReadout").innerHTML = lo ? `Past the pig stop the lowest liquid pressure is <b${lo.below ? ' style="color:var(--bad)"' : ""}>${fmt(lo.psig)} psig</b> at MP ${fmt(lo.mp, 2)} (ground ${fmt(lo.elev)} ft) · `
+    + (lo.below ? `<span style="color:var(--bad)">below the slack floor: that high point is slacking</span>` : `above the slack floor: no slack downstream`) : "";
+  const extra = (lx, ly) => {
+    const out = [{name: `Slack floor (${fmt(fl)} psig)`, x: [Y.mp[0], Y.mp[Y.mp.length - 1]], y: [fl, fl], color: "var(--bad)", dash: "2 3", width: 1, unit: "psig"}];
+    const bx = [], by = []; lx.forEach((x, i) => { if (ly[i] != null && ly[i] < fl - 0.05) { bx.push(x); by.push(ly[i]); } });
+    if (bx.length) out.push({name: "Below slack floor", x: bx, y: by, color: "var(--bad)", dots: true, unit: "psig"});
+    return out;
+  };
+  const markers = [{x: f.pig, label: "Pig", color: "var(--text)", solid: true},
+                   {x: Y.stop_mp, label: "Pig stop", color: "var(--muted)", dash: "6 3", width: 1.4},
+                   {x: Y.end_mp, color: "var(--muted)", dash: "6 3", width: 1.4, name: "Hydraulic endpoint"}]
+    .concat((f.stations || []).map((s, k) => ({x: s.mp, label: s.name, row: 2 + (k % 2), name: "Pump station: " + s.name})));
+  profileChart($("#sysChart"), $("#sysLegend"), Y, sf, f.pig, extra, markers, "Whole hydraulic system", f);
 }
 const slider = $("#step");
 slider.max = Math.max(0, P.frames.length - 1); slider.value = frame;
