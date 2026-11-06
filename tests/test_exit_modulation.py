@@ -192,7 +192,7 @@ def test_reports_carry_the_exit_pressure_and_overspeed(tmp_path):
     assert "exit_psig,exit_min_psig,endpoint_added_psi," in txt and ",slack_line,overspeed,overspeed_mph," in txt
     assert "meter_valve" not in txt and "fixed at 50.0 psig" in txt and "Over max speed:" in txt
     html = render_html(build_data(res, "t", inputs=ws.scenario.inputs))
-    assert "Endpoint Pressure (psi)" in html and '"flag":"over"' in html and '"has_endpoint":true' in html
+    assert "Exit Pressure (psi)" in html and '"flag":"over"' in html and '"has_endpoint":true' in html
     openpyxl = pytest.importorskip("openpyxl")
     from purge_sim.engine.formatted_report import export_formatted_report
     from purge_sim.engine.purge_report import export_purge_report
@@ -205,10 +205,10 @@ def test_reports_carry_the_exit_pressure_and_overspeed(tmp_path):
     inputs = {r[0].value: r[1].value for r in wb["Simulation Inputs"].iter_rows(min_row=3) if r[0].value}
     assert inputs["Exit Behavior"].startswith("fixed") and "Throttle Down (miles from end)" not in inputs
     client = openpyxl.load_workbook(str(tmp_path / "client.xlsx"))["Purge Report"]
-    assert "Endpoint Pressure (psi)" in [c.value for c in client[17]]
+    assert "Exit Pressure (psi)" in [c.value for c in client[17]]
 
 
-def test_client_table_keeps_its_layout_when_the_exit_never_modulates():
+def test_client_table_shows_exit_pressure_when_the_exit_never_modulates():
     ws = Workspace()
     ws.load(SHORT)
     ws.update_inputs({"max_speed_mph": 50.0})      # nothing ever pushes the pig that fast
@@ -217,8 +217,8 @@ def test_client_table_keeps_its_layout_when_the_exit_never_modulates():
     assert s["endpoint_throttling_steps"] == 0 and s["overspeed_steps"] == 0
     data = build_data(res, "t", inputs=ws.scenario.inputs)
     assert not data["purge"]["has_endpoint"]
-    assert [c["h"] for c in data["purge"]["cols"]][:8] == ["Miles", "Elevation (ft)", "Elapsed Time (hr)", "Drive Pressure (psi)",
-                                                           "Friction Loss (psi)", "Injection Rate (SCFM)", "Cumulative N2 (SCF)",
+    assert [c["h"] for c in data["purge"]["cols"]][:9] == ["Miles", "Elevation (ft)", "Elapsed Time (hr)", "Drive Pressure (psi)",
+                                                           "Friction Loss (psi)", "Exit Pressure (psi)", "Injection Rate (SCFM)", "Cumulative N2 (SCF)",
                                                            "Pig Speed (mph)"]
     assert data["basis"][6][0] == "Endpoint pressure" and "modulating up to the MOP at the exit" in data["basis"][6][1]
 

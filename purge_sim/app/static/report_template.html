@@ -418,7 +418,7 @@ function drawPurgeTable() {
   $("#purgeTable").innerHTML = `<thead><tr>${head.join("")}</tr></thead><tbody>${rows.join("")}</tbody>`;
 }
 $("#featToggle").hidden = !PR.has_features;
-if (PR.has_endpoint) { $("#endpointNote").hidden = false; $("#endpointNote").textContent = `Endpoint Pressure is what the receiving end (pump suction, BPCV or tank inlet) holds at that point to keep the pig at or under ${fmt(S.max_speed_mph, 2)} mph; it rises above the ${fmt(S.exit_min_psig)} psig minimum where the N2 column would otherwise push the pig faster.`; }
+if (PR.has_endpoint) { $("#endpointNote").hidden = false; $("#endpointNote").textContent = `Exit Pressure is what the receiving end (pump suction, BPCV or tank inlet) holds at that point to keep the pig at or under ${fmt(S.max_speed_mph, 2)} mph; it rises above the ${fmt(S.exit_min_psig)} psig minimum where the N2 column would otherwise push the pig faster.`; }
 $("#showFeat").checked = PR.show_features;
 $("#showFeat").onchange = drawPurgeTable;
 drawPurgeTable();
