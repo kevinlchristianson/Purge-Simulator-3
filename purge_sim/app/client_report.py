@@ -27,7 +27,7 @@ from ..engine.log_export import exit_condition_text, injection_text
 from ..engine.purge_report import _deployed_boosters, purge_report_rows, report_features
 from ..engine.simulator import SimResults
 from .. import branding
-from . import paths
+from . import paths, report_static
 
 GRID_POINTS = 1000     # milepost grid the profile frames share
 PROFILE_FRAMES = 60    # pipeline-profile snapshots on the page's time slider
@@ -238,8 +238,11 @@ def render_html(data: dict) -> str:
     # occurs inside JSON strings, where \u003c reads back as the same character).
     blob = json.dumps(data, separators=(",", ":"), allow_nan=False).replace("<", "\\u003c")
     title = (data.get("title") or "Purge simulation").replace("&", "&amp;").replace("<", "&lt;")
-    fill = {"__REPORT_TITLE__": title, "__REPORT_DATA__": blob}
-    return re.sub("__REPORT_(?:TITLE|DATA)__", lambda m: fill[m.group(0)], tpl)   # one pass
+    # Text, tables and still charts go straight into the html (report_static), so the page
+    # reads in phone mail previews that run no scripts.
+    fill = {f"__REPORT_{k}__": v for k, v in report_static.fill(data).items()}
+    fill.update({"__REPORT_TITLE__": title, "__REPORT_DATA__": blob})
+    return re.sub("__REPORT_[A-Z0-9_]+__", lambda m: fill.get(m.group(0), m.group(0)), tpl)   # one pass
 
 
 def export_client_html(res: SimResults, path: str, scenario_name: str, inputs=None,
