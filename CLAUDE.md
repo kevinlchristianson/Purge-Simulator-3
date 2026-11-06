@@ -87,7 +87,11 @@ purge_sim/
     mop_check.py       — per-joint pressure vs MOP every timestep, from the HGL
     hgl.py             — Hydraulic Grade Line: full-route pressure profile at one timestep
                          (gas side behind pig, liquid side ahead); feeds the profile chart,
-                         the MOP check, and optimization/debugging
+                         the MOP check, and optimization/debugging. compute_hgl(full_system=True)
+                         runs past the pig stop to the hydraulic endpoint (fluid_exit_mp): the
+                         second "whole hydraulic system" chart the Profile/Map/Charts tabs, client
+                         page (profile.system) and GIF (stacked frames) show when the purge stops
+                         short of it
     roadmap.py         — pre-run pressure "corridor": ceiling(x)/floor(x) envelope the pig
                          must stay inside at every milepost, computed once before the sim runs
     backward_pass.py   — theoretical minimum-N2 floor, walking backward from the endpoint
