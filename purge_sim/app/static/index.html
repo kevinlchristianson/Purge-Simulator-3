@@ -1147,7 +1147,7 @@ function renderCharts() {
   const sm = S.results.summary || {};
   const over = (s.overspeed || []).some(Boolean) ? [{name: "Over max speed", y: s.pig_speed_mph.map((v, i) => s.overspeed[i] ? v : null), color: "var(--bad)", dots: true}] : [];
   const maxLine = sm.max_speed_mph != null ? [{name: `Max speed (${sm.max_speed_mph} mph)`, y: s.pig_mp.map(() => sm.max_speed_mph), color: "var(--muted)", dash: "6 3", width: 1}] : [];
-  const exitMin = (s.endpoint_added_psi || []).some(v => v > 0.5) ? [{name: "Exit minimum", y: s.exit_min_psig, color: "var(--s3)", dash: "1 3", width: 1.2}] : [];
+  const exitMin = (s.exit_psig || []).some((v, i) => v - ((s.exit_min_psig || [])[i] ?? v) > 0.5) ? [{name: "Exit minimum", y: s.exit_min_psig, color: "var(--s3)", dash: "1 3", width: 1.2}] : [];
   el.innerHTML =
     `<div class="card" style="display:flex;gap:16px;align-items:center;flex-wrap:wrap">
        <label class="small"><input type="checkbox" id="chElev" ${showElev ? "checked" : ""} ${hasElev ? "" : "disabled"}> Show elevation profile on each chart (right axis, ft)</label>
@@ -1232,7 +1232,13 @@ function renderProfile() {
   drawProfile();
 }
 // what the exit is doing at this step: holding the pig back, or out of room
-const exitNote = p => (p.endpoint_added_psi > 0.5 ? ` · exit holding +${fmt(p.endpoint_added_psi)} psi over its ${fmt(p.exit_min_psig)} psig minimum` : "")
+const exitNote = p => {
+  const up = (p.exit_psig ?? 0) - (p.exit_min_psig ?? p.exit_psig ?? 0);
+  if (!(up > 0.5)) return "";
+  const why = (p.peak_hold_psi || 0) > 0.5 && !((p.endpoint_added_psi || 0) > 0.5) ? " to keep the high point ahead full" : "";
+  return ` · exit holding +${fmt(up)} psi over its ${fmt(p.exit_min_psig)} psig minimum${why}` +
+    ((p.peak_hold_short_psi || 0) > 0 ? ` · <span style="color:var(--bad)">exit can't hold ${fmt(p.peak_hold_short_psi)} psi more; crest goes slack</span>` : "");
+}
   + (p.overspeed ? ` · <span style="color:var(--bad)">over max speed by ${fmt(p.overspeed_mph, 2)} mph</span>` : "");
 async function drawProfile() {
   let p; try { p = await api("/api/results/profile?step=" + S.profileStep); } catch (e) { return; }

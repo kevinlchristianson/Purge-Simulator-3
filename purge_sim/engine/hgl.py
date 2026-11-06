@@ -148,7 +148,9 @@ def compute_hgl(step, cfg, elevation_at=None, full_system: bool = False) -> HGLP
         elevation_at = elevation_lookup(elev_prof)
 
     grad = cfg.fluid_sg * 62.4 / 144.0                   # psi per ft of head
-    v_fts = mph_to_fts(max(step.pig_speed_mph, cfg.min_speed_mph))
+    # friction at the pig's real speed: flooring it at min speed overstated friction while the
+    # pig ran slower and drew high points ahead as slack the solver never had
+    v_fts = mph_to_fts(max(0.0, step.pig_speed_mph))
 
     start, end = cfg.purge_start_mp, cfg.purge_end_mp
     pig_mp = float(step.pig_mp)

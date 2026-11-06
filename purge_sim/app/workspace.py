@@ -409,6 +409,11 @@ def results_summary(res: SimResults) -> dict:
             "endpoint_added_psi_max": _f(most.endpoint_added_psi, 1) if most else 0.0,
             "endpoint_added_psi_max_mp": _f(most.pig_mp) if most else None,
             "exit_psig_max": _f(max(s.exit_psig for s in steps), 1),
+            # back-pressure the exit holds to keep a crest ahead at the slack floor (included
+            # in exit_psig), and steps it couldn't hold enough (the crest goes slack)
+            "exit_peak_hold_steps": sum(1 for s in steps if s.peak_hold_psi > 0.5),
+            "exit_peak_hold_psi_max": _f(max((s.peak_hold_psi for s in steps), default=0.0), 1),
+            "exit_peak_hold_short_steps": sum(1 for s in steps if s.peak_hold_short_psi > 0.0),
             "overspeed_steps": len(over),
             "overspeed_mph_max": _f(fastest.overspeed_mph, 2) if fastest else 0.0,
             "overspeed_mp_range": [_f(over[0].pig_mp), _f(over[-1].pig_mp)] if over else None,
@@ -1031,6 +1036,7 @@ class Workspace:
             "pig_face_psig": _f(step.pig_face_psig, 1),
             "exit_mp": _f(step.exit_mp), "exit_psig": _f(step.exit_psig, 1),
             "exit_min_psig": _f(step.exit_min_psig, 1), "endpoint_added_psi": _f(step.endpoint_added_psi, 1),
+            "peak_hold_psi": _f(step.peak_hold_psi, 1), "peak_hold_short_psi": _f(step.peak_hold_short_psi, 1),
             "overspeed": bool(step.overspeed), "overspeed_mph": _f(step.overspeed_mph, 2),
             "exit_description": step.exit_description,
             "slack_line_risk": bool(step.slack_line_risk),

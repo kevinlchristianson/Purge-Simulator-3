@@ -344,7 +344,7 @@ const elevSeries = name => $("#optElev").checked && hasElev
   ? [{name, y: SE.pig_elevation_ft, color: "var(--ground)", axis: "elev", width: 1.2, fill: true, unit: "ft"}] : [];
 
 // the exit's work: where it rose above its minimum to hold max speed, and where it could not
-const throttled = (SE.endpoint_added_psi || []).some(v => v > 0.5), overAny = (SE.overspeed || []).some(Boolean);
+const throttled = (SE.exit_psig || []).some((v, i) => v - ((SE.exit_min_psig || [])[i] ?? v) > 0.5), overAny = (SE.overspeed || []).some(Boolean);
 const exitMinSeries = throttled ? [{name: "Exit minimum", y: SE.exit_min_psig, color: "var(--liquid)", dash: "1 3", width: 1.2, unit: "psig"}] : [];
 const overSeries = overAny ? [{name: "Over max speed", y: SE.pig_speed_mph.map((v, i) => SE.overspeed[i] ? v : null), color: "var(--bad)", dots: true, nd: 2, unit: "mph"}] : [];
 const maxSpeedSeries = S.max_speed_mph != null ? [{name: `Max speed (${S.max_speed_mph} mph)`, y: SE.pig_mp.map(() => S.max_speed_mph), color: "var(--muted)", dash: "6 3", width: 1, nd: 2, unit: "mph"}] : [];
@@ -471,7 +471,7 @@ function drawPurgeTable() {
   $("#purgeTable").innerHTML = `<thead><tr>${head.join("")}</tr></thead><tbody>${rows.join("")}</tbody>`;
 }
 $("#featToggle").hidden = !PR.has_features;
-if (PR.has_endpoint) { $("#endpointNote").hidden = false; $("#endpointNote").textContent = `Exit Pressure is what the receiving end (pump suction, BPCV or tank inlet) holds at that point to keep the pig at or under ${fmt(S.max_speed_mph, 2)} mph; it rises above the ${fmt(S.exit_min_psig)} psig minimum where the N2 column would otherwise push the pig faster.`; }
+if (PR.has_endpoint) { $("#endpointNote").hidden = false; $("#endpointNote").textContent = `Exit Pressure is what the receiving end (pump suction, BPCV or tank inlet) holds. It rises above the ${fmt(S.exit_min_psig)} psig minimum to keep the pig at or under ${fmt(S.max_speed_mph, 2)} mph, and to hold the column back where a high point ahead would otherwise drop below the slack floor as the liquid past it runs down to the exit.`; }
 $("#showFeat").checked = PR.show_features;
 $("#showFeat").onchange = drawPurgeTable;
 drawPurgeTable();

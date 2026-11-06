@@ -163,7 +163,7 @@ def _sheet_purge_report(wb, results, cfg, scenario_name, pi, rows):
         cols.insert(1, "Feature"); keys.insert(1, "feature"); fmts.insert(1, "@")
     # The exit pressure note explains the column when the exit actually modulated during this
     # run (or the pig ran over max speed).
-    has_endpoint = any((r.get("endpoint_added_psi") or 0.0) > 0.5 or r.get("overspeed") for r in rows)
+    has_endpoint = any(((r.get("exit_psi") or 0.0) - (r.get("exit_min_psi") if r.get("exit_min_psi") is not None else (r.get("exit_psi") or 0.0))) > 0.5 or r.get("overspeed") for r in rows)
     for nm in bnames:
         cols += [f"{nm} Booster Flow (SCFM)", f"{nm} Booster Cum Flow (SCF)"]
         keys += [f"__bflow__{nm}", f"__bcum__{nm}"]
@@ -276,9 +276,10 @@ def _sheet_purge_report(wb, results, cfg, scenario_name, pi, rows):
         note_row += 1
     if has_endpoint:
         ws.cell(row=note_row, column=1, value=(
-            "EXIT PRESSURE: the pressure the receiving end (pump suction, BPCV or tank inlet) holds to keep "
-            f"the pig at or under {cfg.max_speed_mph:g} mph; it rises above the {cfg.exit_pressure_run_psig:.0f} psig "
-            "minimum where the N2 column would otherwise push the pig faster.")).font = _F_ITAL
+            "EXIT PRESSURE: the pressure the receiving end (pump suction, BPCV or tank inlet) holds. It rises "
+            f"above the {cfg.exit_pressure_run_psig:.0f} psig minimum to keep the pig at or under "
+            f"{cfg.max_speed_mph:g} mph, and to hold the column back where a high point ahead would otherwise "
+            "drop below the slack floor as the liquid past it runs down to the exit.")).font = _F_ITAL
         ws.merge_cells(f"A{note_row}:{last_col}{note_row}")
         note_row += 1
         over = [s for s in results.steps if s.overspeed]

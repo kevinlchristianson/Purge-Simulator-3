@@ -299,14 +299,20 @@ class SimStep:
     meter_valve_active: bool = False      # pig at/above target speed (surplus drive)
 
     # Exit modulation (see SimConfig.exit_behavior). exit_psig above is what the exit held
-    # this step = exit_min_psig + endpoint_added_psi; exit_max_psig is the most it could
-    # hold (inf = no limit known). overspeed: the exit ran out of room and the pig ran over
-    # max_speed_mph by overspeed_mph.
+    # this step = exit_min_psig + endpoint_added_psi + peak_hold_psi; exit_max_psig is the
+    # most it could hold (inf = no limit known). overspeed: the exit ran out of room and the
+    # pig ran over max_speed_mph by overspeed_mph. endpoint_added_psi is the max-speed
+    # throttle; peak_hold_psi is the back-pressure that keeps a crest ahead at the slack
+    # floor (the liquid past it would otherwise run away to the exit). peak_hold_short_psi:
+    # what the exit couldn't hold of that (fixed exit, or past its maximum); the crest goes
+    # slack and slack_line_risk is set.
     exit_min_psig: float = 0.0
     exit_max_psig: float = math.inf
     endpoint_added_psi: float = 0.0
     overspeed: bool = False
     overspeed_mph: float = 0.0
+    peak_hold_psi: float = 0.0
+    peak_hold_short_psi: float = 0.0
 
     # Liquid column flow regime at the pig's speed: Reynolds number and 'laminar' (< 2000),
     # 'transitional' (2000-4000) or 'turbulent'. Friction is Churchill (one smooth curve), so
@@ -1686,13 +1692,12 @@ def simulate(cfg: SimConfig, progress_cb: Optional[Callable[[float], None]] = No
             _ult_p  = cfg.exit_pressure_run_psig
         station_pressures = _compute_station_pressures(
             station_states, pig_mp, pig_face_psig,
-            pig_result.exit_psig, exit_mp, gas_profile,
+            pig_result.exit_psig - pig_result.peak_hold_psi, exit_mp, gas_profile,
             od_in, wt_in,
             cfg.fluid_sg, cfg.fluid_viscosity_cst, cfg.fluid_roughness_ft,
-            # Size the station hydraulics at the ACTUAL flow (pig speed, floored at min) so the
+            # Size the station hydraulics at the ACTUAL flow (the pig's speed) so the
             # suction/discharge are consistent with the friction the HGL is drawn at.
-            flow_bph=fts_to_bph(mph_to_fts(max(pig_result.pig_speed_mph, cfg.min_speed_mph)),
-                                area_ft2),
+            flow_bph=fts_to_bph(mph_to_fts(max(0.0, pig_result.pig_speed_mph)), area_ft2),
             elevation_at=elevation_at,
             ultimate_mp=_ult_mp, ultimate_psig=_ult_p,
             slack_floor_psig=cfg.slack_floor_psig,
@@ -1734,11 +1739,13 @@ def simulate(cfg: SimConfig, progress_cb: Optional[Callable[[float], None]] = No
             booster_states=booster_step_results,
             station_pressures=station_pressures,
             station_shutdown_events=shutdown_events,
-            slack_line_risk=pig_result.slack_line_risk,
+            slack_line_risk=pig_result.slack_line_risk or pig_result.peak_hold_short_psi > 0.0,
             meter_valve_active=pig_result.meter_valve_active,
             exit_min_psig=pig_result.exit_min_psig,
             exit_max_psig=exit_max,
             endpoint_added_psi=pig_result.endpoint_added_psi,
+            peak_hold_psi=pig_result.peak_hold_psi,
+            peak_hold_short_psi=pig_result.peak_hold_short_psi,
             overspeed=pig_result.overspeed,
             overspeed_mph=pig_result.overspeed_mph,
             scheduled_scfm=scheduled_scfm,

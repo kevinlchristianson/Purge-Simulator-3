@@ -99,6 +99,12 @@ class PigSolverResult:
     endpoint_added_psi: float = 0.0
     overspeed: bool = False
     overspeed_mph: float = 0.0
+    # Back-pressure the exit holds to keep a high point ahead full: when a crest, not the exit,
+    # sets the drive, the liquid past the crest would run away to the exit at its minimum, so
+    # the exit must hold the column back. exit_psig includes it. peak_hold_short_psi is what it
+    # needed but couldn't hold (past exit_max_psig): that crest goes slack, flagged.
+    peak_hold_psi: float = 0.0
+    peak_hold_short_psi: float = 0.0
 
     # Slack line flag
     slack_line_risk: bool = False
@@ -184,6 +190,23 @@ def solve_pig_speed(
         fpf = liquid_friction_loss_psi(1.0, D_ft, v_fts, cfg.sg, cfg.viscosity_cst, eps_ft)
         return float(_cl_base[0] + fpf * _cl_len[0])
 
+    def _exit_hold(v_fts: float, added_psi: float, drive_psig: float) -> tuple:
+        # What the exit really holds at this speed: the drive balances the column, so the
+        # pressure left at the exit is the drive minus friction and head to the exit. Above
+        # its minimum that is either the max-speed throttle (added_psi) or the hold that keeps
+        # the controlling crest at the slack floor. Returns (peak hold it holds, shortfall).
+        fpf = liquid_friction_loss_psi(1.0, D_ft, v_fts, cfg.sg, cfg.viscosity_cst, eps_ft)
+        res = _cl_base + fpf * _cl_len
+        peak_excess = max(0.0, float(np.max(res) - res[0]))
+        # at rest (or pushing less than the crest needs) the pig face caps it
+        peak_excess = min(peak_excess, max(0.0, drive_psig - float(res[0])))
+        if peak_excess <= added_psi + 1e-9:
+            return 0.0, 0.0
+        room = math.inf if exit_max_psig is None else max(0.0, exit_max_psig - exit_psig)
+        hold = min(peak_excess, room)
+        short = peak_excess - hold
+        return max(0.0, hold - added_psi), (short if short > 0.5 else 0.0)
+
     def _drive_available() -> float:
         # If BPCV constraint active (pig past BPCV in gas phase), drive is limited by BPCV.
         # Zero set point means BPCV is wide open — no constraint.
@@ -222,11 +245,14 @@ def solve_pig_speed(
             v_achievable = lo
 
         fric = liquid_friction_loss_psi(L_liq_ft, D_ft, v_achievable, cfg.sg, cfg.viscosity_cst, eps_ft)
+        hold, short = _exit_hold(v_achievable, 0.0, drive)
         return PigSolverResult(
             pig_speed_mph=fts_to_mph(v_achievable),
             pig_speed_fts=v_achievable,
             drive_psig=drive,
-            exit_psig=exit_psig,
+            exit_psig=exit_psig + hold,
+            peak_hold_psi=hold,
+            peak_hold_short_psi=short,
             exit_mp=exit_mp,
             exit_description=exit_description,
             liquid_friction_psi=fric,
@@ -301,12 +327,15 @@ def solve_pig_speed(
     fric = liquid_friction_loss_psi(L_liq_ft, D_ft, v_actual, cfg.sg, cfg.viscosity_cst, eps_ft)
     inj_scfm = scfm_from_pig_velocity(v_actual, area_ft2,
                                        psig_to_psia(pig_face_psig), cfg.temperature_f)
+    hold, short = _exit_hold(v_actual, added_psi, drive)
 
     return PigSolverResult(
         pig_speed_mph=fts_to_mph(v_actual),
         pig_speed_fts=v_actual,
         drive_psig=drive,
-        exit_psig=exit_psig + added_psi,
+        exit_psig=exit_psig + added_psi + hold,
+        peak_hold_psi=hold,
+        peak_hold_short_psi=short,
         exit_mp=exit_mp,
         exit_description=exit_description,
         liquid_friction_psi=fric,

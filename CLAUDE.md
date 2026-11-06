@@ -79,7 +79,11 @@ purge_sim/
                          to what it can hold (exit_max_pressure_psig / a station's
                          max_suction_psig / the BPCV's downstream-MOP maximum; default MOP at the
                          exit). Past that, or with exit_behavior 'fixed', the pig overspeeds and
-                         the step is flagged (SimStep.overspeed, endpoint_added_psi). Injection
+                         the step is flagged (SimStep.overspeed, endpoint_added_psi). When a crest
+                         ahead, not the exit, sets the drive, the exit also holds the column back so
+                         the crest stays at the slack floor: SimStep.peak_hold_psi, included in
+                         exit_psig (reports, charts, HGL label show it); what it can't hold
+                         (peak_hold_short_psi, e.g. a fixed exit) flags slack_line_risk. Injection
                          and station shutdowns read the exit's minimum, never the raised value,
                          so the N2 controller can't fight the throttle. The old taper/step/ramp
                          exit schedules are relics kept only so old scenarios load (the Inputs tab

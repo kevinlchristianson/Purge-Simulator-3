@@ -113,7 +113,7 @@ def _purge_table(res: SimResults, inputs=None, show_features: bool = False) -> d
     rows = purge_report_rows(res, features=feats)
     boosters = [n for n, _ in _deployed_boosters(res)]
     spec = list(_REPORT)
-    has_endpoint = any((row.get("endpoint_added_psi") or 0.0) > 0.5 or row.get("overspeed") for row in rows)
+    has_endpoint = any(((r.get("exit_psi") or 0.0) - (r.get("exit_min_psi") if r.get("exit_min_psi") is not None else (r.get("exit_psi") or 0.0))) > 0.5 or r.get("overspeed") for r in rows)
     cols = [{"h": c, "nd": nd} for c, _, nd in spec] + [{"h": f"{n} booster flow (SCFM)", "nd": 0} for n in boosters]
     out = []
     for row in rows:
@@ -181,7 +181,7 @@ def _profile(res: SimResults) -> dict:
         frames.append({
             "t": _r(s.t_hr, 2), "pig": _r(pig, 3), "speed": _r(s.pig_speed_mph, 2),
             "face": _r(s.pig_face_psig, 0), "exit_mp": _r(s.exit_mp, 2), "exit_psig": _r(s.exit_psig, 0),
-            "exit_min": _r(s.exit_min_psig, 0), "added": _r(s.endpoint_added_psi, 0), "over": bool(s.overspeed),
+            "exit_min": _r(s.exit_min_psig, 0), "added": _r(s.exit_psig - s.exit_min_psig, 0), "over": bool(s.overspeed),
             "slack": bool(s.slack_line_risk),
             "inj": _r(max(0.0, s.injection_scfm or 0.0), 0), "bph": _r(_flow_bph(cfg, s), 0),
             **_on_grid(h, grid, pig),
