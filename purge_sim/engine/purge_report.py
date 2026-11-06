@@ -903,6 +903,7 @@ def _sheet_raw_data(wb, results, cfg, scenario_name, max_rows=2000):
         ("Slack Line Risk",           lambda s: "YES" if s.slack_line_risk else "no", "@"),
         ("Exit Pressure Min (psi)",   lambda s: s.exit_min_psig,     "0.0"),
         ("Endpoint Added (psi)",      lambda s: s.endpoint_added_psi, "0.0"),
+        ("Crest Hold (psi)",          lambda s: s.peak_hold_psi,      "0.0"),
         ("Over Max Speed",            lambda s: "YES" if s.overspeed else "no", "@"),
         ("Over Max Speed (mph)",      lambda s: s.overspeed_mph,     "0.00"),
         ("Reynolds Number",           lambda s: getattr(s, "reynolds", 0.0), "#,##0"),

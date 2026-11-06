@@ -35,16 +35,19 @@ def legacy_exit_schedule(cfg) -> str:
 
 def exit_condition_text(cfg) -> str:
     """How the exit (nearest running pump suction, BPCV or tank inlet downstream of the pig)
-    holds its inlet pressure: the minimum, and how far it may rise to hold max pig speed."""
+    holds its inlet pressure: the minimum, and how far it may rise to hold max pig speed and
+    to hold the column back so a crest ahead stays full."""
     run_p = float(getattr(cfg, "exit_pressure_run_psig", 0.0))
     behavior = getattr(cfg, "exit_behavior", "modulating")
     if behavior == "fixed":
-        txt = f"fixed at {run_p:.1f} psig (the pig may run over max speed; flagged)"
+        txt = (f"fixed at {run_p:.1f} psig (it never holds the column back: the pig may run over "
+               f"max speed and a high point ahead may go slack; both flagged)")
     else:
         mx = getattr(cfg, "exit_max_pressure_psig", None)
         lim = f"{float(mx):.0f} psig" if mx is not None else "the MOP at the exit"
         txt = (f"holds {run_p:.1f} psig minimum, modulating up to {lim} to hold "
-               f"{getattr(cfg, 'max_speed_mph', 0.0):g} mph")
+               f"{getattr(cfg, 'max_speed_mph', 0.0):g} mph and to keep the high points ahead "
+               f"at the slack floor")
     fx = getattr(cfg, "fluid_exit_mp", None)
     if fx is not None and float(fx) > float(getattr(cfg, "purge_end_mp", 0.0)):
         txt += (f"; tank inlet at the hydraulic endpoint MP {float(fx):.2f}, past the pig stop at "
@@ -164,6 +167,15 @@ def export_run_log(results: SimResults, path: str, scenario_name: str = "") -> N
         lines.append(f"  Exit held back:    {len(throttled):,} steps"
                      + (f"  (up to +{most.endpoint_added_psi:.1f} psi at MP {most.pig_mp:.2f}, "
                         f"exit {most.exit_psig:.1f} psig)" if most else ""))
+        held = [s for s in results.steps if getattr(s, 'peak_hold_psi', 0.0) > 0.5]
+        top = max(held, key=lambda s: s.peak_hold_psi, default=None)
+        lines.append(f"  Exit holds crest: {len(held):,} steps"
+                     + (f"  (up to +{top.peak_hold_psi:.1f} psi to keep the high points ahead at the "
+                        f"slack floor, exit {top.exit_psig:.1f} psig at MP {top.pig_mp:.2f})" if top else ""))
+        short = [s for s in results.steps if getattr(s, 'peak_hold_short_psi', 0.0) > 0.0]
+        if short:
+            lines.append(f"  Exit couldn't hold: {len(short):,} steps (a crest ahead goes below the "
+                         f"slack floor, short up to {max(s.peak_hold_short_psi for s in short):.1f} psi)")
         lines.append(f"  Over max speed:    {len(over):,} steps"
                      + (f"  (up to {max(s.overspeed_mph for s in over):.2f} mph over, "
                         f"MP {over[0].pig_mp:.2f} to {over[-1].pig_mp:.2f})" if over else ""))
@@ -229,7 +241,7 @@ def export_run_log(results: SimResults, path: str, scenario_name: str = "") -> N
     lines += [
         "STEP DATA (CSV)",
         "time_hr,pig_mp,pig_speed_mph,pig_face_psig,injection_scfm,injection_psig,"
-        "exit_psig,exit_min_psig,endpoint_added_psi,exit_mp,exit_description,"
+        "exit_psig,exit_min_psig,endpoint_added_psi,peak_hold_psi,exit_mp,exit_description,"
         "n_mop_violations,n_mop_warnings,slack_line,overspeed,overspeed_mph,total_scf,"
         "reynolds,flow_regime",
     ]
@@ -239,7 +251,7 @@ def export_run_log(results: SimResults, path: str, scenario_name: str = "") -> N
             f"{s.t_hr:.4f},{s.pig_mp:.4f},{s.pig_speed_mph:.4f},"
             f"{s.pig_face_psig:.2f},{s.injection_scfm:.1f},{s.injection_psig:.2f},"
             f"{s.exit_psig:.2f},{s.exit_min_psig:.2f},{s.endpoint_added_psi:.2f},"
-            f"{s.exit_mp:.4f},{exit_desc_clean},"
+            f"{getattr(s, 'peak_hold_psi', 0.0):.2f},{s.exit_mp:.4f},{exit_desc_clean},"
             f"{s.mop_violations},{s.mop_warnings},"
             f"{int(s.slack_line_risk)},{int(s.overspeed)},{s.overspeed_mph:.3f},"
             f"{s.total_scf:.0f},{getattr(s, 'reynolds', 0.0):.0f},{getattr(s, 'flow_regime', '')}"
