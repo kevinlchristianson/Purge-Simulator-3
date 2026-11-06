@@ -30,6 +30,7 @@ from ..data.scenario import Scenario, ScenarioInputs, load_scenario, save_scenar
 from ..engine.config_builder import build_sim_config
 from ..engine.simulator import SimResults, simulate
 from ..engine.hgl import hydraulic_end_mp
+from ..engine.physics import fts_to_bph, mph_to_fts, pipe_area_ft2
 from ..engine.log_export import legacy_exit_schedule
 from . import paths
 
@@ -1039,6 +1040,12 @@ class Workspace:
             "is_gas": [bool(h.is_gas[i]) for i in idx],
             "mop_mp": mop_mp, "mop_psig": mop_p,
             "pig_stop_mp": _f(cfg.purge_end_mp), "hydraulic_end_mp": _f(hyd_end),
+            # rate floaters on the profile chart: N2 injection and liquid flow, and their maxima
+            "injection_scfm": _f(max(0.0, step.injection_scfm or 0.0), 0),
+            "injection_max_scfm": _f(max(1.0, getattr(cfg, "max_injection_scfm", 5000.0) or 5000.0), 0),
+            "flow_bph": _f(fts_to_bph(mph_to_fts(max(0.0, step.pig_speed_mph)), pipe_area_ft2(*cfg.pipe_geometry.od_wt_at(step.pig_mp))), 0),
+            "flow_max_bph": _f(fts_to_bph(mph_to_fts(max(getattr(cfg, "max_speed_mph", 5.0) or 5.0, 1.0)),
+                                          pipe_area_ft2(*cfg.pipe_geometry.od_wt_at(cfg.purge_start_mp))), 0),
             "slack_floor_psig": _f(getattr(cfg, "slack_floor_psig", 25.0), 1),
             # the whole hydraulic system out to the endpoint, when the purge stops short of it
             "system": (hydraulic_system_view(step, cfg, max_points) if hyd_end is not None else None),

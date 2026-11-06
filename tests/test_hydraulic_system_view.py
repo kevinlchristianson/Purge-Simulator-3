@@ -62,6 +62,9 @@ def test_profile_view_carries_the_system(midpoint):
     assert STOP < low["mp"] <= ENDPOINT + 1e-3
     assert low["below_floor"] == (low["psig"] < p["slack_floor_psig"])
     assert low["mp"] in v["mp"]                     # the low point survives the downsampling
+    # rate floaters: N2 injection and liquid flow at this moment, with their maxima
+    assert p["injection_scfm"] >= 0 and p["injection_max_scfm"] > 0
+    assert 0 < p["flow_bph"] <= p["flow_max_bph"] * 1.5
 
 
 def test_client_page_has_second_profile(midpoint):
@@ -72,6 +75,8 @@ def test_client_page_has_second_profile(midpoint):
     assert len(sysv["frames"]) == len(prof["frames"])
     assert all(len(f["p"]) == len(sysv["mp"]) for f in sysv["frames"])
     assert all("low" in f for f in sysv["frames"])
+    assert prof["inj_max"] > 0 and prof["flow_max"] > 0
+    assert all(f["inj"] >= 0 and f["bph"] >= 0 for f in prof["frames"])
 
 
 def test_no_system_view_without_a_downstream_endpoint():

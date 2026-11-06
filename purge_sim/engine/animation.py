@@ -135,7 +135,7 @@ def _render_frame(step, cfg, roadmap, phases, figsize, dpi,
                           title=title, start_label=start_label, end_label=end_label,
                           xlim=xlim, full_system=full_system)
     buf = io.BytesIO()
-    fig.savefig(buf, format="png", bbox_inches="tight")
+    fig.savefig(buf, format="png")   # fixed frame size: no tight crop, so frames line up
     plt.close(fig)
     buf.seek(0)
     return _PILImage.open(buf).convert("RGB")

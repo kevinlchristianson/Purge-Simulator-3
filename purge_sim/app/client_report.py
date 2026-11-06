@@ -22,6 +22,7 @@ from typing import List, Optional
 import numpy as np
 
 from ..engine.hgl import compute_hgl, elevation_lookup, hydraulic_end_mp
+from ..engine.physics import fts_to_bph, mph_to_fts, pipe_area_ft2
 from ..engine.log_export import exit_condition_text, injection_text
 from ..engine.purge_report import _deployed_boosters, purge_report_rows, report_features
 from ..engine.simulator import SimResults
@@ -129,6 +130,12 @@ def _purge_table(res: SimResults, inputs=None, show_features: bool = False) -> d
             "has_endpoint": has_endpoint}
 
 
+def _flow_bph(cfg, s) -> float:
+    """Liquid flow ahead of the pig at this step, barrels per hour."""
+    od, wt = cfg.pipe_geometry.od_wt_at(float(s.pig_mp))
+    return fts_to_bph(mph_to_fts(max(0.0, s.pig_speed_mph)), pipe_area_ft2(od, wt))
+
+
 def _on_grid(h, grid, pig):
     """One HGL profile resampled onto a fixed milepost grid (gas behind the pig, liquid ahead)."""
     gas = h.is_gas
@@ -180,6 +187,7 @@ def _profile(res: SimResults) -> dict:
             "face": _r(s.pig_face_psig, 0), "exit_mp": _r(s.exit_mp, 2), "exit_psig": _r(s.exit_psig, 0),
             "exit_min": _r(s.exit_min_psig, 0), "added": _r(s.endpoint_added_psi, 0), "over": bool(s.overspeed),
             "slack": bool(s.slack_line_risk),
+            "inj": _r(max(0.0, s.injection_scfm or 0.0), 0), "bph": _r(_flow_bph(cfg, s), 0),
             **_on_grid(h, grid, pig),
             "stations": [{"name": st.get("name", ""), "mp": _r(st.get("mp"), 2), "status": st.get("status", "")}
                          for st in (s.station_pressures or [])],
@@ -194,8 +202,13 @@ def _profile(res: SimResults) -> dict:
                             "elev": _r(hs.elevation_ft[k], 0),
                             "below": bool(hs.pressure_psig[k] < floor - 0.05)}
             sframes.append(f)
+    # the rate floaters ride from 0 at the bottom to 80% up at these maxima (as in the GIF)
+    od, wt = cfg.pipe_geometry.od_wt_at(start)
+    flow_max = fts_to_bph(mph_to_fts(max(getattr(cfg, "max_speed_mph", 5.0) or 5.0, 1.0)), pipe_area_ft2(od, wt))
     out = {"mp": [_r(v, 3) for v in grid], "elev": elev, "mop": mop,
-           "sg": _r(cfg.fluid_sg, 4), "frames": frames}
+           "sg": _r(cfg.fluid_sg, 4), "frames": frames,
+           "inj_max": _r(max(1.0, getattr(cfg, "max_injection_scfm", 5000.0) or 5000.0), 0),
+           "flow_max": _r(max(1.0, flow_max), 0)}
     if sgrid is not None:
         selev, smop = _grid_lines(cfg, ep, sgrid)
         out["system"] = {"mp": [_r(v, 3) for v in sgrid], "elev": selev, "mop": smop,
