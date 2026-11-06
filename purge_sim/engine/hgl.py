@@ -121,7 +121,14 @@ def elevation_lookup(ep) -> "callable":
     return at
 
 
-def compute_hgl(step, cfg, elevation_at=None) -> HGLProfile:
+def hydraulic_end_mp(cfg) -> Optional[float]:
+    """The hydraulic endpoint when the liquid leaves past the pig stop (fluid_exit_mp),
+    else None: the purged segment and the hydraulic system end at the same place."""
+    fx = getattr(cfg, 'fluid_exit_mp', None)
+    return float(fx) if (fx is not None and float(fx) > cfg.purge_end_mp + 1e-6) else None
+
+
+def compute_hgl(step, cfg, elevation_at=None, full_system: bool = False) -> HGLProfile:
     """Build the full-pipeline HGL for one SimStep.
 
     Args:
@@ -129,8 +136,12 @@ def compute_hgl(step, cfg, elevation_at=None) -> HGLProfile:
               exit_psig, gas_pressure_profile).
         cfg:  SimConfig (pipe geometry, fluid, elevation profile, purge span).
         elevation_at: optional elevation interpolator; built from cfg if omitted.
+        full_system: run the profile on past the pig stop to the hydraulic endpoint
+              (fluid_exit_mp), so high points downstream of the purged segment show
+              whether the liquid column over them holds. No effect without one.
 
-    Returns an HGLProfile across [purge_start_mp, purge_end_mp].
+    Returns an HGLProfile across [purge_start_mp, purge_end_mp], or out to the
+    hydraulic endpoint with full_system.
     """
     elev_prof = np.asarray(cfg.elevation_profile, dtype=float)
     if elevation_at is None:
@@ -141,11 +152,13 @@ def compute_hgl(step, cfg, elevation_at=None) -> HGLProfile:
 
     start, end = cfg.purge_start_mp, cfg.purge_end_mp
     pig_mp = float(step.pig_mp)
+    hyd_end = hydraulic_end_mp(cfg)
+    span_end = hyd_end if (full_system and hyd_end is not None) else end
 
     # Milepost grid: elevation points in range + pig + exit, unique & sorted.
-    grid = set(float(m) for m in elev_prof[:, 0] if start <= m <= end)
-    grid.update([start, end, pig_mp])
-    if float(step.exit_mp) <= end:      # a tank inlet past the pig stop is off this chart
+    grid = set(float(m) for m in elev_prof[:, 0] if start <= m <= span_end)
+    grid.update([start, end, span_end, pig_mp])
+    if float(step.exit_mp) <= span_end:  # a tank inlet past the pig stop is off the purged-segment chart
         grid.add(float(step.exit_mp))
     mp = np.array(sorted(grid), dtype=float)
 

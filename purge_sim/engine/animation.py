@@ -125,19 +125,29 @@ def _label_for_mp(mp: float, phases: List[Tuple[float, float, str]]) -> str:
 # ---------------------------------------------------------------------------
 
 def _render_frame(step, cfg, roadmap, phases, figsize, dpi,
-                  title=None, start_label=None, end_label=None, xlim=None):
+                  title=None, start_label=None, end_label=None, xlim=None,
+                  full_system=False):
     """Render one frame and return a PIL RGB Image."""
     from ..ui.charts import plot_pipeline_profile
     fig = plt.figure(figsize=figsize, dpi=dpi)
     plot_pipeline_profile(fig, step, cfg, roadmap=roadmap,
                           annotation=_label_for_mp(step.pig_mp, phases),
                           title=title, start_label=start_label, end_label=end_label,
-                          xlim=xlim)
+                          xlim=xlim, full_system=full_system)
     buf = io.BytesIO()
     fig.savefig(buf, format="png", bbox_inches="tight")
     plt.close(fig)
     buf.seek(0)
     return _PILImage.open(buf).convert("RGB")
+
+
+def _stack(top, bottom):
+    """Two frames one above the other on a white page (the wider sets the width)."""
+    w = max(top.width, bottom.width)
+    out = _PILImage.new("RGB", (w, top.height + bottom.height), "white")
+    out.paste(top, ((w - top.width) // 2, 0))
+    out.paste(bottom, ((w - bottom.width) // 2, top.height))
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -165,9 +175,12 @@ def generate_animation(
     """
     Render the animated pipeline profile to GIF (and optionally MP4).
 
-    For partial purges (elevation data extends beyond the purge section), a second
-    pair of files is also written: <stem>_full.gif / <stem>_full.mp4 showing the
-    full elevation extent for operational context.
+    When the purge stops short of the hydraulic endpoint (cfg.fluid_exit_mp), every
+    frame shows the moment twice, one chart above the other: the purged segment, then
+    the whole hydraulic system out to the endpoint, so high points past the pig stop
+    show whether they slack. Otherwise, for partial purges (elevation data extends
+    beyond the purge section), a second pair of files is also written:
+    <stem>_full.gif / <stem>_full.mp4 showing the full elevation extent for context.
 
     Args:
         results:       SimResults from simulate()
@@ -232,8 +245,11 @@ def generate_animation(
     # --- Detect partial purge (elevation data wider than purge section) -----
     ep_mp = np.asarray(cfg.elevation_profile, dtype=float)[:, 0]
     full_xlim = None
-    is_partial = (float(ep_mp[0]) < cfg.purge_start_mp - 0.5 or
-                  float(ep_mp[-1]) > cfg.purge_end_mp + 0.5)
+    from .hgl import hydraulic_end_mp
+    has_system = hydraulic_end_mp(cfg) is not None   # stacked purge + whole-system frames
+    is_partial = (not has_system and
+                  (float(ep_mp[0]) < cfg.purge_start_mp - 0.5 or
+                   float(ep_mp[-1]) > cfg.purge_end_mp + 0.5))
     if is_partial:
         full_xlim = (float(ep_mp[0]) - 3, float(ep_mp[-1]) + 3)
 
@@ -243,9 +259,14 @@ def generate_animation(
     frames_full:  list = []
 
     for i, step in enumerate(sample):
-        frames_purge.append(_render_frame(step, cfg, results.roadmap, phases, figsize, dpi,
-                                          title=title, start_label=start_label,
-                                          end_label=end_label, xlim=None))
+        frame = _render_frame(step, cfg, results.roadmap, phases, figsize, dpi,
+                              title=title, start_label=start_label,
+                              end_label=end_label, xlim=None)
+        if has_system:
+            frame = _stack(frame, _render_frame(step, cfg, results.roadmap, phases, figsize, dpi,
+                                                title=title, start_label=start_label,
+                                                end_label=end_label, full_system=True))
+        frames_purge.append(frame)
         if is_partial:
             frames_full.append(_render_frame(step, cfg, results.roadmap, phases, figsize, dpi,
                                              title=title, start_label=start_label,

@@ -387,6 +387,11 @@ Also check:
   and MOP lines, especially over peaks and near pump stations. The right-hand axis carries
   the ground elevation and the hydraulic grade line ahead of the pig (dashed, in feet), so
   you can see where the HGL comes close to the ground.
+- **Whole hydraulic system chart:** when the purge stops before the Hydraulic Endpoint (Job
+  setup), the Pipeline profile, Map and Charts tabs, the client web page and the GIF show each
+  moment twice: the purged segment, then the whole line from the launch out to the endpoint.
+  The second chart marks the pig stop, draws the slack floor (dotted red) and names the lowest
+  liquid pressure past the pig stop, so you can see whether a downstream high point slacks.
 - **Map tab:** the route on a basemap with the pig's progress. A scenario needs route
   coordinates for this; the bundled client jobs don't have them yet, so add the job's KMZ
   once from the Map tab and save.

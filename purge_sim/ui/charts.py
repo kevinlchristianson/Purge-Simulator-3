@@ -64,7 +64,7 @@ def plot_pig_speed(fig, times_hr: List[float], mps: List[float], speeds_mph: Lis
 
 def plot_pipeline_profile(fig, step, cfg, roadmap=None, annotation: str = "",
                           title: str = None, start_label: str = None, end_label: str = None,
-                          xlim=None):
+                          xlim=None, full_system: bool = False):
     """Dual-axis pipeline profile at a SINGLE timestep.
 
     Left Y: Elevation / Total Head (ft).  Right Y: Pressure (psig).
@@ -80,6 +80,10 @@ def plot_pipeline_profile(fig, step, cfg, roadmap=None, annotation: str = "",
     xlim : (float, float) or None
         Override X-axis range. None → (purge_start-3, purge_end+3).
         Set to (ep_mp[0]-3, ep_mp[-1]+3) for a full-pipeline context view.
+    full_system : bool
+        When the liquid leaves past the pig stop (cfg.fluid_exit_mp), draw the whole
+        hydraulic system: the liquid line runs on to that endpoint, the view spans
+        launch to endpoint (unless xlim says otherwise) and the pig stop is marked.
     """
     from ..engine.physics import (pipe_area_ft2, mph_to_fts, fts_to_bph, bph_to_fts,
                                    liquid_friction_loss_psi)
@@ -88,7 +92,14 @@ def plot_pipeline_profile(fig, step, cfg, roadmap=None, annotation: str = "",
     elev = np.asarray(cfg.elevation_profile, dtype=float)
     ep_mp, ep_el = elev[:, 0], elev[:, 1]
     def elev_at(x): return float(np.interp(x, ep_mp, ep_el))
+    from ..engine.hgl import hydraulic_end_mp
     start, end = cfg.purge_start_mp, cfg.purge_end_mp
+    hyd_end = hydraulic_end_mp(cfg)
+    tank_mp = hyd_end if hyd_end is not None else end     # where the liquid leaves the line
+    full_system = bool(full_system and hyd_end is not None)
+    liq_end = tank_mp if full_system else end              # how far this view draws the liquid
+    if full_system and xlim is None:
+        xlim = (start - 3, tank_mp + 3)
     pig   = float(step.pig_mp)
     pface = float(step.pig_face_psig)
     sps   = step.station_pressures or []
@@ -107,7 +118,7 @@ def plot_pipeline_profile(fig, step, cfg, roadmap=None, annotation: str = "",
     # ============ Y-AXIS AUTO-SCALING ============================================
     # Head axis: cover the elevation range + full MOP headroom.
     # Use only the purge section for scaling so zoomed views aren't skewed by far tails.
-    purge_mask = (ep_mp >= start) & (ep_mp <= end)
+    purge_mask = (ep_mp >= start) & (ep_mp <= liq_end)
     el_pu = ep_el[purge_mask] if purge_mask.any() else ep_el
     min_el = float(np.min(el_pu))
     max_el = float(np.max(el_pu))
@@ -165,15 +176,17 @@ def plot_pipeline_profile(fig, step, cfg, roadmap=None, annotation: str = "",
 
     pumps = [(s['mp'], s['suction_psig'], s['discharge_psig']) for s in sps
              if s.get('status') == 'running' and s['mp'] > pig]
-    grid = sorted(set([m for m in ep_mp if pig < m <= end]
-                      + [p[0] for p in pumps] + ([bpcv_mp] if bpcv_mp else []) + [end]))
-    hgl_pts = build_liquid_hgl(grid, pig, pface, pumps, bpcv_mp, bpcv_sp, end, mt_psig,
+    grid = sorted(set([m for m in ep_mp if pig < m <= liq_end]
+                      + [p[0] for p in pumps if p[0] <= liq_end]
+                      + ([bpcv_mp] if bpcv_mp and bpcv_mp <= liq_end else []) + [liq_end]))
+    hgl_pts = build_liquid_hgl(grid, pig, pface, pumps, bpcv_mp, bpcv_sp, tank_mp, mt_psig,
                                elev_at, _fric_head, grad, clamp_to_ground=False)
 
     ox = [pig] + [m for m, _ in hgl_pts]
     oy = [pface] + [(h - elev_at(m)) * grad for m, h in hgl_pts]
     for pmp, suc, dis in pumps:
-        ox += [pmp, pmp]; oy += [suc, dis]
+        if pmp <= liq_end:
+            ox += [pmp, pmp]; oy += [suc, dis]
     order = np.argsort(ox)
     ox = list(np.asarray(ox)[order]); oy = list(np.asarray(oy)[order])
     axp.plot(ox, oy, color='deepskyblue', lw=1.8, zorder=4,
@@ -210,8 +223,8 @@ def plot_pipeline_profile(fig, step, cfg, roadmap=None, annotation: str = "",
     _max_flow_bph = fts_to_bph(mph_to_fts(max(getattr(cfg, 'max_speed_mph', 5.0) or 5.0, 1.0)),
                                 area)
     _flow_p = p_bot + min(flow_bph / max(1.0, _max_flow_bph), 1.0) * 0.80 * (p_top - p_bot)
-    axp.plot([end - 1.0], [_flow_p], 'o', color='magenta', ms=11, zorder=11, clip_on=False)
-    axp.annotate(f"{flow_bph:,.0f} BPH", (end - 1.0, _flow_p), color='magenta',
+    axp.plot([liq_end - 1.0], [_flow_p], 'o', color='magenta', ms=11, zorder=11, clip_on=False)
+    axp.annotate(f"{flow_bph:,.0f} BPH", (liq_end - 1.0, _flow_p), color='magenta',
                  fontsize=9, fontweight='bold', ha='right', va='center',
                  xytext=(-10, 0), textcoords='offset points')
 
@@ -280,8 +293,16 @@ def plot_pipeline_profile(fig, step, cfg, roadmap=None, annotation: str = "",
     _el = end_label   or _derive_label(cfg, cfg.purge_end_mp,   is_start=False)
 
     tick_map: dict = {start: _sl, end: _el}
+    if full_system:
+        tick_map[end] = f"{_el} (pig stop)"
+        tick_map[tank_mp] = f"Endpoint MP {tank_mp:.1f}"
+        ax.axvline(end, color='dimgray', lw=1.2, ls='--', zorder=3)
+        ax.axvline(tank_mp, color='dimgray', lw=1.2, ls='--', zorder=3)
+        _floor = float(getattr(cfg, 'slack_floor_psig', 25.0))
+        axp.axhline(_floor, color='red', lw=1.0, ls=':', zorder=3,
+                    label=f'Slack floor ({_floor:.0f} psig)')
     for ps in getattr(cfg, 'pump_stations', []):
-        if start < ps.mp < end:
+        if start < ps.mp < liq_end and ps.mp != end:
             tick_map[ps.mp] = ps.name
     for b in getattr(cfg, 'booster_configs', []):
         if start < b.mp < end:
@@ -299,7 +320,7 @@ def plot_pipeline_profile(fig, step, cfg, roadmap=None, annotation: str = "",
 
     # ============ AXES FRAMING ===================================================
     x_lo = xlim[0] if xlim else start - 3
-    x_hi = xlim[1] if xlim else end + 3
+    x_hi = xlim[1] if xlim else liq_end + 3
     ax.set_xlim(x_lo, x_hi)
     ax.set_ylim(y_min, y_max)
     axp.set_ylim(p_bot, p_top)
@@ -310,8 +331,10 @@ def plot_pipeline_profile(fig, step, cfg, roadmap=None, annotation: str = "",
 
     _pipe_desc = f"{od:.3g}″"
     _dist = end - start
-    ax.set_title(title or f"{_pipe_desc} Pipeline Profile — {_dist:.0f}-mi N₂ Purge",
-                 fontsize=11, fontweight='bold')
+    _title = title or f"{_pipe_desc} Pipeline Profile — {_dist:.0f}-mi N₂ Purge"
+    if full_system:
+        _title += f"\nWhole hydraulic system to the endpoint at MP {tank_mp:.1f}"
+    ax.set_title(_title, fontsize=11, fontweight='bold')
     ax.grid(alpha=0.25)
 
     t_hr = getattr(step, 't_hr', 0.0)

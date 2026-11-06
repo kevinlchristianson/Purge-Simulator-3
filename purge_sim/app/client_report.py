@@ -21,7 +21,7 @@ from typing import List, Optional
 
 import numpy as np
 
-from ..engine.hgl import compute_hgl, elevation_lookup
+from ..engine.hgl import compute_hgl, elevation_lookup, hydraulic_end_mp
 from ..engine.log_export import exit_condition_text, injection_text
 from ..engine.purge_report import _deployed_boosters, purge_report_rows, report_features
 from ..engine.simulator import SimResults
@@ -129,13 +129,22 @@ def _purge_table(res: SimResults, inputs=None, show_features: bool = False) -> d
             "has_endpoint": has_endpoint}
 
 
-def _profile(res: SimResults) -> dict:
-    """Pipeline profile on one shared milepost grid: elevation and MOP once, then the
-    pressure along the line at evenly spaced moments of the run."""
-    cfg = res.config
-    start, end = cfg.purge_start_mp, cfg.purge_end_mp
-    grid = np.linspace(start, end, GRID_POINTS)
-    ep = np.asarray(cfg.elevation_profile, dtype=float)
+def _on_grid(h, grid, pig):
+    """One HGL profile resampled onto a fixed milepost grid (gas behind the pig, liquid ahead)."""
+    gas = h.is_gas
+    p = np.full(grid.shape, np.nan)
+    if gas.any():
+        m = grid <= pig
+        p[m] = np.interp(grid[m], h.mp[gas], h.pressure_psig[gas])
+    if (~gas).any():
+        m = grid > pig
+        p[m] = np.interp(grid[m], h.mp[~gas], h.pressure_psig[~gas])
+    return {"gas_end": _r(h.pressure_psig[gas][-1], 0) if gas.any() else None,
+            "liq_start": _r(h.pressure_psig[~gas][0], 0) if (~gas).any() else None,
+            "p": [_r(v, 0) for v in p]}
+
+
+def _grid_lines(cfg, ep, grid):
     elev = np.interp(grid, ep[:, 0], ep[:, 1]) if ep.size else np.zeros_like(grid)
     mop = None
     if cfg.mop_joints:
@@ -143,35 +152,56 @@ def _profile(res: SimResults) -> dict:
         jp = np.array([j.mop_psig for j in cfg.mop_joints], dtype=float)
         order = np.argsort(jm)
         mop = [_r(v, 0) for v in np.interp(grid, jm[order], jp[order])]
+    return [_r(v, 0) for v in elev], mop
+
+
+def _profile(res: SimResults) -> dict:
+    """Pipeline profile on one shared milepost grid: elevation and MOP once, then the
+    pressure along the line at evenly spaced moments of the run. When the purge stops short
+    of the hydraulic endpoint, "system" holds the same moments over the whole line out to it."""
+    cfg = res.config
+    start, end = cfg.purge_start_mp, cfg.purge_end_mp
+    grid = np.linspace(start, end, GRID_POINTS)
+    ep = np.asarray(cfg.elevation_profile, dtype=float)
+    elev, mop = _grid_lines(cfg, ep, grid)
+    hyd_end = hydraulic_end_mp(cfg)
+    sgrid = np.linspace(start, hyd_end, GRID_POINTS) if hyd_end is not None else None
+    floor = float(getattr(cfg, "slack_floor_psig", 25.0))
     elev_at = elevation_lookup(ep) if ep.size else None
     steps = res.steps
     idx = res.time_frame_indices(PROFILE_FRAMES)   # evenly spaced in elapsed time
-    frames = []
+    frames, sframes = [], []
     for i in idx:
         s = steps[i]
         h = compute_hgl(s, cfg, elevation_at=elev_at)
-        gas = h.is_gas
         pig = float(s.pig_mp)
-        p = np.full(grid.shape, np.nan)
-        if gas.any():
-            m = grid <= pig
-            p[m] = np.interp(grid[m], h.mp[gas], h.pressure_psig[gas])
-        if (~gas).any():
-            m = grid > pig
-            p[m] = np.interp(grid[m], h.mp[~gas], h.pressure_psig[~gas])
         frames.append({
             "t": _r(s.t_hr, 2), "pig": _r(pig, 3), "speed": _r(s.pig_speed_mph, 2),
             "face": _r(s.pig_face_psig, 0), "exit_mp": _r(s.exit_mp, 2), "exit_psig": _r(s.exit_psig, 0),
             "exit_min": _r(s.exit_min_psig, 0), "added": _r(s.endpoint_added_psi, 0), "over": bool(s.overspeed),
             "slack": bool(s.slack_line_risk),
-            "gas_end": _r(h.pressure_psig[gas][-1], 0) if gas.any() else None,
-            "liq_start": _r(h.pressure_psig[~gas][0], 0) if (~gas).any() else None,
-            "p": [_r(v, 0) for v in p],
+            **_on_grid(h, grid, pig),
             "stations": [{"name": st.get("name", ""), "mp": _r(st.get("mp"), 2), "status": st.get("status", "")}
                          for st in (s.station_pressures or [])],
         })
-    return {"mp": [_r(v, 3) for v in grid], "elev": [_r(v, 0) for v in elev], "mop": mop,
-            "sg": _r(cfg.fluid_sg, 4), "frames": frames}
+        if sgrid is not None:
+            hs = compute_hgl(s, cfg, elevation_at=elev_at, full_system=True)
+            f = _on_grid(hs, sgrid, pig)
+            past = np.where((hs.mp > end + 1e-6) & ~hs.is_gas)[0]
+            if past.size:      # lowest liquid pressure past the pig stop, from the exact profile
+                k = past[int(np.argmin(hs.pressure_psig[past]))]
+                f["low"] = {"mp": _r(hs.mp[k], 2), "psig": _r(hs.pressure_psig[k], 0),
+                            "elev": _r(hs.elevation_ft[k], 0),
+                            "below": bool(hs.pressure_psig[k] < floor - 0.05)}
+            sframes.append(f)
+    out = {"mp": [_r(v, 3) for v in grid], "elev": elev, "mop": mop,
+           "sg": _r(cfg.fluid_sg, 4), "frames": frames}
+    if sgrid is not None:
+        selev, smop = _grid_lines(cfg, ep, sgrid)
+        out["system"] = {"mp": [_r(v, 3) for v in sgrid], "elev": selev, "mop": smop,
+                         "stop_mp": _r(end, 2), "end_mp": _r(hyd_end, 2), "floor": _r(floor, 1),
+                         "frames": sframes}
+    return out
 
 
 def build_data(res: SimResults, scenario_name: str, inputs=None, notes: str = "",
