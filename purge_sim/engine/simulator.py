@@ -1695,10 +1695,9 @@ def simulate(cfg: SimConfig, progress_cb: Optional[Callable[[float], None]] = No
             pig_result.exit_psig - pig_result.peak_hold_psi, exit_mp, gas_profile,
             od_in, wt_in,
             cfg.fluid_sg, cfg.fluid_viscosity_cst, cfg.fluid_roughness_ft,
-            # Size the station hydraulics at the ACTUAL flow (pig speed, floored at min) so the
+            # Size the station hydraulics at the ACTUAL flow (the pig's speed) so the
             # suction/discharge are consistent with the friction the HGL is drawn at.
-            flow_bph=fts_to_bph(mph_to_fts(max(pig_result.pig_speed_mph, cfg.min_speed_mph)),
-                                area_ft2),
+            flow_bph=fts_to_bph(mph_to_fts(max(0.0, pig_result.pig_speed_mph)), area_ft2),
             elevation_at=elevation_at,
             ultimate_mp=_ult_mp, ultimate_psig=_ult_p,
             slack_floor_psig=cfg.slack_floor_psig,

@@ -154,8 +154,7 @@ def _draw_pipeline_profile(fig, step, cfg, roadmap, annotation, title,
     D_ft = (od - 2.0 * wt) / 12.0
     area = pipe_area_ft2(od, wt)
     flow_bph = fts_to_bph(mph_to_fts(step.pig_speed_mph), area)
-    v_fts = (bph_to_fts(fts_to_bph(mph_to_fts(max(step.pig_speed_mph, cfg.min_speed_mph)), area),
-                        area) if area > 0 else 0.0)
+    v_fts = mph_to_fts(max(0.0, step.pig_speed_mph)) if area > 0 else 0.0   # the pig's real speed
 
     def _fric_head(a, b):
         L = abs(b - a) * 5280.0
