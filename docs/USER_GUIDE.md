@@ -374,9 +374,16 @@ Also check:
 - **Booster plan:** which sites were used and why.
 - **Charts tab, elevation:** tick *Show elevation profile on each chart* to add the ground
   elevation (ft) on a right-hand axis of every chart. On the milepost charts it is the profile
-  along the route; on the time charts it is the ground under the pig at that moment. The
-  pressure chart also gets *HGL at pig face*: the liquid head right at the pig (elevation +
-  face pressure ÷ (0.433 × SG)), on the same feet axis. The box stays ticked between runs.
+  along the route; on the time charts it is the ground under the pig at that moment. Each axis
+  fits its own data, and the right-hand axes share the left axis's gridlines. The box stays
+  ticked between runs. Dashed minor gridlines sit halfway between the major ones; time charts
+  have a vertical gridline at every hour. On the profile charts the feet (head) axis is tied
+  to the psig axis, so its labels sit on the psig gridlines.
+- **Charts, second axis row:** under the mileposts, every milepost chart shows in brackets
+  the elapsed time (hours) when the pig reached that milepost; under the hours, the time
+  charts show the pig's milepost at that hour. Same on the client HTML page. The speed chart
+  draws the max speed line only when the pig runs near it; otherwise the legend says it is
+  above the chart, so slow jobs aren't squashed to the bottom.
 - **Charts tab, Hydraulic grade line:** the whole route at one moment of the run, all in feet:
   ground elevation, the liquid hydraulic grade line ahead of the pig, the N2 pressure behind
   the pig shown as equivalent liquid head, and the MOP grade line (elevation + MOP as head).
