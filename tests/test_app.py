@@ -444,6 +444,10 @@ def test_http_load_edit_run_export_chat(server):
     assert code == 200 and res["summary"]["completed"] and len(res["series"]["pig_mp"]) > 10
     ps = res["play_steps"]                     # Play/slider frames: even in elapsed time
     assert ps[0] == 0 and ps[-1] == res["summary"]["steps"] - 1 and ps == sorted(set(ps))
+    code, tbl = _call(server, "/api/results/table")   # Table tab: the client page's Purge Report
+    assert code == 200 and tbl["rows"][0]["v"][0] == 0 and tbl["rows"][1]["v"][0] == 0.25
+    assert [c["h"] for c in tbl["cols"]][:6] == ["Miles", "Elevation (ft)", "Elapsed Time (hr)",
+                                                "Drive Pressure (psi)", "Friction Loss (psi)", "Exit Pressure (psi)"]
     code, exp = _call(server, "/api/export", {"kind": "log"})
     assert code == 200 and os.path.isfile(exp["path"])
     assert _call(server, "/api/chat", {"message": "hello"})[0] == 200

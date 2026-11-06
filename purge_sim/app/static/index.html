@@ -127,6 +127,15 @@ pre { white-space: pre-wrap; font-size: 12px; background: var(--panel-2); paddin
 table.t { border-collapse: collapse; font-size: 12px; width: 100%; }
 table.t th, table.t td { border-bottom: 1px solid var(--border); padding: 3px 6px; text-align: left; }
 table.t td.n { text-align: right; font-variant-numeric: tabular-nums; }
+/* Table tab: the client page's Purge Report table */
+.ptable-wrap { overflow: auto; max-height: calc(100vh - 230px); }
+table.ptable thead th { position: sticky; top: 0; background: var(--panel); white-space: normal; vertical-align: bottom; text-align: right; z-index: 1; }
+table.ptable thead th.l { text-align: left; }
+table.ptable tbody tr:nth-child(even) td { background: color-mix(in srgb, var(--border) 25%, transparent); }
+table.ptable tr.feat td { background: color-mix(in srgb, var(--hgl, #1f6feb) 10%, transparent) !important; }
+table.ptable tr.viol td { color: var(--bad); font-weight: 600; }
+table.ptable tr.slack td.speed { background: color-mix(in srgb, var(--bad) 22%, transparent) !important; }
+table.ptable tr.over td.speed { background: color-mix(in srgb, var(--warn) 38%, transparent) !important; }
 .empty { padding: 40px 20px; text-align: center; color: var(--muted); }
 
 .chat-head { padding: 9px 12px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 8px; }
@@ -242,6 +251,7 @@ input[type=range] { width: 100%; }
       <button data-tab="charts">Charts</button>
       <button data-tab="profile">Pipeline profile</button>
       <button data-tab="map">Map</button>
+      <button data-tab="table">Table</button>
       <button data-tab="exports">Reports</button>
     </div>
     <div id="tab-guide" hidden></div>
@@ -251,6 +261,7 @@ input[type=range] { width: 100%; }
     <div id="tab-charts" hidden></div>
     <div id="tab-profile" hidden></div>
     <div id="tab-map" hidden></div>
+    <div id="tab-table" hidden></div>
     <div id="tab-exports" hidden></div>
   </section>
   <div class="chat">
@@ -354,7 +365,7 @@ const S = {revision: -1, scenario: null, results: null, scenarios: [], state: nu
 document.querySelectorAll("#tabs button").forEach(b => b.onclick = () => {
   S.tab = b.dataset.tab;
   document.querySelectorAll("#tabs button").forEach(x => x.classList.toggle("on", x === b));
-  for (const id of ["guide", "overview", "setup", "inputs", "charts", "profile", "map", "exports"]) $("#tab-" + id).hidden = id !== S.tab;
+  for (const id of ["guide", "overview", "setup", "inputs", "charts", "profile", "map", "table", "exports"]) $("#tab-" + id).hidden = id !== S.tab;
   try { localStorage.setItem("purge.tab", S.tab); } catch (e) {}
   renderTab();
 });
@@ -501,7 +512,7 @@ function guideHtml(text) {
 
 // ---------------------------------------------------------------- overview
 function renderTab() {
-  ({guide: renderGuide, overview: renderOverview, setup: renderSetup, inputs: renderInputs, charts: renderCharts, profile: renderProfile, map: renderMap, exports: renderExports})[S.tab]();
+  ({guide: renderGuide, overview: renderOverview, setup: renderSetup, inputs: renderInputs, charts: renderCharts, profile: renderProfile, map: renderMap, table: renderTable, exports: renderExports})[S.tab]();
 }
 // A scenario still on the old position-based exit schedule (taper / step / ramp / constant_end).
 const legacyExitHtml = sc => sc.legacy_exit_schedule
@@ -1548,6 +1559,55 @@ $("#routeOk").onclick = async () => {
 };
 
 // ---------------------------------------------------------------- exports
+// ---------------------------------------------------------------- table
+// The Purge Report table, the same rows and columns as the client web page
+// (client_report.purge_table), so it can be checked without exporting anything.
+async function renderTable() {
+  const el = $("#tab-table");
+  if (!S.results) { el.innerHTML = `<div class="empty">Run the scenario to see the Purge Report table.</div>`; return; }
+  if (S.tableFor !== S.results) {
+    el.innerHTML = `<div class="empty">Loading the table…</div>`;
+    const forRes = S.results;
+    let t; try { t = await api("/api/results/table"); } catch (e) { el.innerHTML = `<div class="flag bad">${esc(e.message)}</div>`; return; }
+    if (S.results !== forRes) return;     // a newer run arrived while this one loaded
+    S.table = t; S.tableFor = forRes;
+  }
+  if (S.tab !== "table") return;
+  const PR = S.table, sm = S.results.summary || {};
+  const feat = PR.has_features && chartPref("feat", "0") === "1";
+  el.innerHTML = `<div class="card">
+      <p class="small muted" style="margin:0 0 6px">One row for every quarter mile the pig travels, counted from 0 at the launch: the same table as the client web page and the Purge Report workbook. Red rows exceed MOP; a red speed cell marks slack-line risk, an orange one the pig over its maximum speed.</p>
+      ${PR.has_endpoint ? `<p class="small muted" style="margin:0 0 6px">Exit Pressure is what the receiving end (pump suction, BPCV or tank inlet) holds at that point to keep the pig at or under ${fmt(sm.max_speed_mph, 2)} mph; it rises above the ${fmt(sm.exit_min_psig)} psig minimum where the N2 column would otherwise push the pig faster.</p>` : ""}
+      ${S.state && S.state.results_stale ? `<div class="flag warn small">Inputs changed since this run. Run again to update the table.</div>` : ""}
+      <div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap">
+        ${PR.has_features ? `<label class="small"><input type="checkbox" id="tblFeat"${feat ? " checked" : ""}> Add stations, valves, markers and crossings to the table</label>` : ""}
+        <button id="tblCsv">Download as CSV</button> <span class="small muted" id="tblCount"></span></div></div>
+    <div class="card ptable-wrap"><table class="t ptable" id="tblBody"></table></div>`;
+  const speedCol = PR.cols.findIndex(c => c.h.startsWith("Pig Speed"));
+  const shown = PR.rows.filter(r => feat || !r.f);
+  const head = PR.cols.map(c => `<th>${esc(c.h)}</th>`);
+  if (feat) head.splice(1, 0, `<th class="l">Feature</th>`);
+  const rows = shown.map(r => {
+    const cells = r.v.map((v, i) => `<td class="n${i === speedCol ? " speed" : ""}">${fmt(v, PR.cols[i].nd)}</td>`);
+    if (feat) cells.splice(1, 0, `<td style="white-space:nowrap"><b>${esc(r.f)}</b></td>`);
+    return `<tr class="${r.flag}${r.f ? " feat" : ""}">${cells.join("")}</tr>`;
+  });
+  $("#tblBody").innerHTML = `<thead><tr>${head.join("")}</tr></thead><tbody>${rows.join("")}</tbody>`;
+  $("#tblCount").textContent = `${shown.length} rows`;
+  if ($("#tblFeat")) $("#tblFeat").onchange = () => { setChartPref("feat", $("#tblFeat").checked ? "1" : "0"); renderTable(); };
+  $("#tblCsv").onclick = () => {
+    const q = v => /[",\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : String(v);
+    const hdr = PR.cols.map(c => c.h); if (feat) hdr.splice(1, 0, "Feature");
+    const lines = [hdr.map(q).join(",")].concat(shown.map(r => {
+      const v = r.v.map(x => x == null ? "" : x); if (feat) v.splice(1, 0, r.f); return v.map(q).join(",");
+    }));
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([lines.join("\r\n") + "\r\n"], {type: "text/csv"}));
+    a.download = ((S.state && S.state.scenario_name) || "purge") + " - Purge Report.csv";
+    a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  };
+}
+
 function renderExports() {
   const el = $("#tab-exports");
   if (!S.results) { el.innerHTML = `<div class="empty">Run the scenario to export reports.</div>`; return; }
