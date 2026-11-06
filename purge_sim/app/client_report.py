@@ -34,12 +34,10 @@ PROFILE_FRAMES = 60    # pipeline-profile snapshots on the page's time slider
 _REPORT = [   # (column, row key, decimals): the xlsx Purge Report columns
     ("Miles", "miles", 2), ("Elevation (ft)", "elevation_ft", 1), ("Elapsed Time (hr)", "elapsed_hr", 2),
     ("Drive Pressure (psi)", "drive_psi", 1), ("Friction Loss (psi)", "friction_psi", 1),
+    ("Exit Pressure (psi)", "exit_psi", 0),
     ("Injection Rate (SCFM)", "inj_scfm", 0), ("Cumulative N2 (SCF)", "cum_scf", 0),
     ("Pig Speed (mph)", "speed_mph", 2),
 ]
-# Added before Injection Rate when the exit modulated during the run (or the pig ran over max
-# speed): the pressure the receiving end holds at each row (formatted_report does the same).
-_ENDPOINT_COL = ("Endpoint Pressure (psi)", "exit_psi", 0)
 
 
 def _r(v, nd=1):
@@ -115,8 +113,6 @@ def _purge_table(res: SimResults, inputs=None, show_features: bool = False) -> d
     boosters = [n for n, _ in _deployed_boosters(res)]
     spec = list(_REPORT)
     has_endpoint = any((row.get("endpoint_added_psi") or 0.0) > 0.5 or row.get("overspeed") for row in rows)
-    if has_endpoint:
-        spec.insert([c for c, _, _ in spec].index("Injection Rate (SCFM)"), _ENDPOINT_COL)
     cols = [{"h": c, "nd": nd} for c, _, nd in spec] + [{"h": f"{n} booster flow (SCFM)", "nd": 0} for n in boosters]
     out = []
     for row in rows:

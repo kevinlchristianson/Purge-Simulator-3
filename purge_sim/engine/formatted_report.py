@@ -65,21 +65,23 @@ _F_BODY   = Font(name="Calibri", size=10)
 _F_ITAL   = Font(name="Calibri", italic=True, size=9, color="595959")
 _F_NUM    = Font(name="Calibri", size=10)
 
-# Base data-table columns (Head Pressure + Exit Pressure dropped per field request).
+# Base data-table columns (Head Pressure dropped per field request). Exit Pressure is what the
+# exit (running pump suction, BPCV or tank inlet) holds at that row: its minimum, plus any
+# back-pressure a modulating exit adds to hold max speed.
 # Per-booster Flow / Cum Flow columns are appended dynamically after Pig Speed.
 _REPORT_COLS = [
     "Miles", "Elevation (ft)", "Elapsed Time (hr)",
-    "Drive Pressure (psi)", "Friction Loss (psi)",
+    "Drive Pressure (psi)", "Friction Loss (psi)", "Exit Pressure (psi)",
     "Injection Rate (SCFM)", "Cumulative N2 (SCF)", "Pig Speed (mph)",
 ]
 _DATA_KEYS = [
     "miles", "elevation_ft", "elapsed_hr",
-    "drive_psi", "friction_psi",
+    "drive_psi", "friction_psi", "exit_psi",
     "inj_scfm", "cum_scf", "speed_mph",
 ]
 _DATA_FMTS = [
     "0.00", "0.0", "0.000",
-    "0.0", "0.0",
+    "0.0", "0.0", "0.0",
     "0.0", "#,##0", "0.000",
 ]
 
@@ -159,13 +161,9 @@ def _sheet_purge_report(wb, results, cfg, scenario_name, pi, rows):
     has_feat = any(r.get("feature") for r in rows)
     if has_feat:   # station / valve / marker name, right after Miles
         cols.insert(1, "Feature"); keys.insert(1, "feature"); fmts.insert(1, "@")
-    # The endpoint pressure column appears when the exit actually modulated during this run
-    # (or the pig ran over max speed): it is then the pressure the receiving end has to hold
-    # at each row. Otherwise it would be the constant minimum the field asked to leave out.
+    # The exit pressure note explains the column when the exit actually modulated during this
+    # run (or the pig ran over max speed).
     has_endpoint = any((r.get("endpoint_added_psi") or 0.0) > 0.5 or r.get("overspeed") for r in rows)
-    if has_endpoint:
-        i = cols.index("Injection Rate (SCFM)")
-        cols.insert(i, "Endpoint Pressure (psi)"); keys.insert(i, "exit_psi"); fmts.insert(i, "0.0")
     for nm in bnames:
         cols += [f"{nm} Booster Flow (SCFM)", f"{nm} Booster Cum Flow (SCF)"]
         keys += [f"__bflow__{nm}", f"__bcum__{nm}"]
@@ -278,7 +276,7 @@ def _sheet_purge_report(wb, results, cfg, scenario_name, pi, rows):
         note_row += 1
     if has_endpoint:
         ws.cell(row=note_row, column=1, value=(
-            "ENDPOINT PRESSURE: the pressure the receiving end (pump suction, BPCV or tank inlet) holds to keep "
+            "EXIT PRESSURE: the pressure the receiving end (pump suction, BPCV or tank inlet) holds to keep "
             f"the pig at or under {cfg.max_speed_mph:g} mph; it rises above the {cfg.exit_pressure_run_psig:.0f} psig "
             "minimum where the N2 column would otherwise push the pig faster.")).font = _F_ITAL
         ws.merge_cells(f"A{note_row}:{last_col}{note_row}")
@@ -286,16 +284,16 @@ def _sheet_purge_report(wb, results, cfg, scenario_name, pi, rows):
         over = [s for s in results.steps if s.overspeed]
         if over:
             if getattr(cfg, "exit_behavior", "modulating") == "fixed":
-                why = "the endpoint pressure is fixed"
+                why = "the exit pressure is fixed"
             else:
-                why = f"the endpoint can hold at most {max(s.exit_max_psig for s in over):.0f} psig there"
+                why = f"the exit can hold at most {max(s.exit_max_psig for s in over):.0f} psig there"
             ws.cell(row=note_row, column=1, value=(
                 f"PIG OVER MAX SPEED on the orange-shaded speed cells (up to {max(s.overspeed_mph for s in over):.2f} mph "
                 f"over {cfg.max_speed_mph:g} mph): {why}.")).font = _F_ITAL
             ws.merge_cells(f"A{note_row}:{last_col}{note_row}")
 
     # Wide data columns: base widths + per-booster (Flow, Cum Flow)
-    col_widths_data = ([10] + ([34] if has_feat else []) + [12, 12, 14, 14] + ([14] if has_endpoint else [])
+    col_widths_data = ([10] + ([34] if has_feat else []) + [12, 12, 14, 14, 14]
                        + [15, 15, 12] + [15, 18] * len(bnames))
     for i, w in enumerate(col_widths_data, 1):
         ws.column_dimensions[get_column_letter(i)].width = w
