@@ -1234,12 +1234,12 @@ function renderProfile() {
 // what the exit is doing at this step: holding the pig back, or out of room
 const exitNote = p => {
   const up = (p.exit_psig ?? 0) - (p.exit_min_psig ?? p.exit_psig ?? 0);
-  if (!(up > 0.5)) return "";
+  const over = p.overspeed ? ` · <span style="color:var(--bad)">over max speed by ${fmt(p.overspeed_mph, 2)} mph</span>` : "";
+  if (!(up > 0.5)) return over;
   const why = (p.peak_hold_psi || 0) > 0.5 && !((p.endpoint_added_psi || 0) > 0.5) ? " to keep the high point ahead full" : "";
   return ` · exit holding +${fmt(up)} psi over its ${fmt(p.exit_min_psig)} psig minimum${why}` +
-    ((p.peak_hold_short_psi || 0) > 0 ? ` · <span style="color:var(--bad)">exit can't hold ${fmt(p.peak_hold_short_psi)} psi more; crest goes slack</span>` : "");
-}
-  + (p.overspeed ? ` · <span style="color:var(--bad)">over max speed by ${fmt(p.overspeed_mph, 2)} mph</span>` : "");
+    ((p.peak_hold_short_psi || 0) > 0 ? ` · <span style="color:var(--bad)">exit can't hold ${fmt(p.peak_hold_short_psi)} psi more; crest goes slack</span>` : "") + over;
+};
 async function drawProfile() {
   let p; try { p = await api("/api/results/profile?step=" + S.profileStep); } catch (e) { return; }
   if (!$("#pfChart")) return;
