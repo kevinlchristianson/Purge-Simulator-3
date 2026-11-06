@@ -124,6 +124,8 @@ class App:
             res = ws.require_results()
             return 200, {"summary": results_summary(res), "series": results_series(res),
                          "play_steps": res.time_frame_indices(PLAY_FRAMES)}
+        if route == ("GET", "/api/results/table"):
+            return 200, ws.purge_table_view()
         if route == ("GET", "/api/results/profile"):
             return 200, ws.profile_at(int(q.get("step", 0)))
         if route == ("POST", "/api/export"):

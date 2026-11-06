@@ -106,9 +106,10 @@ def _facilities(res: SimResults, inputs=None) -> List[dict]:
     return sorted(out, key=lambda f: f["mp"] if f["mp"] is not None else 0)
 
 
-def _purge_table(res: SimResults, inputs=None, show_features: bool = False) -> dict:
+def purge_table(res: SimResults, inputs=None, show_features: bool = False) -> dict:
     """Purge Report rows every 1/4 mile from the launch, plus a row at every station, valve,
-    marker and crossing (flagged "f"; the page's checkbox shows or hides them)."""
+    marker and crossing (flagged "f"; the page's checkbox shows or hides them). The client
+    page and the app's Table tab both show exactly this."""
     feats = report_features(res, getattr(inputs, "landmarks", None))
     rows = purge_report_rows(res, features=feats)
     boosters = [n for n, _ in _deployed_boosters(res)]
@@ -226,7 +227,7 @@ def build_data(res: SimResults, scenario_name: str, inputs=None, notes: str = ""
         "summary": results_summary(res),
         "series": results_series(res, max_points=800),
         "profile": _profile(res),
-        "purge": _purge_table(res, inputs, include_features),
+        "purge": purge_table(res, inputs, include_features),
     }
 
 

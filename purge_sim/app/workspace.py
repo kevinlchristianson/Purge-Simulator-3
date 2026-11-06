@@ -1119,6 +1119,14 @@ class Workspace:
 
     EXPORT_KINDS = ("formatted", "full", "log", "gif", "html")
 
+    def purge_table_view(self) -> dict:
+        """The Purge Report table of the current run, the same rows and columns as the client
+        web page (client_report.purge_table), for the app's Table tab."""
+        from .client_report import purge_table
+        res = self.require_results()
+        sc = self.results_scenario or self.scenario
+        return purge_table(res, sc.inputs if sc else None)
+
     def export(self, kind: str, include_notes: bool = False, include_gif: bool = True,
                include_features: bool = False) -> str:
         """Write a deliverable to a fresh, timestamped folder; return its path.
