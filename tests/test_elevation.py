@@ -625,3 +625,16 @@ def test_server_imports_several_files_in_one_body(tmp_path, dem):
     with pytest.raises(InputError, match="match their sizes"):
         app.handle("POST", "/api/scenario/import", {k: [v] for k, v in {**q, "sizes": "1,2,3"}.items()},
                    b"".join(blobs))
+
+
+def test_several_files_still_ask_before_elevation_lookup(tmp_path, dem):
+    settings.update(elevation_ask_first_value=True)
+    files = [write_multigeom_kmz(tmp_path / "we6.kmz", WE6),
+             write_multi_kmz(tmp_path / "Start.kmz", [], [("Start", 32.415, -102.373)])]
+    blobs = [open(f, "rb").read() for f in files]
+    q = {"kind": ["auto"], "filenames": ["we6.kmz|Start.kmz"], "sizes": [",".join(str(len(b)) for b in blobs)]}
+    app = App()
+    code, body = app.handle("POST", "/api/scenario/import", q, b"".join(blobs))
+    assert code == 409 and body["needs_elevation_confirm"] and dem.points == 0
+    code, body = app.handle("POST", "/api/scenario/import", {**q, "fetch_elevation": ["1"]}, b"".join(blobs))
+    assert code == 200
