@@ -16,7 +16,7 @@ A KMZ (or GPS file) without elevations gets them from USGS 3DEP during import
 from __future__ import annotations
 
 import os
-from typing import List, Optional, Tuple
+from typing import List, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -108,10 +108,12 @@ def _check_kml_altitudes(p, elev_ft, source: dict, fetch_elevation: Optional[boo
 
 
 def _from_profile(path: str, fetch_elevation: Optional[bool] = None,
-                  spacing_ft: float = DEFAULT_SPACING_FT, progress_cb=None) -> Tuple[ScenarioInputs, List[str]]:
-    """fetch_elevation: None follows the ask-first setting, True looks up, False refuses."""
-    from ..data.profile_parser import parse_profile
-    p = parse_profile(path)
+                  spacing_ft: float = DEFAULT_SPACING_FT, progress_cb=None,
+                  extra_paths: Sequence[str] = ()) -> Tuple[ScenarioInputs, List[str]]:
+    """fetch_elevation: None follows the ask-first setting, True looks up, False refuses.
+    extra_paths: more KMZ / KML files read with `path` as one (more lines, Start / End pins)."""
+    from ..data.profile_parser import parse_kml_files, parse_profile
+    p = parse_kml_files([path, *extra_paths]) if extra_paths else parse_profile(path)
     ext = os.path.splitext(path)[1].lower().lstrip(".")
     data_source = {"kmz": "KMZ", "kml": "KMZ", "xlsx": "Excel", "xls": "Excel", "xlsm": "Excel"}.get(ext, "TXT")
     has_route = p.lat is not None and p.lon is not None
@@ -151,9 +153,14 @@ def _from_profile(path: str, fetch_elevation: Optional[bool] = None,
     scale = (end - start) / p.total_length_mi if p.total_length_mi > 0 else 1.0
     landmarks = [{"mp": round(start + pin["mp"] * scale, 3), "kind": "map_pin", "name": pin["name"]}
                  for pin in p.pins]
+    # pins named Start / End (launch / pig stop) set the purge; the rest of the route is kept
+    launch = start + p.launch_mp * scale if p.launch_mp is not None else start
+    stop = start + p.stop_mp * scale if p.stop_mp is not None else end
+    if stop <= launch:
+        launch, stop = start, end
     inputs = ScenarioInputs(
-        purge_start_mp=round(start, 3),
-        purge_end_mp=round(end, 3),
+        purge_start_mp=round(launch, 3),
+        purge_end_mp=round(stop, 3),
         elevation_profile=elev,
         elevation_source=source,
         route_latlon=thin_route(p.lat, p.lon) if has_route else [],
@@ -170,9 +177,12 @@ def _from_profile(path: str, fetch_elevation: Optional[bool] = None,
 
 
 def scenario_from_file(path: str, kind: str, name: str, fetch_elevation: Optional[bool] = None,
-                       spacing_ft: float = DEFAULT_SPACING_FT, progress_cb=None) -> Tuple[Scenario, List[str]]:
+                       spacing_ft: float = DEFAULT_SPACING_FT, progress_cb=None,
+                       extra_paths: Sequence[str] = ()) -> Tuple[Scenario, List[str]]:
     """Returns the scenario and any notes about its data (shown to the user).
-    kind: 'auto' (or blank) detects the format; 'ili', 'pxp' or 'profile' forces one."""
+    kind: 'auto' (or blank) detects the format; 'ili', 'pxp' or 'profile' forces one.
+    extra_paths: more KMZ / KML files imported with `path` as one route (e.g. Start.kmz and
+    End.kmz pins, or the pipeline drawn in several files). Profile imports only."""
     from ..data.formats import FORMAT_LABELS, detect_format
     kind = (kind or "auto").lower()
     if kind == "auto":
@@ -180,16 +190,23 @@ def scenario_from_file(path: str, kind: str, name: str, fetch_elevation: Optiona
     if kind not in FORMAT_LABELS:
         raise ValueError("kind must be 'auto', 'ili', 'pxp' or 'profile'")
     notes: List[str] = []
+    extra_paths = list(extra_paths or [])
+    bad = [os.path.basename(f) for f in extra_paths if os.path.splitext(f)[1].lower() not in (".kmz", ".kml")]
+    if extra_paths and (kind in ("ili", "pxp") or bad
+                        or os.path.splitext(path)[1].lower() not in (".kmz", ".kml")):
+        raise ValueError("Only KMZ / KML files can be imported together (a pipeline line plus Start / End "
+                         "pins, or a line in several files); import other files one at a time")
+    files = [os.path.basename(f) for f in (path, *extra_paths)]
     if kind in ("ili", "pxp"):
         inputs, notes = _from_ili(path, kind)
     else:
-        inputs, notes = _from_profile(path, fetch_elevation, spacing_ft, progress_cb)
-    meta_notes = [f"Imported from {os.path.basename(path)} as a {FORMAT_LABELS[kind]}."]
+        inputs, notes = _from_profile(path, fetch_elevation, spacing_ft, progress_cb, extra_paths)
+    meta_notes = [f"Imported from {', '.join(files)} as a {FORMAT_LABELS[kind]}."]
     if inputs.elevation_source.get("provider") != "file":
         meta_notes.append(describe_source(inputs.elevation_source))
     meta_notes += notes
     meta = ScenarioMeta(name=name or os.path.splitext(os.path.basename(path))[0],
-                        source_files=[os.path.basename(path)],
+                        source_files=files,
                         notes="\n".join(meta_notes),
                         # Everything the file can't tell us is still a default; the job intake
                         # (intake.py) asks for it instead of treating those defaults as answers.
