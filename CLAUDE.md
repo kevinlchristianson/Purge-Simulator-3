@@ -156,6 +156,9 @@ purge_sim/
                          static/report_template.html. Reports tab also zips every deliverable.
                          purge_table() is also the app's Table tab (/api/results/table), so the
                          two always show the same rows
+    report_static.py   — the client page's text, tables and still SVG charts written straight into
+                         the html, so it reads in phone mail previews that run no scripts (iPhone
+                         Mail showed a blank page); in a browser the page script swaps in the live charts
     gis.py             — Map tab geometry: milepost per route vertex (route_latlon scaled to the
                          profile's milepost span), stations/CVs/boosters/BPCV placed on it, and
                          route_from_file() to add a KMZ route to a scenario without one (direction

@@ -1,11 +1,13 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" style="__REPORT_ROOT_STYLE__">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>__REPORT_TITLE__ · Nitrogen purge simulation</title>
 <!-- Client report written by Purge Simulator (purge_sim/app/client_report.py fills in the data).
-     Self-contained: no external files, works offline, prints on letter/A4. -->
+     Self-contained: no external files, works offline, prints on letter/A4. The text, tables and a
+     still copy of every chart are written into the file (app/report_static.py), so it reads in
+     phone mail previews that run no scripts; in a browser the script below makes the charts live. -->
 <style>
 :root {
   --bg: #f4f6f9; --panel: #ffffff; --panel-2: #eef1f5; --border: #dce1e8;
@@ -67,6 +69,13 @@ h2 { font-size: 19px; margin: 0 0 10px; }
 .legend i.dash { background: repeating-linear-gradient(90deg, currentColor 0 5px, transparent 5px 8px) !important; }
 .chart { position: relative; }
 .chart svg { display: block; width: 100%; height: auto; }
+.chart svg.still { max-width: 760px; }
+.chart svg.still text { font-size: 14px; }
+/* No script (phone mail previews): hide the controls that need one, show the "still copy" note. */
+html:not(.js) .js-only { display: none !important; }
+html.js .nojs-only { display: none !important; }
+.nojs-note { border-color: var(--accent); color: var(--text); margin: 0 0 14px; }
+table.purge:not(.showfeat) tr.feat, table.purge:not(.showfeat) .fc { display: none; }
 .chart text { fill: var(--muted); font-size: 11px; font-family: inherit; }
 .tip { position: absolute; pointer-events: none; background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px; font-size: 12px; box-shadow: 0 2px 8px rgba(0,0,0,.15); white-space: nowrap; display: none; z-index: 2; }
 .tip b { font-variant-numeric: tabular-nums; }
@@ -98,6 +107,13 @@ tr.over td.speed { background: color-mix(in srgb, var(--warn) 38%, transparent) 
 .notes { white-space: pre-wrap; font-size: 14px; }
 footer { color: var(--muted); font-size: 12.5px; padding: 18px 0 34px; }
 @media (max-width: 600px) { h1 { font-size: 22px; } .kpi .v { font-size: 19px; } }
+/* Phones: the Purge Report is wider than the screen, so it scrolls sideways in its own box. */
+@media (max-width: 760px) {
+  .purgewrap { overflow-x: auto; }
+  table.purge { font-size: 12px; }
+  table.purge thead th { position: static; }
+  table.purge td.n { white-space: nowrap; }
+}
 @media print {
   :root { --bg: #fff; --panel: #fff; --shadow: none; }
   body { font-size: 12px; }
@@ -113,52 +129,53 @@ footer { color: var(--muted); font-size: 12.5px; padding: 18px 0 34px; }
 </head>
 <body>
 <header class="hero"><div class="wrap">
-  <img class="logo" id="logo" alt="" hidden>
-  <div class="eyebrow">Nitrogen purge simulation</div>
-  <h1 id="title"></h1>
-  <div class="sub" id="sub"></div>
+  __REPORT_LOGO__
+  <div class="eyebrow">__REPORT_EYEBROW__</div>
+  <h1 id="title">__REPORT_H1__</h1>
+  <div class="sub" id="sub">__REPORT_SUB__</div>
 </div></header>
 <nav><div class="wrap">
   <a href="#summary">Summary</a><a href="#profile">Pipeline profile</a><a href="#charts">Charts</a>
-  <a href="#basis">Job basis</a><a href="#purge">Purge report</a><a href="#notes" id="navNotes" hidden>Notes</a>
+  <a href="#basis">Job basis</a><a href="#purge">Purge report</a><a href="#notes" id="navNotes" __REPORT_NOTES_HIDDEN__>Notes</a>
 </div></nav>
 <main class="wrap">
-  <section id="summary"><h2>Summary</h2><div id="kpis" class="kpis"></div><div id="flags"></div><div id="boosters"></div></section>
+  <div class="card nojs-only nojs-note small" id="nojsNote" style="margin-top:16px"><b>You are viewing the still copy of this report.</b> This preview does not run the page's interactive charts. To scrub through the run, save the file and open it in a web browser (on an iPhone: Share, then Save to Files, then open it from Files in Safari or Chrome).</div>
+  <section id="summary"><h2>Summary</h2>__REPORT_SUMMARY__</section>
   <section id="profile"><h2>Pipeline profile</h2>
     <div class="card">
       <p class="small muted" style="margin:0 0 8px">Pressure along the whole line at one moment of the purge: nitrogen behind the pig, liquid ahead of it. Ground elevation and the hydraulic grade line (liquid pressure as feet of head above the pipe) are on the right-hand axis, drawn to the same scale as pressure, so the grade line sits above the ground by exactly the liquid pressure. Drag the slider or press Play to step through the run.</p>
-      <div class="controls"><button id="play">Play</button><input type="range" id="step" min="0" max="0" value="0" aria-label="Time in the run"></div>
-      <div class="readout" id="readout"></div>
+      <div class="controls js-only"><button id="play">Play</button><input type="range" id="step" min="0" max="0" value="0" aria-label="Time in the run"></div>
+      <div class="readout" id="readout">__REPORT_PF_READOUT__</div>
       <div class="legend" id="pfLegend"></div>
-      <div class="chart" id="pfChart"></div>
+      <div class="chart" id="pfChart">__REPORT_PF_CHART__</div>
       <div id="pfStations" class="scroll"></div>
     </div>
-    <div class="card" id="sysCard" hidden>
-      <h3 id="sysTitle" style="margin:0 0 6px"></h3>
+    <div class="card" id="sysCard" __REPORT_SYS_HIDDEN__>
+      <h3 id="sysTitle" style="margin:0 0 6px">__REPORT_SYS_TITLE__</h3>
       <p class="small muted" id="sysIntro" style="margin:0 0 8px"></p>
       <div class="readout" id="sysReadout"></div>
       <div class="legend" id="sysLegend"></div>
-      <div class="chart" id="sysChart"></div>
+      <div class="chart" id="sysChart">__REPORT_SYS_CHART__</div>
     </div>
   </section>
   <section id="charts"><h2>Charts</h2>
-    <div class="chartopts noprint">
+    <div class="chartopts noprint js-only">
       <label><input type="checkbox" id="optElev"> Overlay the elevation profile (right axis, ft)</label>
       <label id="optMarkLabel"><input type="checkbox" id="optMarks"> Show stations and valves (vertical lines)</label>
     </div>
-    <div id="chartList"></div></section>
+    <div id="chartList">__REPORT_CHARTS__</div></section>
   <section id="basis"><h2>Job basis</h2><div class="grid2">
-    <div class="card"><h3>Inputs</h3><table class="basis" id="basisTable"></table></div>
-    <div class="card"><h3>Stations and valves</h3><div id="facilities"></div></div>
+    <div class="card"><h3>Inputs</h3><table class="basis" id="basisTable">__REPORT_BASIS__</table></div>
+    <div class="card"><h3>Stations and valves</h3><div id="facilities">__REPORT_FACILITIES__</div></div>
   </div></section>
   <section id="purge"><h2>Purge report</h2>
     <div class="card"><p class="small muted" style="margin:0 0 8px">One row for every quarter mile the pig travels, counted from 0 at the launch (the same table as the Purge Report workbook). Red rows exceed MOP; a red speed cell marks slack-line risk, an orange one the pig over its maximum speed.</p>
-    <p class="small muted" id="endpointNote" hidden style="margin:0 0 8px"></p>
-    <div class="small" id="featToggle" hidden style="margin:0 0 8px"><label><input type="checkbox" id="showFeat"> Add stations, valves, markers and crossings to the table</label></div>
-    <table class="purge" id="purgeTable"></table></div>
+    <p class="small muted" id="endpointNote" __REPORT_ENDPOINT_HIDDEN__ style="margin:0 0 8px">__REPORT_ENDPOINT_NOTE__</p>
+    <div class="small js-only" id="featToggle" __REPORT_FEAT_HIDDEN__ style="margin:0 0 8px"><label><input type="checkbox" id="showFeat" __REPORT_FEAT_CHECKED__> Add stations, valves, markers and crossings to the table</label></div>
+    <div class="purgewrap"><table class="__REPORT_PURGE_CLASS__" id="purgeTable">__REPORT_PURGE__</table></div></div>
   </section>
-  <section id="notes" hidden><h2>Notes</h2><div class="card notes" id="notesBody"></div></section>
-  <footer id="foot"></footer>
+  <section id="notes" __REPORT_NOTES_HIDDEN__><h2>Notes</h2><div class="card notes" id="notesBody">__REPORT_NOTES__</div></section>
+  <footer id="foot">__REPORT_FOOT__</footer>
 </main>
 <script type="application/json" id="report-data">__REPORT_DATA__</script>
 <script>
@@ -169,34 +186,9 @@ const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&
 const fmt = (v, nd = 0) => v == null || !isFinite(v) ? "—" : Number(v).toLocaleString("en-US", {minimumFractionDigits: nd, maximumFractionDigits: nd});
 const S = D.summary || {}, SE = D.series || {}, P = D.profile || {frames: []};
 
-// ---------------------------------------------------------------- header + summary
-// brand (Settings > Branding in the app)
-const B = D.brand || {};
-for (const k of ["primary", "mid", "secondary", "highlight"]) if (B[k]) document.documentElement.style.setProperty("--brand-" + k, B[k]);
-if (B.logo) { const l = $("#logo"); l.src = B.logo; l.alt = B.name || "Logo"; l.classList.toggle("chip", B.logo_on === "light"); l.hidden = false; }
-if (B.name) $(".eyebrow").textContent = B.name + " · Nitrogen purge simulation";
-$("#title").textContent = D.title;
-const route = (D.basis.find(r => r[0] === "Route") || [])[1] || "";
-$("#sub").textContent = [route, "Prepared " + D.date].filter(Boolean).join(" · ");
-const kpi = (v, l) => `<div class="kpi"><div class="v">${v}</div><div class="l">${esc(l)}</div></div>`;
-$("#kpis").innerHTML = [
-  kpi(fmt(S.n2_total_fresh_scf), "Total N2 (SCF)"),
-  kpi(fmt(S.duration_hr, 1), "Duration (hours)"),
-  kpi(fmt(S.pig_speed_mph && S.pig_speed_mph.avg, 2), "Average pig speed (mph)"),
-  kpi(`${fmt(S.pig_speed_mph && S.pig_speed_mph.min, 2)} – ${fmt(S.pig_speed_mph && S.pig_speed_mph.max, 2)}`, "Pig speed range (mph)"),
-  kpi(fmt(S.pig_face_psig && S.pig_face_psig.max), "Peak N2 drive (psig)"),
-  kpi(fmt(S.injection_psig_max), "Peak injection (psig)"),
-  kpi(S.worst_mop_margin_psig == null ? "—" : fmt(S.worst_mop_margin_psig), "Smallest MOP margin (psi)"),
-  kpi(fmt(S.n2_vented_scf), "N2 vented (SCF)"),
-  kpi(S.exit_psig_max == null ? "—" : `${fmt(S.exit_min_psig)} – ${fmt(S.exit_psig_max)}`, "Endpoint pressure held (psig)"),
-  kpi(fmt(S.overspeed_steps), "Steps over max speed"),
-].join("");
-const flags = S.flags || [];
-$("#flags").innerHTML = flags.length ? flags.map(f => `<div class="flag bad">${esc(f)}</div>`).join("")
-  : `<div class="flag good">The run completed to MP ${fmt(S.final_mp, 2)} with no N2 venting, no slack-line risk, no MOP exceedance and the pig never over its maximum speed.</div>`;
-if (S.booster_plan && S.booster_plan.sites_mp.length)
-  $("#boosters").innerHTML = `<div class="card"><h3>N2 booster plan</h3><div class="small">${S.booster_plan.sites_mp.map(m => "MP " + fmt(m, 2)
-    + (S.booster_plan.reasons[String(m)] ? ": " + esc(S.booster_plan.reasons[String(m)]) : "")).join("<br>")}</div></div>`;
+// Header, summary, job basis, Purge Report and notes are written into the file (report_static.py),
+// so they show in previews that run no script. From here on the script only makes the charts live.
+document.documentElement.classList.add("js");
 
 // ---------------------------------------------------------------- charts (inline SVG)
 const NICE = [1, 2, 2.5, 5, 10];
@@ -523,30 +515,8 @@ $("#play").onclick = () => {
   }, 220);
 };
 
-// ---------------------------------------------------------------- tables
-$("#basisTable").innerHTML = D.basis.map(([k, v]) => `<tr><th>${esc(k)}</th><td>${esc(v)}</td></tr>`).join("");
-$("#facilities").innerHTML = D.facilities.length
-  ? `<table><thead><tr><th>Type</th><th>Name</th><th class="n">MP</th></tr></thead><tbody>${D.facilities.map(f => `<tr><td>${esc(f.type)}</td><td>${esc(f.name)}</td><td class="n">${fmt(f.mp, 2)}</td></tr>`).join("")}</tbody></table>`
-  : `<p class="muted small">No pump stations, valves or boosters on this route.</p>`;
-const PR = D.purge;
-function drawPurgeTable() {
-  const feat = PR.has_features && $("#showFeat").checked, speedCol = PR.cols.findIndex(c => c.h.startsWith("Pig Speed"));
-  const head = PR.cols.map(c => `<th class="n">${esc(c.h)}</th>`);
-  if (feat) head.splice(1, 0, "<th>Feature</th>");
-  const rows = PR.rows.filter(r => feat || !r.f).map(r => {
-    const cells = r.v.map((v, i) => `<td class="n${i === speedCol ? " speed" : ""}">${fmt(v, PR.cols[i].nd)}</td>`);
-    if (feat) cells.splice(1, 0, `<td style="white-space:nowrap"><b>${esc(r.f)}</b></td>`);
-    return `<tr class="${r.flag}${r.f ? " feat" : ""}">${cells.join("")}</tr>`;
-  });
-  $("#purgeTable").innerHTML = `<thead><tr>${head.join("")}</tr></thead><tbody>${rows.join("")}</tbody>`;
-}
-$("#featToggle").hidden = !PR.has_features;
-if (PR.has_endpoint) { $("#endpointNote").hidden = false; $("#endpointNote").textContent = `Exit Pressure is what the receiving end (pump suction, BPCV or tank inlet) holds. It rises above the ${fmt(S.exit_min_psig)} psig minimum to keep the pig at or under ${fmt(S.max_speed_mph, 2)} mph, and to hold the column back where a high point ahead would otherwise drop below the slack floor as the liquid past it runs down to the exit.`; }
-$("#showFeat").checked = PR.show_features;
-$("#showFeat").onchange = drawPurgeTable;
-drawPurgeTable();
-if (D.notes) { $("#notes").hidden = false; $("#navNotes").hidden = false; $("#notesBody").textContent = D.notes; }
-$("#foot").innerHTML = `Prepared ${esc(D.date)} with Purge Simulator. Results are simulation estimates based on the job basis listed above.`;
+// ---------------------------------------------------------------- tables (written into the file)
+$("#showFeat").onchange = () => $("#purgeTable").classList.toggle("showfeat", $("#showFeat").checked);
 
 function drawAll() { drawCharts(); drawProfile(); document.documentElement.style.setProperty("--nav-h", $("nav").offsetHeight + "px"); }
 drawAll();
