@@ -29,7 +29,7 @@ from purge_sim.app.importers import ElevationConfirmNeeded       # noqa: E402
 from purge_sim.app.server import App                             # noqa: E402
 from purge_sim.app.workspace import InputError, Workspace        # noqa: E402
 from purge_sim.data import elevation as E                        # noqa: E402
-from purge_sim.data.profile_parser import parse_profile          # noqa: E402
+from purge_sim.data.profile_parser import parse_kml_files, parse_profile   # noqa: E402
 
 # A ~7 mi route in Montana with one bend.
 ROUTE = [(45.000, -108.500), (45.050, -108.500), (45.080, -108.450), (45.100, -108.450)]
@@ -558,3 +558,70 @@ def test_add_route_picks_the_line_that_fits_the_scenario(tmp_path, dem):
     out = ws.attach_route(write_multi_kmz(tmp_path / "tb.kmz", [("S", SOUTH), ("N", NORTH)]), "as_is")
     assert out["notes"][0].startswith('The file has 2 lines. Used "S"')
     assert ws.scenario.inputs.route_latlon[-1] == pytest.approx(list(SOUTH[-1]), abs=1e-6)
+
+
+# ------------------------------------- one MultiGeometry line plus separate Start / End files
+
+def write_multigeom_kmz(path, lines):
+    """All lines in one Placemark's MultiGeometry, as a GIS export writes them."""
+    geoms = "".join('<LineString><coordinates>' + " ".join(f"{lo},{la},0" for la, lo in c)
+                    + '</coordinates></LineString>' for c in lines)
+    kml = ('<?xml version="1.0" encoding="UTF-8"?><kml xmlns="http://www.opengis.net/kml/2.2"><Document>'
+           f'<Placemark><name>WE-6</name><MultiGeometry>{geoms}</MultiGeometry></Placemark></Document></kml>')
+    with zipfile.ZipFile(path, "w") as z:
+        z.writestr("doc.kml", kml)
+    return str(path)
+
+
+# University to Fullerton in miniature: pieces drawn west to east in file order, except the
+# last, which starts where the first does and runs west. Start is at the east end, End partway.
+WE6 = [[(32.427, -102.807), (32.420, -102.700), (32.419, -102.651)],
+       [(32.419, -102.651), (32.412, -102.529)],
+       [(32.412, -102.529), (32.413, -102.450), (32.415, -102.373)],
+       [(32.427, -102.807), (32.409, -102.887)]]
+
+
+def test_multigeometry_pieces_chain_and_start_end_files_orient(tmp_path):
+    line = write_multigeom_kmz(tmp_path / "we6.kmz", WE6)
+    p = parse_profile(line)
+    assert (p.lon[0], p.lon[-1]) == pytest.approx((-102.887, -102.373))
+    assert np.all(np.diff(p.lon) > 0)                          # one line, no doubling back
+    start = write_multi_kmz(tmp_path / "Start.kmz", [], [("Start", 32.415, -102.373)])
+    end = write_multi_kmz(tmp_path / "End.kmz", [], [("End", 32.413, -102.450)])
+    p = parse_kml_files([line, start, end])
+    assert p.lon[0] == pytest.approx(-102.373) and np.all(np.diff(p.lon) < 0)   # reversed: Start first
+    assert p.launch_mp == pytest.approx(0.0, abs=0.01)
+    assert 4 < p.stop_mp < 5 and p.total_length_mi > 25
+    assert any("reversed" in n for n in p.notes) and any("past End" in n for n in p.notes)
+
+
+def test_import_with_start_end_files_sets_launch_and_stop(tmp_path, dem):
+    line = write_multigeom_kmz(tmp_path / "we6.kmz", WE6)
+    start = write_multi_kmz(tmp_path / "Start.kmz", [], [("Start", 32.415, -102.373)])
+    end = write_multi_kmz(tmp_path / "End.kmz", [], [("End", 32.413, -102.450)])
+    ws = Workspace()
+    ws.new_from_import(line, "auto", "WE-6", extra_paths=[start, end])
+    sc = ws.scenario
+    inp = sc.inputs
+    assert inp.purge_start_mp == pytest.approx(inp.elevation_profile[0][0], abs=0.01)
+    assert 4 < inp.purge_end_mp < 5 < inp.elevation_profile[-1][0]   # route kept past the pig stop
+    assert inp.route_latlon[0][1] == pytest.approx(-102.373, abs=1e-3)
+    assert [lm["name"] for lm in inp.landmarks] == ["Start", "End"]
+    assert sc.meta.source_files == ["we6.kmz", "Start.kmz", "End.kmz"]
+    with pytest.raises(Exception, match="Only KMZ / KML"):
+        ws.new_from_import(line, "auto", "x", extra_paths=[str(tmp_path / "x.csv")])
+
+
+def test_server_imports_several_files_in_one_body(tmp_path, dem):
+    files = [write_multigeom_kmz(tmp_path / "we6.kmz", WE6),
+             write_multi_kmz(tmp_path / "Start.kmz", [], [("Start", 32.415, -102.373)]),
+             write_multi_kmz(tmp_path / "End.kmz", [], [("End", 32.413, -102.450)])]
+    blobs = [open(f, "rb").read() for f in files]
+    q = {"kind": "auto", "filenames": "we6.kmz|Start.kmz|End.kmz", "sizes": ",".join(str(len(b)) for b in blobs),
+         "fetch_elevation": "1"}
+    app = App()
+    code, body = app.handle("POST", "/api/scenario/import", {k: [v] for k, v in q.items()}, b"".join(blobs))
+    assert code == 200 and 4 < app.ws.scenario.inputs.purge_end_mp < 5
+    with pytest.raises(InputError, match="match their sizes"):
+        app.handle("POST", "/api/scenario/import", {k: [v] for k, v in {**q, "sizes": "1,2,3"}.items()},
+                   b"".join(blobs))

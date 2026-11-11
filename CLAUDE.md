@@ -148,7 +148,9 @@ purge_sim/
                          "Job setup" notes block. Answers persist in meta.intake. The app's
                          Job setup tab and the assistant's set_job_setup both use it
     server.py          — JSON API + page; 127.0.0.1 only, Host check, per-launch token
-    importers.py       — new scenario from ILI / KMZ / TXT / Excel via data/ parsers
+    importers.py       — new scenario from ILI / KMZ / TXT / Excel via data/ parsers; several
+                         KMZ/KML files can be imported together (extra_paths; the Import dialog
+                         takes several files, sent in one body with ?sizes= / ?filenames=)
     client_report.py   — client web page export: one self-contained .html per run (summary,
                          profile scrubber, charts, job basis, Purge Report table), layout in
                          static/report_template.html. Reports tab also zips every deliverable.
@@ -186,7 +188,10 @@ purge_sim/
                          never a flat 0 ft profile. A KMZ/KML with several lines is joined end to
                          end (join_lines: longest line first, as drawn; ends within 1 mi); named
                          Point placemarks come back as pins with mileposts, imported as map-only
-                         'map_pin' landmarks
+                         'map_pin' landmarks. Pins named Start / End (launch, pig stop, receiver)
+                         orient the route Start -> End and become launch_mp / stop_mp (the import
+                         sets the purge from them, keeping the route past End). parse_kml_files()
+                         reads several KMZ/KML files as one (route + separate Start.kmz / End.kmz)
     pipe_catalog.py    — NPS -> OD, STD/XS wall, API 5L SMYS, flange-class ratings, Barlow check
     fluids.py          — product library (SG, viscosity, vapor pressure + 100 psi margin)
     elevation.py       — built-in elevation lookup for those files: USGS 3DEP point queries

@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import os
 import secrets
+import shutil
 import tempfile
 import threading
 import traceback
@@ -187,30 +188,46 @@ class App:
                 pass
 
     def _import(self, q: dict, body: bytes) -> Tuple[int, object]:
-        """?fetch_elevation=1 confirms a USGS lookup the user was asked about (409 below)."""
+        """?fetch_elevation=1 confirms a USGS lookup the user was asked about (409 below).
+        Several files go in one body, back to back, with ?sizes=n1,n2,... and
+        ?filenames=a|b|... (the first is the main file; the rest are read with it, KMZ/KML only)."""
         kind = q.get("kind", "") or "auto"
         fetch = {"1": True, "0": False}.get(q.get("fetch_elevation", ""))
-        filename = os.path.basename(q.get("filename", "upload"))
         if not body:
             raise InputError("no file received")
-        suffix = os.path.splitext(filename)[1] or ".dat"
+        if q.get("sizes"):
+            try:
+                sizes = [int(n) for n in q["sizes"].split(",")]
+            except ValueError:
+                raise InputError("bad sizes")
+            names = [os.path.basename(n) for n in (q.get("filenames") or "").split("|")]
+            if len(names) != len(sizes) or sum(sizes) != len(body) or min(sizes) <= 0 or len(sizes) > 20:
+                raise InputError("the uploaded files don't match their sizes")
+        else:
+            names, sizes = [os.path.basename(q.get("filename", "upload"))], [len(body)]
         tmp_dir = tempfile.mkdtemp(prefix="purge_import_")
-        tmp = os.path.join(tmp_dir, filename if suffix else filename + suffix)
-        with open(tmp, "wb") as f:
-            f.write(body)
+        paths, at = [], 0
         try:
-            return 200, self.ws.new_from_import(tmp, kind, q.get("name") or os.path.splitext(filename)[0],
+            for i, (filename, n) in enumerate(zip(names, sizes)):
+                filename = filename or "upload"
+                if not os.path.splitext(filename)[1]:
+                    filename += ".dat"
+                sub = os.path.join(tmp_dir, str(i))   # same name twice can't collide
+                os.mkdir(sub)
+                tmp = os.path.join(sub, filename)
+                with open(tmp, "wb") as f:
+                    f.write(body[at:at + n])
+                at += n
+                paths.append(tmp)
+            return 200, self.ws.new_from_import(paths[0], kind, q.get("name") or os.path.splitext(names[0])[0],
                                                 fetch_elevation=fetch,
-                                                spacing_ft=float(q.get("spacing_ft") or DEFAULT_SPACING_FT))
+                                                spacing_ft=float(q.get("spacing_ft") or DEFAULT_SPACING_FT),
+                                                extra_paths=paths[1:])
         except ElevationConfirmNeeded as e:
             return 409, {"error": str(e), "needs_elevation_confirm": True,
                          "points": e.points, "length_mi": round(e.length_mi, 2)}
         finally:
-            try:
-                os.remove(tmp)
-                os.rmdir(tmp_dir)
-            except OSError:
-                pass
+            shutil.rmtree(tmp_dir, ignore_errors=True)
 
     def static_path(self, rel: str) -> Optional[str]:
         root = os.path.realpath(paths.static_dir())

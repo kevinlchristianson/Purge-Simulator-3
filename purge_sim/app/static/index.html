@@ -331,9 +331,9 @@ input[type=range] { width: 100%; }
   <h3 style="margin-top:0">New scenario from data</h3>
   <div class="row"><label for="impKind">Data type</label>
     <select id="impKind"><option value="auto">Detect automatically</option><option value="ili">Rosen ILI Excel (elevation, MOP, stations)</option><option value="pxp">Point-by-point (PxP) pressure sheet (elevation, MOP, stations)</option><option value="profile">Elevation profile (KMZ, KML, TXT/CSV, Excel)</option></select></div>
-  <div class="row"><label for="impFile">File</label><input id="impFile" type="file"></div>
+  <div class="row"><label for="impFile">File</label><input id="impFile" type="file" multiple></div>
   <div class="row"><label for="impName">Scenario name</label><input id="impName"></div>
-  <p class="small muted">A KMZ without elevations is looked up in USGS 3DEP (US only, needs internet) at 250 ft spacing. Pipe size, product, MOP and drive limits come next, on the Job setup tab (or describe the job to the assistant).</p>
+  <p class="small muted">A KMZ without elevations is looked up in USGS 3DEP (US only, needs internet) at 250 ft spacing. For a KMZ you can pick several files at once: the pipeline's lines (in one file or several) plus pins named Start and End, which set the pig launch and pig stop and the route's direction. Pipe size, product, MOP and drive limits come next, on the Job setup tab (or describe the job to the assistant).</p>
   <div class="actions"><button id="impCancel">Cancel</button><button class="primary" id="impOk">Import</button></div>
 </dialog>
 
@@ -1742,12 +1742,15 @@ $("#saveOk").onclick = async () => {
 };
 $("#btnImport").onclick = () => $("#dlgImport").showModal();
 $("#impCancel").onclick = () => $("#dlgImport").close();
-$("#impFile").onchange = () => { const f = $("#impFile").files[0]; if (f && !$("#impName").value) $("#impName").value = f.name.replace(/\.[^.]+$/, ""); };
+// several files (a KMZ plus Start / End pins): the biggest is the main one and names the scenario
+const impFiles = () => [...$("#impFile").files].sort((a, b) => b.size - a.size);
+$("#impFile").onchange = () => { const f = impFiles()[0]; if (f && !$("#impName").value) $("#impName").value = f.name.replace(/\.[^.]+$/, ""); };
 $("#impOk").onclick = async () => {
-  const f = $("#impFile").files[0]; if (!f) { toast("Pick a file"); return; }
+  const fs = impFiles(), f = fs[0]; if (!f) { toast("Pick a file"); return; }
   const q = new URLSearchParams({kind: $("#impKind").value, filename: f.name, name: $("#impName").value || f.name});
+  if (fs.length > 1) { q.set("filenames", fs.map(x => x.name).join("|")); q.set("sizes", fs.map(x => x.size).join(",")); }
   $("#impOk").disabled = true;
-  const raw = await f.arrayBuffer();
+  const raw = fs.length > 1 ? await new Blob(fs).arrayBuffer() : await f.arrayBuffer();
   const go = async () => {
     const r = await api("/api/scenario/import?" + q, {method: "POST", raw});
     $("#dlgImport").close();

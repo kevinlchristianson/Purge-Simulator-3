@@ -762,16 +762,21 @@ class Workspace:
 
     def new_from_import(self, file_path: str, kind: str = "auto", name: str = "",
                         fetch_elevation: Optional[bool] = None,
-                        spacing_ft: float = DEFAULT_SPACING_FT) -> dict:
+                        spacing_ft: float = DEFAULT_SPACING_FT, extra_paths=()) -> dict:
         """Build a new scenario from a data file. A file without elevations gets them from
-        USGS 3DEP here (progress shows as the job), unless settings say to ask first."""
+        USGS 3DEP here (progress shows as the job), unless settings say to ask first.
+        extra_paths: more KMZ / KML files read with it as one route (Start / End pins...)."""
         from .importers import scenario_from_file
         self._busy_job("Importing " + os.path.basename(file_path))
         try:
             sc, warnings = scenario_from_file(file_path, kind, name, fetch_elevation, spacing_ft,
-                                              progress_cb=self._job_progress)
+                                              progress_cb=self._job_progress, extra_paths=extra_paths)
         except ElevationError as e:
             raise InputError(str(e)) from e
+        except ValueError as e:
+            if extra_paths:   # files that can't go together: say so, don't crash
+                raise InputError(str(e)) from e
+            raise
         finally:
             self._idle_job()
         with self.lock:

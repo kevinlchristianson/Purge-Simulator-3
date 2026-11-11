@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import math
 import os
+import re
 import zipfile
 from dataclasses import dataclass, field
 from typing import Optional, List
@@ -57,6 +58,10 @@ class ProfileData:
     pins: List[dict] = field(default_factory=list)
     parts: List[dict] = field(default_factory=list)
     notes: List[str] = field(default_factory=list)
+    # KMZ/KML only: mileposts of pins named Start / End (or launch / pig stop / receiver) on
+    # this profile. With both, the route is oriented so mileposts run from Start toward End.
+    launch_mp: Optional[float] = None
+    stop_mp: Optional[float] = None
 
     @property
     def needs_elevation(self) -> bool:
@@ -309,13 +314,42 @@ def _extract_coords_from_kml_root(root) -> List[tuple]:
     return join_lines(_extract_lines(root))[0]
 
 
-def _profile_from_kml_root(root, what: str, file_path: str) -> ProfileData:
-    lines = _extract_lines(root)
+# Pin names that mark the purge ends: "Start", "Launch", "Launcher", "Pig launch" ... and
+# "End", "Stop", "Pig stop", "Receiver", "Receipt" ... (case doesn't matter).
+_START_RE = re.compile(r'^\s*(start|launch(er)?|pig\s+launch(er)?|purge\s+start)\b', re.I)
+_END_RE = re.compile(r'^\s*(end|stop|pig\s+stop|(pig\s+)?receiver|receipt|purge\s+end)\b', re.I)
+
+
+def _end_pin(placed: List[dict], pattern) -> Optional[dict]:
+    hits = [p for p in placed if pattern.match(p['name'])]
+    return hits[0] if hits else None
+
+
+def _route_from_lines_pins(lines: List[dict], pins: List[dict]) -> tuple:
+    """Join the lines; if pins named Start and End are both on the route, run it from the
+    Start end toward End (reversed if drawn the other way). Returns (pts, notes)."""
     pts, notes = join_lines(lines)
+    if len(pts) < 2 or not pins:
+        return pts, notes
+    lats = np.array([q[0] for q in pts], dtype=float)
+    lons = np.array([q[1] for q in pts], dtype=float)
+    mps = np.concatenate([[0.0], np.cumsum([haversine_miles(a[0], a[1], b[0], b[1])
+                                            for a, b in zip(pts, pts[1:])])])
+    placed, _ = _place_pins(pins, lats, lons, mps)
+    start, end = _end_pin(placed, _START_RE), _end_pin(placed, _END_RE)
+    if start and end and start['mp'] > end['mp']:
+        pts = pts[::-1]
+        notes.append(f"The route was reversed so it runs from {start['name']} toward {end['name']} "
+                     "(the file draws it the other way).")
+    return pts, notes
+
+
+def _profile_from_lines_pins(lines: List[dict], pins: List[dict], source: str, what: str) -> ProfileData:
+    pts, notes = _route_from_lines_pins(lines, pins)
     if not pts:
-        raise ValueError(f"No pipeline coordinates found in {what}: {file_path}")
+        raise ValueError(f"No pipeline coordinates found in {what}")
     profile = _build_profile_from_lat_lon_elev(pts, elev_in_meters=True)
-    profile.source = f"{what}:{os.path.basename(file_path)}"
+    profile.source = source
     profile.notes = notes
     if len(lines) > 1:
         profile.parts = []
@@ -324,8 +358,65 @@ def _profile_from_kml_root(root, what: str, file_path: str) -> ProfileData:
             profile.parts.append({'name': l['name'], 'lat': part.lat, 'lon': part.lon,
                                   'mileposts': part.mileposts, 'elevations_ft': part.elevations_ft,
                                   'length_mi': part.total_length_mi})
-    profile.pins, more = _place_pins(_extract_pins(root), profile.lat, profile.lon, profile.mileposts)
+    profile.pins, more = _place_pins(pins, profile.lat, profile.lon, profile.mileposts)
     profile.notes += more
+    start, end = _end_pin(profile.pins, _START_RE), _end_pin(profile.pins, _END_RE)
+    if start:
+        profile.launch_mp = start['mp']
+    if end:
+        profile.stop_mp = end['mp']
+    if start and end:
+        total = profile.total_length_mi
+        msg = (f"Pig launch set at {start['name']} (MP {start['mp']:.2f}) and pig stop at "
+               f"{end['name']} (MP {end['mp']:.2f}), a {abs(end['mp'] - start['mp']):.2f} mi purge.")
+        if start['mp'] > 0.05:
+            msg += f" The route starts {start['mp']:.2f} mi before {start['name']}."
+        if total - end['mp'] > 0.05:
+            msg += (f" It goes on {total - end['mp']:.2f} mi past {end['name']}: if the liquid exits further "
+                    "down the line, set that as the Hydraulic Endpoint in Job setup.")
+        profile.notes.append(msg)
+    return profile
+
+
+def _profile_from_kml_root(root, what: str, file_path: str) -> ProfileData:
+    return _profile_from_lines_pins(_extract_lines(root), _extract_pins(root),
+                                    f"{what}:{os.path.basename(file_path)}", f"{what}: {file_path}")
+
+
+def _read_kml_root(file_path: str):
+    """The KML document of a .kmz or .kml file, parsed safely."""
+    if zipfile.is_zipfile(file_path):   # a KMZ, whatever its name
+        with zipfile.ZipFile(file_path, 'r') as z:
+            kml_names = [n for n in z.namelist() if n.lower().endswith('.kml')]
+            if not kml_names:
+                raise ValueError(f"No KML file found inside KMZ: {file_path}")
+            # Prefer doc.kml
+            main_kml = next((n for n in kml_names if 'doc' in n.lower()), kml_names[0])
+            kml_data = z.read(main_kml)
+    else:
+        with open(file_path, 'rb') as f:
+            kml_data = f.read()
+    if _LXML_AVAILABLE:
+        parser = ET.XMLParser(resolve_entities=False, no_network=True, recover=True)
+        return ET.fromstring(kml_data, parser)
+    return ET.fromstring(kml_data.decode('utf-8', errors='replace'))
+
+
+def parse_kml_files(file_paths: List[str]) -> ProfileData:
+    """Several KMZ / KML files read as one: every line in them joined into one route, every
+    named pin placed on it (e.g. the pipeline's KMZ plus separate Start.kmz and End.kmz)."""
+    if len(file_paths) == 1:
+        return parse_profile(file_paths[0])
+    lines, pins = [], []
+    for fp in file_paths:
+        root = _read_kml_root(fp)
+        lines += _extract_lines(root)
+        pins += _extract_pins(root)
+    names = ", ".join(os.path.basename(f) for f in file_paths)
+    if not lines:
+        raise ValueError(f"No pipeline line found in {names}")
+    profile = _profile_from_lines_pins(lines, pins, "KMZ:" + names, names)
+    profile.notes.insert(0, f"Read together: {names}.")
     return profile
 
 
@@ -375,35 +466,12 @@ def parse_kmz(file_path: str) -> ProfileData:
     elevation profile, plus any named pins near the route.
     Elevation data is in meters in KML (converted to feet).
     """
-    with zipfile.ZipFile(file_path, 'r') as z:
-        kml_names = [n for n in z.namelist() if n.lower().endswith('.kml')]
-        if not kml_names:
-            raise ValueError(f"No KML file found inside KMZ: {file_path}")
-        # Prefer doc.kml or the largest KML
-        main_kml = next((n for n in kml_names if 'doc' in n.lower()), kml_names[0])
-        kml_data = z.read(main_kml)
-
-    if _LXML_AVAILABLE:
-        parser = ET.XMLParser(resolve_entities=False, no_network=True, recover=True)
-        root = ET.fromstring(kml_data, parser)
-    else:
-        root = ET.fromstring(kml_data.decode('utf-8', errors='replace'))
-
-    return _profile_from_kml_root(root, "KMZ", file_path)
+    return _profile_from_kml_root(_read_kml_root(file_path), "KMZ", file_path)
 
 
 def parse_kml(file_path: str) -> ProfileData:
     """Parse a KML file directly."""
-    with open(file_path, 'rb') as f:
-        kml_data = f.read()
-
-    if _LXML_AVAILABLE:
-        parser = ET.XMLParser(resolve_entities=False, no_network=True, recover=True)
-        root = ET.fromstring(kml_data, parser)
-    else:
-        root = ET.fromstring(kml_data.decode('utf-8', errors='replace'))
-
-    return _profile_from_kml_root(root, "KML", file_path)
+    return _profile_from_kml_root(_read_kml_root(file_path), "KML", file_path)
 
 
 # ---------------------------------------------------------------------------
